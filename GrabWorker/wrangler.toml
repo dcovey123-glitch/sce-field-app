@@ -1,0 +1,18 @@
+name = "sce-upload-worker"
+main = "upload-worker.js"
+compatibility_date = "2024-01-01"
+
+[[r2_buckets]]
+binding = "SCE_FILES"
+bucket_name = "sce-electric-files"
+
+# Set UPLOAD_SECRET via: wrangler secret put UPLOAD_SECRET
+# Then enter a strong password when prompted
+
+# Set ANTHROPIC_API_KEY via: wrangler secret put ANTHROPIC_API_KEY
+# This enables the /parse-pdf endpoint used for AI invoice parsing
+# Get your key from: https://console.anthropic.com/settings/keys
+
+# 8pm (Edmonton) end-of-day reminder. Two crons cover daylight saving; the code only sends at 8pm local.
+[triggers]
+crons = ["0 2 * * *", "0 3 * * *"]

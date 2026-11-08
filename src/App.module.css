@@ -1,0 +1,106 @@
+/* ── Gate ── */
+.gate { position:fixed;inset:0;background:var(--navy);display:flex;align-items:center;justify-content:center; }
+.gateBox { background:var(--navy-mid);border-radius:12px;padding:36px 32px;width:90%;max-width:360px;text-align:center;border:1px solid rgba(255,255,255,0.1); }
+.gateLogo { margin-bottom:20px;text-align:center; }
+.gateInput { width:100%;background:rgba(255,255,255,0.08);border:1.5px solid rgba(255,255,255,0.15);border-radius:var(--rs);padding:13px 16px;font-size:16px;color:#fff;text-align:center;letter-spacing:0.15em;margin-bottom:12px;outline:none; }
+.gateInput:focus { border-color:var(--accent); }
+.gateBtn { width:100%;background:var(--accent);color:var(--navy);border:none;border-radius:var(--rs);padding:13px;font-family:var(--font-d);font-size:16px;font-weight:700; }
+.gateBtn:active { background:var(--accent-dim); }
+.gateErr { font-size:12px;color:#f87171;margin-top:10px;min-height:18px; }
+.gateHint { font-size:11px;color:rgba(255,255,255,0.25);margin-top:16px; }
+
+/* ── App shell ── */
+.app { display:flex;flex-direction:column;min-height:100vh;height:100vh;overflow:hidden; }
+
+/* ── Header ── */
+.hdr { background:var(--navy);position:sticky;top:0;z-index:50;flex-shrink:0; }
+.hdrBrand { display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid rgba(255,255,255,0.07); }
+.hdrSpacer { flex:1; }
+
+/* ── Back button ── */
+.backBtn { display:flex;align-items:center;justify-content:center;width:30px;height:30px;flex-shrink:0;background:none;border:none;border-radius:6px;cursor:pointer;color:rgba(255,255,255,0.75);transition:background 0.15s,color 0.15s; }
+.backBtn:hover { background:rgba(255,255,255,0.09);color:#fff; }
+.backBtnHidden { visibility:hidden; }
+
+/* ── Top nav icons (inline, right of logo) ── */
+.navRow { display:flex;align-items:center;gap:2px;flex-shrink:0; }
+.navBtn { display:flex;flex-direction:column;align-items:center;gap:2px;padding:5px 9px;background:none;border:none;border-radius:6px;cursor:pointer;color:rgba(255,255,255,0.55);transition:background 0.15s,color 0.15s; }
+.navBtn:hover { background:rgba(255,255,255,0.09);color:rgba(255,255,255,0.9); }
+.navBtnActive { color:var(--accent) !important;background:rgba(232,160,32,0.12) !important; }
+.navIcon { font-size:18px;line-height:1; }
+.navLbl { font-size:8px;font-weight:600;letter-spacing:.02em;white-space:nowrap; }
+
+/* ── Hub sub-nav strip ── */
+.hubSubNav {
+  display:flex;
+  background:var(--navy-mid);
+  border-bottom:2px solid var(--accent);
+  flex-shrink:0;
+  overflow-x:auto;
+  scrollbar-width:none;
+}
+.hubSubBtn {
+  flex:0 0 auto;
+  padding:9px 14px;
+  background:none;border:none;
+  font-size:11px;font-weight:500;
+  color:rgba(255,255,255,0.4);
+  border-bottom:2px solid transparent;
+  margin-bottom:-2px;
+  cursor:pointer;
+  white-space:nowrap;
+  transition:color 0.12s;
+}
+.hubSubBtn:hover { color:rgba(255,255,255,.7); }
+.hubSubBtnActive { color:var(--accent) !important; border-bottom-color:var(--accent) !important; font-weight:700 !important; }
+
+/* ── Bucket pills ── */
+.bucketPill { padding:4px 12px;border-radius:20px;font-size:11px;font-weight:500;color:rgba(255,255,255,0.45);background:none;border:1px solid transparent;white-space:nowrap;cursor:pointer;flex-shrink:0;transition:background 0.15s,color 0.15s,border-color 0.15s;user-select:none; }
+.bucketPill:hover { color:rgba(255,255,255,0.7); }
+.bucketActive { background:rgba(90,176,255,0.15) !important;border-color:rgba(90,176,255,0.35) !important;color:var(--accent) !important; }
+
+/* ── Top bar buttons ── */
+.topIconBtn { display:flex;flex-direction:column;align-items:center;gap:1px;padding:5px 10px;border-radius:6px;background:none;border:none;cursor:pointer;flex-shrink:0;color:rgba(255,255,255,0.55);transition:background 0.15s; }
+.topIconBtn:hover { background:rgba(255,255,255,0.09);color:#fff; }
+.topIconLbl { font-size:8px;font-weight:600;letter-spacing:.04em;white-space:nowrap; }
+
+/* ── Sync badge ── */
+.syncBadge { font-size:9px;font-weight:600;letter-spacing:0.05em;white-space:nowrap;flex-shrink:0;margin-left:4px; }
+.syncBadge[data-status="saving"] { color:rgba(255,255,255,0.4); }
+.syncBadge[data-status="saved"]  { color:var(--green); }
+.syncBadge[data-status="error"]  { color:#f87171; }
+.syncBadge[data-status="idle"]   { color:transparent; }
+
+/* ── Summary strips ── */
+.stripWrap { background:var(--navy-mid); }
+.strip { display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;padding:10px 12px;background:var(--navy-mid); }
+.sc { background:rgba(255,255,255,0.07);border-radius:var(--rs);padding:9px 11px;border:1px solid rgba(255,255,255,0.08);transition:background 0.15s,border-color 0.15s;flex:1; }
+.sc:hover { background:rgba(255,255,255,0.14);border-color:rgba(255,255,255,0.22); }
+.sc:active { background:rgba(255,255,255,0.20); }
+.scLbl { font-size:9px;color:rgba(255,255,255,0.45);font-weight:600;letter-spacing:0.07em;text-transform:uppercase;margin-bottom:3px; }
+.scVal { font-family:var(--font-d);font-size:15px;font-weight:700;color:#fff; }
+
+/* ── Main content ── */
+.main { flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch; }
+
+/* ── Mobile layout ── */
+@media (max-width: 480px) {
+  /* Tighter header brand row */
+  .hdrBrand { padding: 5px 10px; gap: 6px; }
+
+  /* Sub-nav: bigger tap targets, more compact labels */
+  .hubSubBtn { padding: 9px 10px; font-size: 10px; }
+
+  /* Hide icon labels on very small screens to save space */
+  .topIconLbl { display: none; }
+  .topIconBtn { padding: 5px 7px; }
+
+  /* Sync badge compact */
+  .syncBadge { font-size: 9px; padding: 2px 6px; }
+
+  /* Strip stats — 2-wide grid on mobile instead of inline */
+  .strip { grid-template-columns: 1fr 1fr; }
+  .sc { padding: 8px 10px; }
+  .scVal { font-size: 18px; }
+  .scLbl { font-size: 9px; }
+}

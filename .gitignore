@@ -1,0 +1,16 @@
+# Installed packages and build output — rebuilt by npm install / npm run dist
+node_modules/
+dist/
+release/
+GrabWorker/.wrangler/
+GrabWorker/node_modules/
+
+# Old hand-made backups (Git keeps the history now)
+*.before*.js
+
+# Never commit secrets or local data
+.env
+.env.*
+*.log
+.DS_Store
+Thumbs.db

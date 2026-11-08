@@ -1,0 +1,72 @@
+/* ── SCE Electric Design System ── */
+:root {
+  --navy:       #0f1e2e;
+  --navy-mid:   #1a2f45;
+  --navy-light: #243d57;
+  --accent:     #e8a020;
+  --accent-dim: #c4841a;
+  --accent-bg:  #fdf3e0;
+  --green:      #1db87a;
+  --green-bg:   #e6f7f0;
+  --green-dark: #0f7a52;
+  --red:        #e05252;
+  --red-bg:     #fdf0f0;
+  --red-dark:   #a83030;
+  --blue:       #3a8fde;
+  --blue-bg:    #e8f2fc;
+  --blue-dark:  #1a5fa0;
+  --purple:     #7c5cbf;
+  --purple-bg:  #f0ebfa;
+  --gray:       #8a9ab0;
+  --gray-light: #f0f3f7;
+  --gray-mid:   #d8dfe8;
+  --text:       #0f1e2e;
+  --text-mid:   #4a5f75;
+  --text-light: #8a9ab0;
+  --surface:    #ffffff;
+  --surface-2:  #f6f8fb;
+  --border:     #e2e8f0;
+  --yellow:     #fffbe6;
+  --yellow-border: #f5c842;
+  --font:       'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-d:     'Barlow Condensed', ui-condensed, sans-serif;
+  --r:  10px;
+  --rs: 6px;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+html, body { font-family: var(--font); background: var(--surface-2); color: var(--text); min-height: 100vh; font-size: 15px; line-height: 1.4; -webkit-overflow-scrolling: touch; overscroll-behavior: none; }
+button { font-family: var(--font); cursor: pointer; }
+input, select, textarea { font-family: var(--font); }
+
+/* Number boxes: no spinner arrows — they ate the room the number needs */
+input[type=number]::-webkit-inner-spin-button,
+input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+input[type=number] { -moz-appearance: textfield; appearance: textfield; }
+/* Text that doesn't fit in a box ends in … instead of being cut off */
+input:not([type=checkbox]):not([type=radio]) { text-overflow: ellipsis; }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--gray-mid); border-radius: 2px; }
+
+/* ── Mobile optimisations ── */
+@media (max-width: 480px) {
+  html, body { font-size: 14px; }
+
+  /* Larger touch targets */
+  button { min-height: 36px; }
+
+  /* Prevent text from being clipped in narrow rows */
+  input, select, textarea { font-size: 16px !important; } /* prevents iOS zoom */
+}
+
+/* ── Nav badge flash (aging deficiencies) ── */
+@keyframes navBadgeFlash {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.55; transform: scale(1.12); }
+}
+.navBadgeFlash {
+  animation: navBadgeFlash 1.4s ease-in-out infinite;
+}

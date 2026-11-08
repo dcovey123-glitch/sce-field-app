@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <title>Field App</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+  </head>
+  <body>
+    <div id="root"></div>
+
+    <!-- This runs before anything else, including the app bundle's own
+         imports — so it can catch a crash that happens before the app's own
+         error handling ever gets a chance to register itself. Without this,
+         a failure during module load/import is a silent blank page. -->
+    <script>
+      (function () {
+        function showCrash(title, detail) {
+          var root = document.getElementById('root');
+          if (!root) return;
+          root.innerHTML =
+            '<div style="font-family: system-ui, sans-serif; padding: 32px; max-width: 640px; margin: 0 auto;">' +
+            '<h2 style="color:#a83030; margin-bottom: 8px;">' + title + '</h2>' +
+            '<pre style="background:#f6f6f6; border:1px solid #ddd; border-radius:6px; padding:12px; font-size:12px; white-space:pre-wrap; overflow:auto; max-height:400px;">' +
+            (detail || '').replace(/</g, '&lt;') +
+            '</pre>' +
+            '<p style="color:#888; font-size:13px; margin-top:16px;">Send this text to Claude to get it fixed.</p>' +
+            '</div>';
+        }
+        window.addEventListener('error', function (e) {
+          showCrash('The app failed to load', (e.message || '') + '\n' + (e.error && e.error.stack ? e.error.stack : (e.filename ? e.filename + ':' + e.lineno : '')));
+        });
+        window.addEventListener('unhandledrejection', function (e) {
+          var reason = e.reason;
+          showCrash('The app failed to load (unhandled promise rejection)', (reason && reason.message ? reason.message : String(reason)) + '\n' + (reason && reason.stack ? reason.stack : ''));
+        });
+        // Belt and suspenders: if nothing has rendered into #root after a
+        // few seconds and no error fired either, say so — some failures
+        // (like a script tag that 404s) don't always raise a catchable event.
+        setTimeout(function () {
+          var root = document.getElementById('root');
+          if (root && root.children.length === 0) {
+            showCrash(
+              'The app never started',
+              'No error was thrown, but nothing rendered after several seconds.\n' +
+              'This usually means the app\'s script file failed to load (wrong path, missing file, or the build folder is incomplete).\n' +
+              'Try rebuilding with: npm run build   then relaunching.'
+            );
+          }
+        }, 4000);
+      })();
+    </script>
+
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

@@ -1,0 +1,17 @@
+{
+  "root": true,
+  "parserOptions": { "ecmaVersion": 2022, "sourceType": "module", "ecmaFeatures": { "jsx": true } },
+  "env": { "browser": true, "es2022": true, "node": true },
+  "plugins": ["react", "react-hooks"],
+  "rules": {
+    "no-undef": "error",
+    "react/jsx-no-undef": "error",
+    "react/jsx-uses-vars": "error",
+    "react/jsx-uses-react": "error",
+    "no-dupe-keys": "error",
+    "no-redeclare": "error",
+    "no-unused-vars": ["warn", { "args": "none", "varsIgnorePattern": "^_", "ignoreRestSiblings": true }],
+    "react-hooks/rules-of-hooks": "error",
+    "react-hooks/exhaustive-deps": "warn"
+  }
+}

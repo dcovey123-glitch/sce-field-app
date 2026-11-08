@@ -1,0 +1,209 @@
+/* ── Overlay / Sheet ── */
+.overlay {
+  display: flex; position: fixed;
+  top: var(--hdr-height, 0); left: 0; right: 0; bottom: 0;
+  background: rgba(10,20,34,.85); z-index: 500;
+  align-items: flex-end;
+  animation: fadeIn .15s ease;
+}
+@keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
+
+.sheet {
+  background: var(--surface);
+  border-radius: 20px 20px 0 0;
+  width: 100%; max-height: 93vh; min-height: 60vh;
+  overflow-y: auto; -webkit-overflow-scrolling: touch;
+  animation: slideUp .18s cubic-bezier(.32,.72,0,1);
+}
+@keyframes slideUp { from { transform: translateY(100%) } to { transform: translateY(0) } }
+
+.drag {
+  width: 38px; height: 4px;
+  background: var(--gray-mid); border-radius: 2px;
+  margin: 13px auto 0;
+}
+.sheetHdr {
+  padding: 13px 16px 11px;
+  display: flex; justify-content: space-between; align-items: center;
+  border-bottom: 1px solid var(--border);
+}
+.sheetTitle {
+  font-family: var(--font-d);
+  font-size: 18px; font-weight: 700;
+  color: var(--text); letter-spacing: .02em;
+}
+.sheetClose {
+  width: 28px; height: 28px; border-radius: 50%;
+  background: var(--gray-light); border: none;
+  font-size: 17px; color: var(--text-mid);
+  display: flex; align-items: center; justify-content: center;
+}
+
+/* ── Modal ── */
+.modalOverlay {
+  display: flex; position: fixed;
+  top: var(--hdr-height, 0); left: 0; right: 0; bottom: 0;
+  background: rgba(10,20,34,.7); z-index: 500;
+  align-items: center; justify-content: center;
+  padding: 16px;
+  animation: fadeIn .15s ease;
+}
+.modal {
+  background: var(--surface);
+  border-radius: var(--r);
+  width: 100%; max-width: 560px;
+  max-height: 90vh; display: flex; flex-direction: column;
+  animation: scaleIn .18s cubic-bezier(.32,.72,0,1);
+}
+.modalWide { max-width: 800px; }
+@keyframes scaleIn { from { transform: scale(.96); opacity: 0 } to { transform: scale(1); opacity: 1 } }
+.modalHdr {
+  padding: 16px 20px 14px;
+  display: flex; justify-content: space-between; align-items: center;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.modalBody { overflow-y: auto; flex: 1; }
+
+/* ── Detail panel (full screen slide-in, sits below sticky header) ── */
+.detail {
+  position: fixed; top: var(--hdr-height, 0); left: 0; right: 0; bottom: 0;
+  background: var(--surface-2); z-index: 300;
+  transform: translateX(100%);
+  transition: transform .22s cubic-bezier(.32,.72,0,1);
+  overflow-y: auto; -webkit-overflow-scrolling: touch;
+}
+.detailOpen { transform: translateX(0); }
+.detailHdr {
+  background: var(--navy); padding: 13px 16px;
+  display: flex; align-items: center; gap: 10px;
+  position: sticky; top: 0; z-index: 10;
+}
+.detailBack {
+  background: none; border: none;
+  color: rgba(255,255,255,.7); font-size: 22px;
+  padding: 0 3px; line-height: 1;
+}
+.detailTitle {
+  font-family: var(--font-d);
+  font-size: 16px; font-weight: 700;
+  color: #fff; flex: 1; line-height: 1.2;
+}
+.detailActions { display: flex; align-items: center; gap: 6px; }
+
+/* ── Badge ── */
+.badge {
+  display: inline-flex; align-items: center;
+  font-size: 11px; font-weight: 600;
+  padding: 3px 8px; border-radius: 20px;
+  white-space: nowrap;
+}
+
+/* ── Form ── */
+.fsec {
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.fsecTitle {
+  font-size: 10px; font-weight: 700;
+  color: var(--text-light);
+  letter-spacing: .1em; text-transform: uppercase;
+  margin-bottom: 11px;
+}
+.fg { display: flex; flex-direction: column; gap: 4px; }
+.flbl { font-size: 12px; font-weight: 600; color: var(--text-mid); letter-spacing: .03em; }
+.fin {
+  width: 100%; padding: 9px 11px;
+  border: 1.5px solid var(--border); border-radius: var(--rs);
+  font-size: 14px; color: var(--text);
+  background: var(--surface); outline: none;
+  appearance: none; transition: border-color .15s;
+}
+.fin:focus { border-color: var(--navy); }
+.fta { resize: vertical; min-height: 80px; line-height: 1.5; }
+.fhint { font-size: 11px; color: #9a6610; margin-top: 3px; }
+.frow {
+  display: grid; gap: 10px;
+}
+.brow {
+  padding: 14px 16px;
+  display: flex; gap: 9px;
+}
+.btn {
+  flex: 1; padding: 12px;
+  border-radius: var(--rs);
+  font-family: var(--font-d); font-size: 14px; font-weight: 700;
+  letter-spacing: .03em;
+  border: 1.5px solid var(--border);
+  background: var(--surface); color: var(--text-mid);
+}
+.btn:active { opacity: .8; }
+.btnP { background: var(--navy); color: #fff; border-color: var(--navy); }
+.btnD { color: var(--red); border-color: rgba(224,82,82,.3); flex: .7; }
+
+/* ── Section label ── */
+.slbl {
+  padding: 11px 16px 5px;
+  font-size: 10px; font-weight: 700;
+  color: var(--text-light); letter-spacing: .1em;
+  text-transform: uppercase;
+  display: flex; justify-content: space-between; align-items: center;
+}
+.cnt {
+  background: var(--gray-mid); color: var(--text-mid);
+  border-radius: 20px; padding: 1px 7px;
+  font-size: 10px; font-weight: 600;
+}
+
+/* ── Sub tabs ── */
+.stabs {
+  display: flex;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.stab {
+  flex: 1; padding: 10px 6px;
+  font-size: 12px; font-weight: 500;
+  color: var(--text-light);
+  background: none; border: none;
+  border-bottom: 2px solid transparent;
+}
+.stabActive {
+  color: var(--navy) !important;
+  border-bottom-color: var(--navy) !important;
+  font-weight: 600 !important;
+}
+
+/* ── FAB ── */
+.fab {
+  position: fixed; bottom: 22px; right: 18px;
+  width: 52px; height: 52px; border-radius: 50%;
+  background: var(--navy); border: 2px solid var(--accent);
+  color: var(--accent); font-size: 25px;
+  display: flex; align-items: center; justify-content: center;
+  z-index: 40;
+  font-family: var(--font-d); line-height: 1;
+  transition: transform .15s;
+}
+.fab:active { transform: scale(.93); }
+
+/* ── Empty ── */
+.empty {
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--text-light); font-size: 14px;
+}
+
+/* ── Mobile detail panel ── */
+@media (max-width: 480px) {
+  .detail {
+    top: 0; /* full screen on mobile */
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .detailHdr {
+    padding: 12px 12px;
+    padding-top: max(12px, env(safe-area-inset-top, 12px));
+  }
+  .detailBack { font-size: 26px; padding: 0 4px; min-width: 36px; }
+  .detailTitle { font-size: 14px; }
+}
