@@ -17,7 +17,6 @@ const BUCKET_NAMES = { planning: 'Project planning / helping', shop: 'Shop / yar
 
 function uid() { return Math.random().toString(36).slice(2, 10) }
 const lower = s => (s || '').trim().toLowerCase()
-const pad2 = n => String(n).padStart(2, '0')
 const toHM = iso => abtHM(iso)
 const fromHM = (date, hm) => abtFromHM(date, hm)
 const ms = s => new Date(s.end) - new Date(s.start)

@@ -12,7 +12,6 @@ import { todayLocal } from '../api/albertaTime.js'
 export const CATALOG_PENDING_KEY = 'materials_catalog_pending'
 
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4)
-const money = v => '$' + (Number(v) || 0).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const when = iso => { try { return new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) } catch { return '' } }
 const inp = { fontSize: 12, border: '1px solid var(--border)', borderRadius: 4, padding: '3px 6px', fontFamily: 'var(--font)' }
 const btn = primary => ({ fontSize: 11.5, fontWeight: 700, padding: '4px 11px', borderRadius: 6, cursor: 'pointer', border: primary ? 'none' : '1px solid var(--border)', background: primary ? 'var(--accent)' : 'var(--surface)', color: primary ? 'var(--navy)' : 'var(--text-mid)' })

@@ -6,13 +6,13 @@ import { useHubStore } from '../api/useHubStore.js'
 import ConfirmDeleteButton from '../components/ConfirmDeleteButton.jsx'
 import WholesalerExportBar from '../components/WholesalerExportBar.jsx'
 import QuoteCompare from '../components/QuoteCompare.jsx'
-import { hasPoNumber, noPoState, slipKind, isArchived, isStockOnlyLine, closeOutLines, archiveBlockers, lineJobIds, lineIsAllocated, jobEntriesFromSlip, leftoverLinesForJob, slipSearchText, mergeIntoStock, feedPartLines , slipLineKey, lineJobsOf, lineUse, initialUse, lineRemaining, jobsOnSlip, lineWithRestInStock, isQuoteDoc, packingSlipsOnPo, packingSlipsForQuote, isReplacedQuote, sameOrder, orderBaseKey, orderBaseLabel, moveQuoteChargesToSlips, moveFeedChargesToSlips, takeFromStock } from '../api/slips.js'
+import { hasPoNumber, noPoState, slipKind, isArchived, isStockOnlyLine, lineIsAllocated, jobEntriesFromSlip, leftoverLinesForJob, slipSearchText, mergeIntoStock, feedPartLines , slipLineKey, lineJobsOf, lineUse, initialUse, lineRemaining, jobsOnSlip, lineWithRestInStock, isQuoteDoc, packingSlipsForQuote, isReplacedQuote, sameOrder, orderBaseKey, orderBaseLabel, moveQuoteChargesToSlips, moveFeedChargesToSlips, takeFromStock } from '../api/slips.js'
 import { orderParts, jobNamesOf, numKey } from '../api/orders.js'
 import { billingCheck, poStatus, orderedOnPo, orderStatus } from '../api/billingCheck.js'
 import { markReceivedByPo } from '../api/orders.js'
 import { normalizeLines } from '../api/units.js'
 import UnitFixModal, { findUnitFixes } from '../components/UnitFix.jsx'
-import MaterialUsedTab, { QuickAddRow, partsList, STOCK_TARGET } from '../components/MaterialUsed.jsx'
+import MaterialUsedTab, { QuickAddRow, partsList } from '../components/MaterialUsed.jsx'
 import OrdersList from './Orders.jsx'
 import { groupMonthDist } from '../api/monthDist.js'
 import { buildPurchases, purchaseSearchText, STAGES } from '../api/purchases.js'
@@ -25,7 +25,7 @@ import { useFlags, readFlagJump, clearFlagJump } from '../api/flags.js'
 import CatalogApprovals, { CATALOG_PENDING_KEY, NewItemForApproval } from '../components/CatalogApprovals.jsx'
 import DupPartsModal, { findDuplicateParts, mergeDuplicates } from '../components/DupParts.jsx'
 import { partNosOf, hasPartNo, isMerged, priceByRule, priceIntoMerged } from '../api/partAliases.js'
-import BillingCheckModal, { BillingPill, BillingSummary, isReviewed } from '../components/BillingCheck.jsx'
+import BillingCheckModal, { BillingSummary, isReviewed } from '../components/BillingCheck.jsx'
 import { hit } from '../api/search.js'
 import { buildPriceIndex, priceSourceFor } from '../api/priceSource.js'
 import { todayLocal } from '../api/albertaTime.js'
@@ -428,22 +428,7 @@ function NicknameDescInputs({ nickname, setNickname, name, setName, onKey }) {
   )
 }
 
-const CAT_COLS = 'minmax(110px, 0.35fr) minmax(140px, 1fr) 52px 100px'
-const catFieldStyle = { fontSize: 12.5 }
 
-function CatColumnHeader() {
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 16px 4px 34px', background: 'var(--surface-2)' }}>
-      <div style={{ display: 'grid', gridTemplateColumns: CAT_COLS, gap: 6, flex: 1, minWidth: 0 }}>
-        <span style={colHeaderStyle}>Part No:</span>
-        <span style={colHeaderStyle}>Nickname / Description:</span>
-        <span style={colHeaderStyle}>UOM:</span>
-        <span style={{ ...colHeaderStyle, textAlign: 'right' }}>Ref cost</span>
-      </div>
-      <span style={{ width: 22, flexShrink: 0 }} />
-    </div>
-  )
-}
 
 // "Priced from" — the newest slip / quote with this part, click to open the PDF
 function PriceSourceLine({ src, refCost }) {
@@ -503,61 +488,7 @@ function AllocationHistoryHint({ log }) {
   )
 }
 
-function CatRow({ item, onUpdate, onDelete }) {
-  return (
-    <div>
-      <div style={{ ...rowStyle, paddingLeft: 34 }}>
-        <div style={{ display: 'grid', gridTemplateColumns: CAT_COLS, gap: 6, flex: 1, minWidth: 0, alignItems: 'center' }}>
-          <EditableField value={item.partNo} placeholder="—" onSave={v => onUpdate({ partNo: v })} style={{ fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }} />
-          <NicknameDescCell item={item} onUpdate={onUpdate} />
-          <UomSelect value={item.uom} onChange={v => onUpdate({ uom: v })} />
-          <div style={{ display: 'flex', alignItems: 'center', gap: 2, justifyContent: 'flex-end' }}>
-            <span style={{ fontSize: 11, color: 'var(--text-light)' }}>$</span>
-            <input type="number" step="0.01" value={item.refCost ?? ''} onChange={e => onUpdate({ refCost: e.target.value })}
-              placeholder="0.00" style={{ ...plainInputStyle, ...catFieldStyle, textAlign: 'right' }} />
-          </div>
-        </div>
-        <ConfirmDeleteButton onConfirm={onDelete} style={delBtnStyle} ariaLabel="Delete catalog item" confirmText="Delete this catalog item?" />
-      </div>
-      <PriceHistoryHint history={item.priceHistory} />
-    </div>
-  )
-}
 
-function CatAddRow({ category, onAdd, startOpen, onCancel }) {
-  const [open, setOpen] = useState(!!startOpen)
-  const [name, setName] = useState('')
-  const [partNo, setPartNo] = useState('')
-  const [nickname, setNickname] = useState('')
-  const [uom, setUom] = useState('')
-  const [refCost, setRefCost] = useState('')
-
-  function reset() { setName(''); setPartNo(''); setNickname(''); setUom(''); setRefCost('') }
-  function submit() {
-    const n = name.trim()
-    if (n) onAdd({ name: n, partNo: partNo.trim(), nickname: nickname.trim(), uom: uom.trim(), refCost: refCost ? Number(refCost) : 0, category })
-    reset(); setOpen(false); if (onCancel) onCancel()
-  }
-  function handleBlur(e) { if (!e.currentTarget.contains(e.relatedTarget)) submit() }
-  const onKey = e => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') { reset(); setOpen(false); if (onCancel) onCancel() } }
-
-  if (!open) return <CollapsedAddRow label="Add item" indent onClick={() => setOpen(true)} />
-
-  return (
-    <div onBlur={handleBlur} style={{ ...rowStyle, background: 'var(--surface-2)', paddingLeft: 34 }}>
-      <div style={{ display: 'grid', gridTemplateColumns: CAT_COLS, gap: 6, flex: 1, minWidth: 0, alignItems: 'center' }}>
-        <input value={partNo} onChange={e => setPartNo(e.target.value)} placeholder="—" onKeyDown={onKey} style={{ ...plainInputStyle, fontSize: 11 }} />
-        <NicknameDescInputs nickname={nickname} setNickname={setNickname} name={name} setName={setName} onKey={onKey} />
-        <UomSelect value={uom} onChange={setUom} />
-        <div style={{ display: 'flex', alignItems: 'center', gap: 2, justifyContent: 'flex-end' }}>
-          <span style={{ fontSize: 11, color: 'var(--text-light)' }}>$</span>
-          <input type="number" step="0.01" value={refCost} onChange={e => setRefCost(e.target.value)} placeholder="0.00" onKeyDown={onKey}
-            style={{ ...plainInputStyle, ...catFieldStyle, textAlign: 'right' }} />
-        </div>
-      </div>
-    </div>
-  )
-}
 
 function NewCategoryRow({ onAdd }) {
   const [open, setOpen] = useState(false)
@@ -1093,99 +1024,11 @@ function BulkCategorizeModal({ items, allItems, onApply, onClose }) {
   )
 }
 
-function CatalogTab({ catalog, setCatalog, stock, categoryPaths, onAddCategoryPath, onRenameCategory, onDeleteCategory, addToTrash }) {
-  const [search, setSearch] = useState('')
-  const [bulkOpen, setBulkOpen] = useState(false)
-
-  function addItem(data) {
-    if (data.category) onAddCategoryPath(data.category)
-    setCatalog(list => [...list, { id: uid(), ...data }])
-  }
-  function updateItem(id, patch) {
-    if (patch.category) onAddCategoryPath(patch.category)
-    setCatalog(list => list.map(i => i.id === id ? { ...i, ...patch } : i))
-  }
-  function deleteItem(id) {
-    const item = catalog.find(i => i.id === id)
-    if (item) addToTrash('catalog_item', item.nickname || item.name || 'Catalog item', item)
-    setCatalog(list => list.filter(i => i.id !== id))
-  }
-  function applyBulkCategories(matches) {
-    setCatalog(list => list.map(i => {
-      const m = matches.find(x => x.item.id === i.id)
-      return m ? { ...i, category: m.suggestion } : i
-    }))
-  }
-
-  const q = search.trim().toLowerCase()
-  const filtered = q ? catalog.filter(i => hit([i.name, i.nickname, i.category, ...partNosOf(i)], q)) : catalog
-  const uncategorizedCount = catalog.filter(i => !i.category).length
-
-  return (
-    <div>
-      <div style={{ padding: '10px 16px 0', fontSize: 11, color: 'var(--text-light)' }}>
-        Reference pricing used when searching materials for Quotes and T&M jobs. No count or part number required.
-      </div>
-      <SearchBox value={search} onChange={setSearch} placeholder="Search catalog…" />
-      {uncategorizedCount > 0 && (
-        <div style={{ padding: '0 16px 10px' }}>
-          <button
-            onClick={() => setBulkOpen(true)}
-            style={{ fontSize: 11, fontWeight: 700, color: '#1a5fa0', background: '#e8f2fc', border: 'none', borderRadius: 20, padding: '6px 12px', cursor: 'pointer' }}
-          >
-            Check {uncategorizedCount} uncategorized against categorized
-          </button>
-        </div>
-      )}
-      {catalog.length === 0 && (
-        <div style={{ padding: '18px 16px', textAlign: 'center', color: 'var(--text-light)', fontSize: 13 }}>
-          {q ? 'No matches.' : 'No catalog items yet.'}
-        </div>
-      )}
-      <CategoryTree
-        items={filtered}
-        extraPaths={categoryPaths}
-        onAddExtraPath={onAddCategoryPath}
-        onRenameCategory={onRenameCategory}
-        onDeleteCategory={onDeleteCategory}
-        onAddItem={addItem}
-        getRowProps={item => ({ onUpdate: patch => updateItem(item.id, patch), onDelete: () => deleteItem(item.id) })}
-        ColumnHeader={CatColumnHeader}
-        RowComponent={CatRow}
-        AddRowComponent={CatAddRow}
-        q={q}
-      />
-      {bulkOpen && (
-        <BulkCategorizeModal
-          items={catalog}
-          allItems={[...catalog, ...stock]}
-          onApply={applyBulkCategories}
-          onClose={() => setBulkOpen(false)}
-        />
-      )}
-    </div>
-  )
-}
 
 // ══════════════════════════════════════════════════════════════════
 // STOCK — tracked, purchased inventory: Part No | Description | UOM | Price Per | Total on hand
 // ══════════════════════════════════════════════════════════════════
-const STK_COLS = 'minmax(110px, 0.35fr) minmax(140px, 1fr) 48px 86px 100px'
 
-function StockColumnHeader() {
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 16px 4px 34px', background: 'var(--surface-2)' }}>
-      <div style={{ display: 'grid', gridTemplateColumns: STK_COLS, gap: 6, flex: 1, minWidth: 0 }}>
-        <span style={colHeaderStyle}>Part No:</span>
-        <span style={colHeaderStyle}>Nickname / Description:</span>
-        <span style={colHeaderStyle}>UOM:</span>
-        <span style={{ ...colHeaderStyle, textAlign: 'right' }}>Price per</span>
-        <span style={{ ...colHeaderStyle, textAlign: 'right' }}>Total on hand</span>
-      </div>
-      <span style={{ width: 22, flexShrink: 0 }} />
-    </div>
-  )
-}
 
 // Searches jobs the same way every other job-picker in the app does — type
 // to filter by customer or job name, click to pick. Deducts from this stock
@@ -1306,259 +1149,8 @@ function AllocateToJobModal({ item, onClose, onAllocate }) {
   )
 }
 
-function StockRow({ item, order, onUpdate, onDelete }) {
-  const [allocating, setAllocating] = useState(false)
-  const total = (Number(item.qty) || 0) * (Number(item.cost) || 0)
 
 
-  function allocateToJob(usedQty, freeQty, job) {
-    const onHand = Number(item.qty) || 0
-    const paidFor = Number(item.paidForQty) || 0
-    const log = [...(item.allocationLog || []), {
-      id: uid(), date: new Date().toISOString(), qty: usedQty,
-      jobName: job?.name || 'Untitled job', customerName: job?.customerName || 'Unknown customer',
-    }]
-    onUpdate({ qty: Math.max(0, onHand - usedQty), paidForQty: Math.max(0, paidFor - freeQty), allocationLog: log })
-  }
-
-  return (
-    <div>
-      <div style={{ ...rowStyle, paddingLeft: 34 }}>
-        <div style={{ display: 'grid', gridTemplateColumns: STK_COLS, gap: 6, flex: 1, minWidth: 0, alignItems: 'center' }}>
-          <EditableField value={item.partNo} placeholder="—" onSave={v => onUpdate({ partNo: v })} style={{ fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }} />
-          <NicknameDescCell item={item} onUpdate={onUpdate} />
-          <UomSelect value={item.uom} onChange={v => onUpdate({ uom: v })} />
-          <div style={{ display: 'flex', alignItems: 'center', gap: 2, justifyContent: 'flex-end' }}>
-            <span style={{ fontSize: 11, color: 'var(--text-light)' }}>$</span>
-            <input type="number" step="0.01" value={item.cost ?? ''} onChange={e => onUpdate({ cost: e.target.value })}
-              placeholder="0.00" style={{ ...plainInputStyle, fontSize: 12.5, textAlign: 'right' }} />
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 1 }}>
-            <input type="number" value={item.qty ?? ''} onChange={e => onUpdate({ qty: e.target.value })}
-              placeholder="0" style={{ ...plainInputStyle, fontSize: 12.5, textAlign: 'right', width: 50 }} />
-            <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-mid)' }}>{money(total)}</span>
-          </div>
-        </div>
-        <ConfirmDeleteButton onConfirm={onDelete} style={delBtnStyle} ariaLabel="Delete stock item" confirmText="Delete this stock item?" />
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '0 16px 8px 34px', flexWrap: 'wrap' }}>
-        {order && (
-          <span style={{ fontSize: 10, color: 'var(--blue-dark)', background: 'var(--blue-bg)', borderRadius: 20, padding: '2px 8px', fontWeight: 700 }}>
-            From order: {order.wholesaler || 'Unknown'} · {order.orderDate || '—'}
-          </span>
-        )}
-        <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'var(--text-light)' }}>
-          Already paid for:
-          <input
-            type="number" value={item.paidForQty ?? 0}
-            onChange={e => onUpdate({ paidForQty: Math.max(0, Math.min(Number(item.qty) || 0, Number(e.target.value) || 0)) })}
-            style={{ width: 42, fontSize: 11, textAlign: 'center', border: '1px solid var(--border)', borderRadius: 4, padding: '2px 3px', fontFamily: 'var(--font)' }}
-          />
-          of {Number(item.qty) || 0} on hand
-        </span>
-        <button
-          onClick={() => setAllocating(true)}
-          disabled={(Number(item.qty) || 0) <= 0}
-          style={{
-            fontSize: 10.5, fontWeight: 700, color: (Number(item.qty) || 0) <= 0 ? 'var(--text-light)' : '#1a5fa0',
-            background: (Number(item.qty) || 0) <= 0 ? 'var(--surface-2)' : '#e8f2fc',
-            border: 'none', borderRadius: 20, padding: '3px 10px', cursor: (Number(item.qty) || 0) <= 0 ? 'default' : 'pointer',
-          }}
-        >
-          Allocate to Job
-        </button>
-      </div>
-      {(Number(item.paidForQty) || 0) > 0 && (
-        <div style={{ padding: '0 16px 8px 34px', fontSize: 10, color: 'var(--text-light)' }}>
-          Jobs draw from the paid-for amount first, at no cost — once that runs out, further use gets costed at ${(Number(item.cost) || 0).toFixed(2)}/{item.uom || 'unit'}.
-        </div>
-      )}
-      <PriceHistoryHint history={item.priceHistory} />
-      <AllocationHistoryHint log={item.allocationLog} />
-      {allocating && (
-        <AllocateToJobModal item={item} onClose={() => setAllocating(false)} onAllocate={allocateToJob} />
-      )}
-
-    </div>
-  )
-}
-
-function StockAddRow({ category, onAdd, catalog, startOpen, onCancel }) {
-  const [open, setOpen] = useState(!!startOpen)
-  const [name, setName] = useState('')
-  const [partNo, setPartNo] = useState('')
-  const [nickname, setNickname] = useState('')
-  const [qty, setQty] = useState('')
-  const [uom, setUom] = useState('')
-  const [cost, setCost] = useState('')
-  const [alreadyPaidFor, setAlreadyPaidFor] = useState(true)
-  const [showDropdown, setShowDropdown] = useState(false)
-
-  const q = name.trim().toLowerCase()
-  const matches = (catalog && q) ? catalog.filter(c => hit([c.name, c.nickname, ...partNosOf(c)], q)).slice(0, 6) : []
-
-  function pick(c) {
-    setName(c.name || '')
-    setPartNo(c.partNo || '')
-    setNickname(c.nickname || '')
-    setUom(c.uom || '')
-    if (c.refCost != null) setCost(String(c.refCost))
-    setShowDropdown(false)
-  }
-
-  function reset() { setName(''); setPartNo(''); setNickname(''); setQty(''); setUom(''); setCost(''); setAlreadyPaidFor(true); setShowDropdown(false) }
-  function submit() {
-    const n = name.trim()
-    const enteredQty = qty ? Number(qty) : 0
-    if (n) onAdd({
-      name: n, partNo: partNo.trim(), nickname: nickname.trim(), qty: enteredQty, uom: uom.trim(), cost: cost ? Number(cost) : 0,
-      paidForQty: alreadyPaidFor ? enteredQty : 0, category,
-    })
-    reset(); setOpen(false); if (onCancel) onCancel()
-  }
-  function handleBlur(e) { if (!e.currentTarget.contains(e.relatedTarget)) submit() }
-  const onKey = e => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') { reset(); setOpen(false); if (onCancel) onCancel() } }
-
-  if (!open) return <CollapsedAddRow label="Add stock item manually" indent onClick={() => setOpen(true)} />
-
-  return (
-    <div onBlur={handleBlur} style={{ background: 'var(--surface-2)' }}>
-      <div style={{ ...rowStyle, background: 'var(--surface-2)', paddingLeft: 34 }}>
-        <div style={{ display: 'grid', gridTemplateColumns: STK_COLS, gap: 6, flex: 1, minWidth: 0, alignItems: 'center' }}>
-          <input value={partNo} onChange={e => setPartNo(e.target.value)} placeholder="—" onKeyDown={onKey} style={{ ...plainInputStyle, fontSize: 11 }} />
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0, position: 'relative' }}>
-            <input value={nickname} onChange={e => setNickname(e.target.value)} placeholder="+ nickname" onKeyDown={onKey}
-              style={{ ...plainInputStyle, fontSize: 11, fontWeight: 700 }} />
-            <input
-              autoFocus value={name}
-              onChange={e => { setName(e.target.value); if (catalog) setShowDropdown(true) }}
-              onFocus={() => catalog && setShowDropdown(true)}
-              onBlur={() => setTimeout(() => setShowDropdown(false), 120)}
-              placeholder={catalog ? 'Search Catalog or type new…' : 'Description'} onKeyDown={onKey}
-              style={{ ...plainInputStyle, fontSize: 12.5 }}
-            />
-            {showDropdown && matches.length > 0 && (
-              <div style={{
-                position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 2,
-                background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--rs)',
-                zIndex: 20, maxHeight: 160, overflowY: 'auto', boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
-              }}>
-                {matches.map(m => (
-                  <div key={m.id} onMouseDown={() => pick(m)} style={{ padding: '8px 10px', fontSize: 13, cursor: 'pointer', borderBottom: '1px solid var(--border)' }}>
-                    {m.nickname ? (
-                      <><span style={{ fontWeight: 700 }}>{m.nickname}</span><span style={{ color: 'var(--text-light)' }}> — {m.name}</span></>
-                    ) : m.name}
-                    {m.refCost != null && <span style={{ color: 'var(--text-light)', float: 'right' }}>{money(m.refCost)}</span>}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-          <UomSelect value={uom} onChange={setUom} />
-          <div style={{ display: 'flex', alignItems: 'center', gap: 2, justifyContent: 'flex-end' }}>
-            <span style={{ fontSize: 11, color: 'var(--text-light)' }}>$</span>
-            <input type="number" step="0.01" value={cost} onChange={e => setCost(e.target.value)} placeholder="0.00" onKeyDown={onKey}
-              style={{ ...plainInputStyle, fontSize: 12.5, textAlign: 'right' }} />
-          </div>
-          <input type="number" value={qty} onChange={e => setQty(e.target.value)} placeholder="Qty" onKeyDown={onKey}
-            style={{ ...plainInputStyle, fontSize: 12.5, textAlign: 'right' }} />
-        </div>
-      </div>
-      <label style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0 16px 8px 34px', fontSize: 11, color: 'var(--text-light)', cursor: 'pointer' }}>
-        <input type="checkbox" checked={alreadyPaidFor} onChange={e => setAlreadyPaidFor(e.target.checked)} />
-        This is stock you already have — no cost to jobs until it runs out, then new purchases get costed normally
-      </label>
-    </div>
-  )
-}
-
-function StockTab({ stock, setStock, orders, catalog, categoryPaths, onAddCategoryPath, onRenameCategory, onDeleteCategory, addToTrash }) {
-  const [search, setSearch] = useState('')
-  const [hideEmpty, setHideEmpty] = useLocalStore('material_stock_hide_empty', true)
-  const [bulkOpen, setBulkOpen] = useState(false)
-
-  function updateItem(id, patch) {
-    if (patch.category) onAddCategoryPath(patch.category)
-    setStock(list => list.map(i => i.id === id ? { ...i, ...patch } : i))
-  }
-  function deleteItem(id) {
-    const item = stock.find(i => i.id === id)
-    if (item) addToTrash('stock_item', item.nickname || item.name || 'Stock item', item)
-    setStock(list => list.filter(i => i.id !== id))
-  }
-  function addItem(data) {
-    if (data.category) onAddCategoryPath(data.category)
-    setStock(list => [...list, { id: uid(), ...data }])
-  }
-  function applyBulkCategories(matches) {
-    setStock(list => list.map(i => {
-      const m = matches.find(x => x.item.id === i.id)
-      return m ? { ...i, category: m.suggestion } : i
-    }))
-  }
-
-  const q = search.trim().toLowerCase()
-  const withStock = hideEmpty ? stock.filter(i => (Number(i.qty) || 0) > 0) : stock
-  const hiddenCount = stock.length - withStock.length
-  const filtered = q ? withStock.filter(i => hit([i.name, i.partNo, i.nickname, i.category], q)) : withStock
-  const uncategorizedCount = stock.filter(i => !i.category).length
-
-  return (
-    <div>
-      <div style={{ padding: '10px 16px 0', fontSize: 11, color: 'var(--text-light)' }}>
-        Tracked, on-hand material. Every item here should have a part number and, where possible, a linked order.
-      </div>
-      <label style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px 0', fontSize: 12, color: 'var(--text-mid)', cursor: 'pointer' }}>
-        <input type="checkbox" checked={hideEmpty} onChange={e => setHideEmpty(e.target.checked)} />
-        Hide items with 0 on hand{hideEmpty && hiddenCount > 0 ? ` (${hiddenCount} hidden)` : ''}
-      </label>
-      {uncategorizedCount > 0 && (
-        <div style={{ padding: '8px 16px 0' }}>
-          <button
-            onClick={() => setBulkOpen(true)}
-            style={{ fontSize: 11, fontWeight: 700, color: '#1a5fa0', background: '#e8f2fc', border: 'none', borderRadius: 20, padding: '6px 12px', cursor: 'pointer' }}
-          >
-            Check {uncategorizedCount} uncategorized against categorized
-          </button>
-        </div>
-      )}
-      <SearchBox value={search} onChange={setSearch} placeholder="Search stock…" />
-      <StockAddRow category="" onAdd={addItem} catalog={catalog} />
-      {stock.length === 0 && (
-        <div style={{ padding: '18px 16px', textAlign: 'center', color: 'var(--text-light)', fontSize: 13 }}>
-          {q ? 'No matches.' : 'No stock yet — upload an order or add an item manually.'}
-        </div>
-      )}
-      {stock.length > 0 && filtered.length === 0 && (
-        <div style={{ padding: '18px 16px', textAlign: 'center', color: 'var(--text-light)', fontSize: 13 }}>
-          {q ? 'No matches.' : 'Nothing with stock on hand right now — uncheck the box above to see everything.'}
-        </div>
-      )}
-      <CategoryTree
-        items={filtered}
-        extraPaths={hideEmpty ? [] : categoryPaths}
-        onAddExtraPath={onAddCategoryPath}
-        onRenameCategory={onRenameCategory}
-        onDeleteCategory={onDeleteCategory}
-        onAddItem={addItem}
-        getRowProps={item => ({ onUpdate: patch => updateItem(item.id, patch), onDelete: () => deleteItem(item.id), order: orders.find(o => o.id === item.orderId) })}
-        ColumnHeader={StockColumnHeader}
-        RowComponent={StockRow}
-        AddRowComponent={props => <StockAddRow {...props} catalog={catalog} />}
-        q={q}
-        renderCount={node => `${countAllItems(node)} · ${money(sumAllValue(node, i => (Number(i.qty) || 0) * (Number(i.cost) || 0)))}`}
-      />
-      {bulkOpen && (
-        <BulkCategorizeModal
-          items={stock}
-          allItems={[...catalog, ...stock]}
-          onApply={applyBulkCategories}
-          onClose={() => setBulkOpen(false)}
-        />
-      )}
-    </div>
-  )
-}
 
 // ══════════════════════════════════════════════════════════════════
 // CATALOG & STOCK — one list. Every part lives in the Catalog (reference
@@ -2855,7 +2447,6 @@ function OrderDetailModal({ order, onClose, onUpdate, onReceiveItems, onPushPric
 
 function OrderRow({ order, onUpdate, onDelete, onReceiveItems, onMarkReceivedNoStock, onPushPricing, onAddToExport, isInExportList, jobOptions, startViewing = false }) {
   const feedRows = useOrdersFeed()
-  const poMatches = matchOrdersByPo(feedRows, order.poNumber)
   const [confirming, setConfirming] = useState(false)
   const [viewing, setViewing] = useState(startViewing)
   useEffect(() => { if (startViewing) setViewing(true) }, [startViewing])
@@ -2863,13 +2454,6 @@ function OrderRow({ order, onUpdate, onDelete, onReceiveItems, onMarkReceivedNoS
   const total = orderTotal(order)
   const lineItems = order.lineItems || []
   const attachedJobs = order.jobs || []
-  const receivedCount = lineItems.filter(li => li.received).length
-  const fullyReceived = lineItems.length > 0 && receivedCount === lineItems.length
-  const statusLabel = order.recordOnly || lineItems.length === 0 ? null
-    : fullyReceived ? 'Received'
-    : receivedCount === 0 ? 'Not received'
-    : `${receivedCount} of ${lineItems.length} received`
-  const statusColor = fullyReceived ? { bg: '#e6f4ea', fg: '#1e7a34' } : receivedCount === 0 ? { bg: '#fff3d6', fg: '#9a6610' } : { bg: '#e8f2fc', fg: '#1a5fa0' }
 
   function addJob(job) { onUpdate({ jobs: [...attachedJobs, job] }) }
   function removeJob(jobId) { onUpdate({ jobs: attachedJobs.filter(j => j.id !== jobId) }) }
@@ -2984,77 +2568,9 @@ function baseOrderNumber(invoiceNumber) {
   return match ? match[1] : s
 }
 
-function groupOrdersByBaseNumber(list) {
-  const groups = new Map()
-  list.forEach(o => {
-    const key = `${(o.wholesaler || '').trim().toLowerCase()}::${baseOrderNumber(o.invoiceNumber).toLowerCase()}`
-    if (!groups.has(key)) groups.set(key, [])
-    groups.get(key).push(o)
-  })
-  // Sort each group oldest-first (reads like a shipment timeline), then sort
-  // the groups themselves by their most recent order, newest group first.
-  const result = [...groups.values()].map(g => g.sort((a, b) => (a.orderDate || '').localeCompare(b.orderDate || '')))
-  result.sort((a, b) => {
-    const aMax = a.reduce((m, o) => o.orderDate > m ? o.orderDate : m, '')
-    const bMax = b.reduce((m, o) => o.orderDate > m ? o.orderDate : m, '')
-    return bMax.localeCompare(aMax)
-  })
-  return result
-}
 
-function monthLabelFor(monthKey) {
-  if (!monthKey) return 'No date'
-  const [y, m] = monthKey.split('-').map(Number)
-  return new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
-}
 
-// Sections a list of orders by the month they were ordered in — undated
-// orders get their own trailing "No date" section rather than being dropped.
-function groupOrdersByMonth(list) {
-  const groups = new Map()
-  list.forEach(o => {
-    const key = o.orderDate ? o.orderDate.slice(0, 7) : ''
-    if (!groups.has(key)) groups.set(key, [])
-    groups.get(key).push(o)
-  })
-  const monthKeys = [...groups.keys()].sort((a, b) => {
-    if (!a) return 1 // undated sinks to the bottom
-    if (!b) return -1
-    return b.localeCompare(a)
-  })
-  return monthKeys.map(monthKey => ({ monthKey, monthLabel: monthLabelFor(monthKey), orders: groups.get(monthKey) }))
-}
 
-// A staging list of orders picked out specifically to send to the boss —
-// separate from the full Ordered list, since not everything there needs to
-// go on a check-off list. Exports to a clean PDF.
-function OrderMonthSections({ list, dimmed, onUpdateOrder, onDeleteOrder, onReceiveItems, onMarkReceivedNoStock, onPushPricing, onAddToExport, exportList, jobOptions }) {
-  const monthGroups = groupOrdersByMonth(list)
-  return monthGroups.map(({ monthKey, monthLabel, orders: monthOrders }) => (
-    <div key={monthKey || 'undated'}>
-      <div style={{ padding: '10px 16px 4px', fontSize: 11, fontWeight: 700, color: 'var(--text)', textTransform: 'uppercase', letterSpacing: '.04em', background: 'var(--surface-2)', borderTop: '1px solid var(--border)' }}>
-        {monthLabel} <span style={{ fontWeight: 500, color: 'var(--text-light)', textTransform: 'none' }}>({monthOrders.length})</span>
-      </div>
-      {groupOrdersByBaseNumber(monthOrders).map((group, gi) => (
-        <div key={gi} style={dimmed ? { opacity: 0.75 } : undefined}>
-          {group.length > 1 && (
-            <div style={{ padding: '8px 16px 4px', fontSize: 10.5, fontWeight: 700, color: 'var(--text-light)', textTransform: 'uppercase', letterSpacing: '.04em', background: 'var(--surface-2)' }}>
-              Order #{baseOrderNumber(group[0].invoiceNumber)} — {group.length} shipments (backorder group)
-            </div>
-          )}
-          {group.map(o => (
-            <OrderRow
-              key={o.id} order={o} onUpdate={patch => onUpdateOrder(o.id, patch)} onDelete={() => onDeleteOrder(o.id)}
-              onReceiveItems={onReceiveItems} onMarkReceivedNoStock={onMarkReceivedNoStock} onPushPricing={onPushPricing}
-              onAddToExport={onAddToExport} isInExportList={exportList.some(e => e.orderId === o.id)}
-              jobOptions={jobOptions}
-            />
-          ))}
-        </div>
-      ))}
-    </div>
-  ))
-}
 
 function OrderedTab({ onClearFromJobs = () => {}, onLinkFeedPart = async () => null, orders, apiKey, onCommitOrder, onUpdateOrder, onDeleteOrder, onReceiveItems, onMarkReceivedNoStock, onPushPricing, onAddToExport, exportList, pendingSlips, onRemovePendingSlip, quotes = [], jobRecords = [], onMoveToStock, onWriteToJobs, feedChecked = {}, onCheckFeedPart, onCompareSlip }) {
   const [subTab, setSubTab] = useState('overview') // overview | orders | pricing | received | archive
@@ -4707,18 +4223,6 @@ export default function Materials({ screen }) {
     if (newCat.length) setCatalog(list => [...list, ...newCat])
     setStock(list => list.map(x => idFor.has(x.id) ? { ...x, catalogId: idFor.get(x.id) } : x))
   }, [catalog, stock])
-
-  function findStockMatch(list, li) {
-    if (li.partNo) {
-      const m = list.find(s => s.partNo && s.partNo.toLowerCase() === li.partNo.toLowerCase())
-      if (m) return m
-    }
-    if (li.nickname) {
-      const m = list.find(s => s.nickname && s.nickname.toLowerCase() === li.nickname.toLowerCase())
-      if (m) return m
-    }
-    return list.find(s => s.name && li.name && s.name.toLowerCase() === li.name.toLowerCase())
-  }
 
   function slipFileName(parsed) {
     const safe = (s) => String(s || '').replace(/[<>:"/\\|?*]/g, ' ').trim().replace(/[. ]+$/, '')

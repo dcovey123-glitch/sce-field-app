@@ -4,11 +4,13 @@ import { findProposal } from '../api/proposal.js'
 // "📄 Proposal" — opens the proposal PDF saved in the quote's Files
 export default function ProposalPill({ customerFolder, quote, size = 'small' }) {
   const [file, setFile] = useState(null)
+  const qFolder = quote && quote.folder
+  const qTitle = quote && quote.title
   useEffect(() => {
     let live = true
-    findProposal(customerFolder, quote).then(f => { if (live) setFile(f) })
+    findProposal(customerFolder, { folder: qFolder, title: qTitle }).then(f => { if (live) setFile(f) })
     return () => { live = false }
-  }, [customerFolder, quote && quote.id, quote && quote.folder, quote && quote.title])
+  }, [customerFolder, qFolder, qTitle])
   if (!file) return null
   const big = size === 'big'
   return (

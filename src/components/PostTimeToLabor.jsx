@@ -12,7 +12,6 @@ import NoteEdit from './NoteEdit.jsx'
 // posted, can undo it, and can spot an entry edited after it was posted.
 
 function uid() { return Math.random().toString(36).slice(2, 10) }
-const lower = s => (s || '').trim().toLowerCase()
 const money = n => '$' + (Number(n) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const fmtH = n => (Math.round((Number(n) || 0) * 100) / 100).toFixed(2)
 const costOf = (entries, rates) => entries.reduce((s, e) => s + (Number(e.hours) || 0) * (rates.find(r => r.id === e.rateId)?.rate || 0), 0)

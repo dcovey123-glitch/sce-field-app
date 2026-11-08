@@ -42,7 +42,6 @@ export default function SlipLinesForJob({ project, entries, onSetEntries }) {
   const left = complete ? leftoverLinesForJob(orders, project, isComplete) : []
   if (!slips.length) return null
 
-  const label = o => [o.wholesaler, o.invoiceNumber && `Inv ${o.invoiceNumber}`, o.poNumber && `PO ${o.poNumber}`].filter(Boolean).join(' · ')
   const jobName = id => id === GENERAL_STOCK_ID ? 'Stock' : (jobById(id)?.name || 'another job')
 
   // Set how much of a line this job used (0 = none). Updates the line's pool
