@@ -345,7 +345,7 @@ export default function Snapshot() {
       if (!saved) throw new Error('The PDF could not be saved.')
       if (email && window.desktop.draftEmail) {
         const when = takenAt.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
-        const text = ['Hi Jonathan,', '', `Attached is the On the Books snapshot as of ${when} — open jobs, quotes and what's left to bill.`, '', 'Thanks,', 'Dustin'].join('\n')
+        const text = ['Hi Jonathan,', '', `Attached is the On the Books snapshot as of ${when} — open jobs, quotes and what's left to bill.`].join('\n') // Outlook adds the signature
         const r = await window.desktop.draftEmail({ to: JONATHAN, subject: `On the Books snapshot - ${when}`, text, attachments: [saved] })
         if (r && !r.ok) throw new Error(r.error || 'Could not open an email.')
         setExportState({ busy: false, err: '', msg: r && r.method === 'eml' ? 'Email to Jonathan is ready in Outlook with the snapshot attached — check it and press Send.' : 'An email to Jonathan is open, and the PDF is highlighted in File Explorer. Drag it into the email to attach it.' })

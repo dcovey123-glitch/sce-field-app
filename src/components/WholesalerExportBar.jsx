@@ -53,11 +53,7 @@ export default function WholesalerExportBar({ items, wholesaler, date, subjectPr
             pricing
               ? `Could you please price the attached list (${n} item${n === 1 ? '' : 's'}) and send me a quote? Please note any lead times or substitutions.`
               : `Please see the attached material order (${n} item${n === 1 ? '' : 's'}). Let me know on availability, and when it's ready for pick-up.`,
-            '',
-            'Thanks,',
-            'Dustin',
-            'SCE Electric Western Canada Ltd.',
-          ].join('\n')
+          ].join('\n') // no sign-off — Outlook adds the signature
           const result = await window.desktop.draftEmail({ to: ws.email, subject: subjectPrefix, text, attachments: [savedPath] })
           if (!result.ok) setError(result.error)
           else {

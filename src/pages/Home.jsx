@@ -2,7 +2,6 @@ import React, { useState } from 'react'
 import { useHubStore } from '../api/useHubStore.js'
 import logoUrl from '../assets/logo_sce_new.jpg'
 import { effectiveLifecycleStatus } from './Jobs.jsx'
-import { useNeedsYou } from '../components/NeedsYou.jsx'
 
 // ── Home: big logo in the middle, six launch bubbles around it ──
 const MATERIALS_VIEWS = [
@@ -16,13 +15,12 @@ const MATERIALS_VIEWS = [
 // angle in degrees, 0 = right, -90 = top, going clockwise
 const BUBBLES = [
   { id: 'customers',    label: 'Customers',     icon: '👥', angle: -90 },
-  { id: 'materials',    label: 'Materials',     icon: '📦', angle: -45 },
-  { id: 'review',       label: 'Assistant Update', icon: '☀️', angle: 0 },
-  { id: 'notes',        label: 'Notes',         icon: '📝', angle: 45 },
-  { id: 'timesheets',   label: 'Timesheets',    icon: '🧾', angle: 90 },
-  { id: 'timetracking', label: 'Time Tracking', icon: '⏱', angle: 135 },
-  { id: 'billing',      label: 'Billing',       icon: '💰', angle: 180 },
-  { id: 'cloudsync',    label: 'Mobile',        icon: '📱', angle: 225 },
+  { id: 'materials',    label: 'Materials',     icon: '📦', angle: -39 },
+  { id: 'review',       label: 'Assistant Update', icon: '☀️', angle: 13 },
+  { id: 'notes',        label: 'Notes',         icon: '📝', angle: 64 },
+  { id: 'timesheets',   label: 'Timesheets',    icon: '🧾', angle: 116 },
+  { id: 'timetracking', label: 'Time Tracking', icon: '⏱', angle: 167 },
+  { id: 'billing',      label: 'Billing',       icon: '💰', angle: 219 },
 ]
 
 function Popout({ bubble, children }) {
@@ -58,7 +56,6 @@ export default function Home({ onOpenHub, agingDeficiencyCount = 0, ordersAttent
     customersKey: 'job_customers', recordsKey: 'job_projects', reloadOnFocus: true,
   })
   const [openId, setOpenId] = useState(null)
-  const needs = useNeedsYou(null)
   const [custSearch, setCustSearch] = useState('')
 
   const customers = jobsHub.loading ? [] : jobsHub.customers
@@ -109,31 +106,8 @@ export default function Home({ onOpenHub, agingDeficiencyCount = 0, ordersAttent
 
   return (
     <div onClick={close} style={{ position: 'relative' }}>
-      {/* Snapshot + Active Jobs — top-right, just under the header bar */}
+      {/* Active Jobs — top-right, just under the header bar (Today, Snapshot and Mobile are on the top bar) */}
       <div style={{ position: 'absolute', top: 12, right: 16, zIndex: 40, display: 'flex', gap: 8, alignItems: 'flex-start' }} onClick={e => e.stopPropagation()}>
-        <button onClick={() => { close(); onOpenHub && onOpenHub('todo') }}
-          title="What needs you today: tasks due, money waiting, material, time, quotes, flags"
-          style={{
-            display: 'flex', alignItems: 'center', gap: 8, padding: '9px 16px', borderRadius: 30, cursor: 'pointer',
-            border: '2px solid var(--accent)', background: 'var(--accent)', color: 'var(--navy)',
-            fontSize: 14, fontWeight: 700, fontFamily: 'var(--font-d)', boxShadow: '0 4px 14px rgba(15,30,46,.18)', whiteSpace: 'nowrap',
-          }}>
-          <span style={{ fontSize: 17 }}>☀</span>
-          Today
-          {needs.total > 0 && <span style={{ fontSize: 11, fontWeight: 800, padding: '1px 7px', borderRadius: 10, background: needs.urgent ? '#c0392b' : 'var(--navy)', color: '#fff' }}>{needs.total}</span>}
-        </button>
-        <button
-          onClick={() => { close(); onOpenHub && onOpenHub('snapshot') }}
-          title="What's on the books right now: jobs left to bill, open quotes, billing and upcoming dates"
-          style={{
-            display: 'flex', alignItems: 'center', gap: 8, padding: '9px 16px', borderRadius: 30, cursor: 'pointer',
-            border: '2px solid var(--navy)', background: 'var(--surface)', color: 'var(--navy)',
-            fontSize: 14, fontWeight: 700, fontFamily: 'var(--font-d)', boxShadow: '0 4px 14px rgba(15,30,46,.18)', whiteSpace: 'nowrap',
-          }}
-        >
-          <span style={{ fontSize: 17 }}>📊</span>
-          Snapshot
-        </button>
         <div style={{ position: 'relative' }}>
         <button
           onClick={() => { setOpenId(id => id === 'activejobs' ? null : 'activejobs'); setJobSearch(''); setCustSearch('') }}

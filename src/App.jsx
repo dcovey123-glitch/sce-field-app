@@ -24,6 +24,7 @@ import CustomerJobsWindow from './pages/CustomerJobsWindow.jsx'
 import DeficienciesWindow from './pages/DeficienciesWindow.jsx'
 import CustomerFilesWindow from './pages/CustomerFilesWindow.jsx'
 import ManageCustomersWindow from './pages/ManageCustomersWindow.jsx'
+import { useNeedsYou } from './components/NeedsYou.jsx'
 
 function parseWindowRoute() {
   let m = window.location.hash.match(/^#\/customer\/([^/]+)(?:\/(job|quote)\/([^/]+)(?:\/([^/]+))?)?$/)
@@ -180,6 +181,7 @@ export default function App() {
   }
 
   const canGoBack = history.length > 0
+  const needs = useNeedsYou(null) // Today's count on the top bar
 
   if (windowRoute?.kind === 'customer') {
     return <CustomerJobsWindow customerId={windowRoute.customerId} initialProjectId={windowRoute.projectId} initialQuoteId={windowRoute.quoteId} initialFocus={windowRoute.focus} />
@@ -205,35 +207,45 @@ export default function App() {
     <div className={styles.app}>
       <header className={styles.hdr}>
         <div className={styles.hdrBrand}>
+          {/* Left: back (only when there's somewhere to go back to), then the SCE logo = Home */}
+          {canGoBack && (
+            <button className={styles.backBtn} onClick={goBack} aria-label="Back" title="Back">
+              <svg width="16" height="16" viewBox="0 0 18 18" fill="none">
+                <path d="M11.5 4L6.5 9L11.5 14" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </button>
+          )}
           <button
-            className={`${styles.backBtn} ${!canGoBack ? styles.backBtnHidden : ''}`}
-            onClick={goBack}
-            disabled={!canGoBack}
-            aria-label="Back"
+            onClick={() => navigate(HUB_ROOT.home)}
+            title="Home" aria-label="Home"
+            style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', display: 'flex', alignItems: 'center', outline: 'none', borderRadius: 6, boxShadow: screen?.hub === 'home' ? '0 0 0 2px var(--accent)' : 'none' }}
           >
-            <svg width="16" height="16" viewBox="0 0 18 18" fill="none">
-              <path d="M11.5 4L6.5 9L11.5 14" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
+            <img src={logoUrl} alt="SCE Electric — Home" style={{ height: 52, borderRadius: 6, display: 'block' }} />
           </button>
           <div className={styles.hdrSpacer} />
-          {[{ id: 'trash', label: 'Trash', icon: '🗑' }, { id: 'backup', label: 'Backup', icon: '💾' }, { id: 'crew', label: 'Crew', icon: '👷' }].map(item => (
+          {/* Right: Today (with what's waiting), Snapshot, Mobile, then the tools */}
+          {[
+            { id: 'todo', label: 'Today', icon: '☀', title: 'What needs you today', count: needs.total, urgent: needs.urgent },
+            { id: 'snapshot', label: 'Snapshot', icon: '📊', title: "What's on the books: left to bill, open quotes, billing" },
+            { id: 'cloudsync', label: 'Mobile', icon: '📱', title: 'Phone app and sync' },
+            { id: 'crew', label: 'Crew', icon: '👷' },
+            { id: 'backup', label: 'Backup', icon: '💾' },
+            { id: 'trash', label: 'Trash', icon: '🗑' },
+          ].map(item => (
             <button
               key={item.id}
               className={`${styles.navBtn} ${screen?.hub === item.id ? styles.navBtnActive : ''}`}
               onClick={() => navigate(HUB_ROOT[item.id])}
-              title={item.label}
+              title={item.title || item.label}
+              style={{ position: 'relative' }}
             >
               <span className={styles.navIcon}>{item.icon}</span>
               <span className={styles.navLbl}>{item.label}</span>
+              {item.count > 0 && (
+                <span style={{ position: 'absolute', top: 0, right: 2, minWidth: 16, height: 16, padding: '0 4px', boxSizing: 'border-box', borderRadius: 8, background: item.urgent ? '#c0392b' : 'var(--accent)', color: item.urgent ? '#fff' : 'var(--navy)', fontSize: 10, fontWeight: 800, lineHeight: '16px', textAlign: 'center' }}>{item.count}</span>
+              )}
             </button>
           ))}
-          <button
-            onClick={() => navigate(HUB_ROOT.home)}
-            title="Home" aria-label="Home"
-            style={{ background: 'none', border: 'none', padding: 0, marginLeft: 6, cursor: 'pointer', display: 'flex', alignItems: 'center', outline: 'none', borderRadius: 6, boxShadow: screen?.hub === 'home' ? '0 0 0 2px var(--accent)' : 'none' }}
-          >
-            <img src={logoUrl} alt="SCE Electric — Home" style={{ height: 52, borderRadius: 6, display: 'block' }} />
-          </button>
         </div>
       </header>
       {/* Background helpers: phone sync every 10 min, and slip reading/grabbing */}
