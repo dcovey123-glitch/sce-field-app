@@ -90,7 +90,11 @@ function finish(p, mark, billingFlag) {
   const slipVsQuote = packing.length && quoteTotal ? `slips ${money(slipSum)} of ${money(quoteTotal)}` : ''
 
   const oldRecord = slips.length > 0 && slips.every(o => o.archivedNote)
-  const pricing = !po && (rows.some(r => feedPoState(r) === 'pricing') || (slips.length > 0 && slips.every(o => slipKind(o) === 'pricing')))
+  // came back for a pricing request (sent from a quote) — kept for pricing; it
+  // just needs your OK the first time
+  const fromPricingReq = !po && requests.some(r => r.pricing && !r.removedAt)
+  const toConfirm = fromPricingReq && requests.some(r => r.pricing && r.needsConfirm)
+  const pricing = !po && (fromPricingReq || rows.some(r => feedPoState(r) === 'pricing') || (slips.length > 0 && slips.every(o => slipKind(o) === 'pricing')))
   const oldQuote = !po && !slips.length && rows.length > 0 && rows.every(r => r._prev)
   const forced = rows.some(r => r.forcedReceived) || slips.some(o => o.forceReceivedAt)
   const allLinesIn = lines.length > 0 && lines.every(x => x.li.received || x.li.movedTo)
@@ -110,7 +114,9 @@ function finish(p, mark, billingFlag) {
   let stage, why
   if (pricing || oldQuote || (!po && feedClosed)) {
     stage = 'pricing'
-    why = pricing ? `No PO · kept for pricing${filing ? ' (' + filing + ')' : ''}` : 'No PO · old quote the email run archived'
+    const forQuote = (requests.find(r => r.quote) || {}).quote
+    why = toConfirm ? `Came back for your pricing request${forQuote ? ' (quote ' + (forQuote.number || forQuote.title) + ')' : ''} — confirm it's for pricing`
+      : pricing ? `No PO · kept for pricing${filing ? ' (' + filing + ')' : forQuote ? ' (quote ' + (forQuote.number || forQuote.title) + ')' : ''}` : 'No PO · old quote the email run archived'
   } else if (!po && !anyIn && !slips.some(o => noPoState(o) === 'none')) {
     stage = 'waiting'; why = `Quote in ${date || ''} · no PO yet`
   } else if (mark.closed || oldRecord || allArchived || (po && feedClosed)) {
@@ -132,6 +138,7 @@ function finish(p, mark, billingFlag) {
   if (slipVsQuote && (stage !== 'closed' || shortBy > 1)) why += ` · ${slipVsQuote}${forced && shortBy > 1 ? ` (closed short — ${money(shortBy)} balance line on the export)` : ''}`
   // What needs you (only on open things)
   const flags = []
+  if (stage === 'pricing' && toConfirm) flags.push({ id: 'confirmpricing', text: 'Confirm it\'s for pricing', tone: 'info' })
   const missing = po && stage !== 'pricing' ? slips.filter(o => !hasPoNumber(o)) : []
   if (missing.length) flags.push({ id: 'slipnopo', text: `Slip missing PO ${po}`, tone: 'fix', fix: { kind: 'applyPo', po, ids: missing.map(o => o.id) } })
   if (stage !== 'closed' && stage !== 'pricing') {

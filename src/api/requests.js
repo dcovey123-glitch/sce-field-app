@@ -60,3 +60,21 @@ export function catalogPriceFor(item) {
   } catch { return Number(item.price) || 0 }
 }
 export const catalogQuoteTotal = r => Math.round((r.items || []).reduce((a, i) => a + (Number(i.qty) || 0) * (Number(i.price) || 0), 0) * 100) / 100
+
+// A pricing request's quote coming back: match it automatically when the
+// evidence is good (2+ of the same part #s, or 1 and the same supplier), and
+// flag it to be confirmed as Pricing. → null, or the new requests list
+export function autoMatchPricingRequests(requests, rows) {
+  const list = Array.isArray(requests) ? requests : []
+  const taken = new Set(list.filter(r => r.matchedFeedId && !r.removedAt).map(r => r.matchedFeedId))
+  let changed = false
+  const next = list.map(r => {
+    if (!r.pricing || r.fromCatalog || r.removedAt || r.matchedFeedId) return r
+    const no = new Set(r.rejectedFeedIds || [])
+    const best = quoteCandidates(r, rows, taken).find(c => !no.has(c.r.id) && (c.overlap >= 2 || (c.overlap >= 1 && c.sameSup)))
+    if (!best) return r
+    taken.add(best.r.id); changed = true
+    return { ...r, matchedFeedId: best.r.id, matchedAt: new Date().toISOString(), autoMatched: true, needsConfirm: true }
+  })
+  return changed ? next : null
+}

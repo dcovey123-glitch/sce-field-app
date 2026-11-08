@@ -16,7 +16,7 @@ import MaterialUsedTab, { QuickAddRow, partsList } from '../components/MaterialU
 import OrdersList from './Orders.jsx'
 import { groupMonthDist } from '../api/monthDist.js'
 import { buildPurchases, purchaseSearchText, STAGES } from '../api/purchases.js'
-import { REQUESTS_KEY, quoteCandidates, catalogQuoteTotal } from '../api/requests.js'
+import { REQUESTS_KEY, quoteCandidates, catalogQuoteTotal, autoMatchPricingRequests } from '../api/requests.js'
 import { addPlanLinesToOrderList, tagSlipsFromRequests } from '../api/materialPlan.js'
 import StockCount, { lastFullCount } from '../components/StockCount.jsx'
 import { EXPORT_EXTRA_KEY, exportWeekKey } from '../api/timesheetExport.js'
@@ -953,6 +953,13 @@ function OrderFormTab({ catalog, stock, parts = [], jobs = [] }) {
           subjectPrefix={`Material Order — ${date}`}
           saveFolder="Materials/Order Forms"
           emptyMessage="Check at least one item first."
+          confirmToSend
+          onSent={() => {
+            // what went out comes off the list (everything, when it was all checked)
+            const gone = new Set(exportItems.map(i => i.id))
+            setItems(list => list.filter(i => !gone.has(i.id)))
+            setSelectedIds(new Set())
+          }}
         />
       </div>
     </div>
@@ -3204,6 +3211,8 @@ function OrderedTab({ onClearFromJobs = () => {}, onLinkFeedPart = async () => n
       </>} />
   )
   const toCheckCount = pricingSlips.length + feedLive.length
+  const [reqsForTabs] = useLocalStore(REQUESTS_KEY, [])
+  const pricingConfirmCount = (Array.isArray(reqsForTabs) ? reqsForTabs : []).filter(r => r.pricing && r.needsConfirm && !r.removedAt).length
   const recvNoDate = orders.filter(o => slipKind(o) === 'order' && !o.recordOnly && !o.receivedAt && (o.lineItems || []).length && (o.lineItems || []).every(li => li.received) && !(isQuoteDoc(o) && o.replacedAt)).length
   // Slips billed differently than ordered, not looked at yet (archive included)
   const billingFlags = orders.filter(o => slipKind(o) === 'order' && !o.archivedNote).map(o => ({ o, r: checkOf(o) })).filter(x => x.r.status === 'flag' && !isReviewed(x.o, x.r))
@@ -3318,6 +3327,10 @@ function OrderedTab({ onClearFromJobs = () => {}, onLinkFeedPart = async () => n
             billingFlag={o => { const r = checkOf(o); return r.status === 'flag' && !isReviewed(o, r) }}
             renderSlip={o => orderRow(o, false)} onUpdateOrder={onUpdateOrder} onOpenParts={openPartDetails} partBusy={linking}
             openIn={(tab, text) => { if (tab === 'orders') setShowDetailed(true); setSubTab(tab); setSearch(String(text || '')) }} />
+          {sectionTitle('Pricing')}
+          <PurchasesOverview layout="pricing" q={q} orders={orders} feedRows={feedRows} prevRows={prevRows}
+            renderSlip={o => orderRow(o, false)} onUpdateOrder={onUpdateOrder} onOpenParts={openPartDetails} partBusy={linking}
+            openIn={(tab, text) => { if (tab === 'orders') setShowDetailed(true); setSubTab(tab); setSearch(String(text || '')) }} />
           {sectionTitle(`Pricing Quotes (${pricingSlips.filter(match).length + feedLive.filter(feedMatch).length})`)}
           {pricingList(pricingSlips.filter(match), feedLive.filter(feedMatch))}
           {sectionTitle(`Archive (${archived.filter(match).length + feedDone.filter(feedMatch).length})`)}
@@ -3328,9 +3341,9 @@ function OrderedTab({ onClearFromJobs = () => {}, onLinkFeedPart = async () => n
           <div style={{ display: 'flex', background: 'var(--surface)', borderBottom: '1px solid var(--border)' }}>
             <button onClick={() => setSubTab('overview')} style={laborTabBtnStyleM(subTab === 'overview')} title="Every purchase by stage — what needs you at the top">🧭 Overview</button>
             <button onClick={() => setSubTab('orders')} style={laborTabBtnStyleM(subTab === 'orders')} title="Everything being bought: with a PO, waiting for one, or without one">📑 Orders</button>
-            <button onClick={() => setSubTab('pricing')} style={laborTabBtnStyleM(subTab === 'pricing')} title="Quotes tagged Quote for Pricing — prices checked against the Catalog, never ordered">💲 Quotes for Pricing{toCheckCount ? ` (${toCheckCount} to check)` : ''}</button>
             <button onClick={() => setSubTab('received')} style={laborTabBtnStyleM(subTab === 'received')}>📥 Received{recvNoDate ? ` (${recvNoDate} ⚠)` : ''}</button>
             <button onClick={() => setSubTab('archive')} style={laborTabBtnStyleM(subTab === 'archive')}>🗄 Archive ({archived.length + feedDone.length})</button>
+            <button onClick={() => setSubTab('pricing')} style={laborTabBtnStyleM(subTab === 'pricing')} title="Pricing requests sent from quotes and the quotes that came back — for the Catalog and quotes, never ordered">💲 Pricing{pricingConfirmCount ? ` (${pricingConfirmCount} to confirm)` : toCheckCount ? ` (${toCheckCount} to check)` : ''}</button>
           </div>
           {subTab === 'overview' && (
             <PurchasesOverview q={q} orders={orders} feedRows={feedRows} prevRows={prevRows}
@@ -3340,7 +3353,7 @@ function OrderedTab({ onClearFromJobs = () => {}, onLinkFeedPart = async () => n
           )}
           {(subTab === 'orders' || subTab === 'pricing') && <DuplicateSlips orders={orders} onUpdateOrder={onUpdateOrder} onDeleteOrder={onDeleteOrder} />}
           {subTab === 'pricing' && <div style={{ padding: '7px 16px', fontSize: 12, color: 'var(--text-mid)', background: '#f3f7fc', borderBottom: '1px solid var(--border)' }}>
-            Only quotes tagged <b>Quote for Pricing</b>: prices are checked against the Catalog (and compared to the quote they're tagged to). <b>→ Order</b> moves one back to Orders.
+            Pricing requests sent from quotes, and the prices that came back — for reference on the Catalog and quotes, never ordered. A quote that comes back for a request lands here and asks you to confirm once. <b>→ Order</b> moves one back to Orders.
           </div>}
           {subTab === 'orders' && (
             <PurchasesOverview layout="orders" q={q} orders={orders} feedRows={feedRows} prevRows={prevRows}
@@ -3384,6 +3397,11 @@ function OrderedTab({ onClearFromJobs = () => {}, onLinkFeedPart = async () => n
               </>
             )
           })()}
+          {subTab === 'pricing' && (
+            <PurchasesOverview layout="pricing" orders={orders} feedRows={feedRows} prevRows={prevRows}
+              renderSlip={o => orderRow(o, false)} onUpdateOrder={onUpdateOrder} onOpenParts={openPartDetails} partBusy={linking}
+              openIn={(tab, text) => { if (tab === 'orders') setShowDetailed(true); setSubTab(tab); setSearch(String(text || '')) }} />
+          )}
           {subTab === 'pricing' && pricingList(pricingSlips, feedLive)}
           {subTab === 'pricing' && <OlderQuotes rows={[...(feedRows || []).filter(r => !r.archived), ...(prevRows || [])]} quotes={quotes} jobRecords={jobRecords} q={q} />}
           {subTab === 'received' && <ReceivedTab orders={orders} onUpdateOrder={onUpdateOrder} renderRow={o => orderRow(o, false, true)} />}
@@ -3625,8 +3643,19 @@ function PurchasesOverview({ layout = 'overview', q, orders, feedRows, prevRows,
   const matchReq = async (req, row) => {
     updReq(req.id, { matchedFeedId: row.id, matchedAt: new Date().toISOString() })
     setMatching('')
-    if (req.pricing && feedPoState(row) !== 'pricing') await setFeedPricing(row.id, true)
+    if (req.pricing) await fileForPricing(req, row)
   }
+  // File the quote that came back as Pricing, under the quote it was asked for
+  const fileForPricing = async (req, row) => {
+    if (req.quote) await setFeedPricingFor(row.id, { ref: req.quote.number || req.quote.title || '', refLabel: [req.quote.number, req.quote.title].filter(Boolean).join(' — ') })
+    else if (feedPoState(row) !== 'pricing') await setFeedPricing(row.id, true)
+  }
+  const confirmPricing = async (req, row) => {
+    updReq(req.id, { needsConfirm: false, confirmedAt: new Date().toISOString() })
+    if (row) await fileForPricing(req, row)
+  }
+  const notThisQuote = req => updReq(req.id, { matchedFeedId: null, matchedAt: null, autoMatched: false, needsConfirm: false, rejectedFeedIds: [...(req.rejectedFeedIds || []), req.matchedFeedId].filter(Boolean) })
+  const itsAnOrder = req => updReq(req.id, { pricing: false, needsConfirm: false })
   const all = buildPurchases({ slips: orders, feed: feedRows || [], previous: prevRows || [], marks: marks || {}, billingFlag, requests: reqList })
   const shown = all.filter(p => !q || hit(purchaseSearchText(p), q))
   const by = id => shown.filter(p => p.stage === id).sort((a, b) => String(b.date).localeCompare(String(a.date)))
@@ -3700,7 +3729,10 @@ function PurchasesOverview({ layout = 'overview', q, orders, feedRows, prevRows,
                         ? <><b>Quote from our Catalog</b>{rq.wholesaler ? <> · buying from {rq.wholesaler}</> : null} · {String(rq.sentAt || '').slice(0, 10)} · {items.length} item{items.length === 1 ? '' : 's'} · <b>{money(catalogQuoteTotal(rq))}</b></>
                         : <><b>{rq.pricing ? 'Pricing list' : 'Order'} {rq.phoned ? 'phoned in' : 'sent'}</b> to {rq.wholesaler || 'PDF only'} · {String(rq.sentAt || '').slice(0, 10)} · {items.length} item{items.length === 1 ? '' : 's'}</>}
                       {rq.file && window.desktop?.openFile && <> · <a href="#" onClick={e => { e.preventDefault(); window.desktop.openFile(rq.file) }} style={{ color: 'var(--blue, #2563eb)', fontWeight: 700 }}>order form</a></>}
-                      {matched && <span style={{ color: '#1e7a34', fontWeight: 700 }}> · ✓ matched to this quote</span>}
+                      {rq.quote && <> · for quote <b>{rq.quote.number || rq.quote.title}</b>{rq.quote.number && rq.quote.title ? ' — ' + rq.quote.title : ''}</>}
+                      {matched && (rq.needsConfirm
+                        ? <span style={{ color: '#1a5fa0', fontWeight: 700 }}> · came back — is it for pricing?</span>
+                        : <span style={{ color: '#1e7a34', fontWeight: 700 }}> · ✓ matched to this quote</span>)}
                     </span>
                     {rq.fromCatalog && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                       <span style={{ color: 'var(--text-light)' }}>PO</span>
@@ -3711,7 +3743,12 @@ function PurchasesOverview({ layout = 'overview', q, orders, feedRows, prevRows,
                     </span>}
                     {!matched && !rq.fromCatalog && <button onClick={() => setMatching(matching === rq.id ? '' : rq.id)} style={{ ...linkBtn, borderColor: '#1a5fa0', color: '#1a5fa0' }}>🔗 Match the quote…</button>}
                     {!matched && !rq.fromCatalog && <button onClick={() => updReq(rq.id, { pricing: !rq.pricing })} title={rq.pricing ? 'It is material being bought' : 'Prices only — never ordered'} style={linkBtn}>{rq.pricing ? '→ Order' : '💲 Move to Pricing'}</button>}
-                    {matched && <button onClick={() => updReq(rq.id, { matchedFeedId: null, matchedAt: null })} style={linkBtn}>Unmatch</button>}
+                    {matched && rq.needsConfirm && <>
+                      <button onClick={() => confirmPricing(rq, p.rows.find(r => r.id === rq.matchedFeedId))} title="File it as Pricing for this quote" style={{ ...linkBtn, background: '#1e7a34', color: '#fff', borderColor: '#1e7a34' }}>✓ Yes, it's pricing</button>
+                      <button onClick={() => notThisQuote(rq)} title="Wrong quote — unmatch it and don't suggest it again" style={linkBtn}>Not this quote</button>
+                      <button onClick={() => itsAnOrder(rq)} title="Material is being bought — move it to Orders" style={linkBtn}>→ It's an order</button>
+                    </>}
+                    {matched && !rq.needsConfirm && <button onClick={() => updReq(rq.id, { matchedFeedId: null, matchedAt: null })} style={linkBtn}>Unmatch</button>}
                     {!matched && <button onClick={() => updReq(rq.id, { removedAt: new Date().toISOString() })} title="Not sent, or not needed any more" style={linkBtn}>Remove</button>}
                   </div>
                   {!matched && !rq.fromCatalog && best && matching !== rq.id && (
@@ -3784,11 +3821,11 @@ function PurchasesOverview({ layout = 'overview', q, orders, feedRows, prevRows,
 
   if (layout === 'orders') {
     const GROUPS = [
-      { id: 'requested', title: '📨 Sent — waiting for quote', hint: 'Orders and pricing lists you sent — match the quote when it comes back, or move it to Pricing', test: p => p.stage === 'requested' },
+      { id: 'requested', title: '📨 Sent Request', hint: 'Orders you sent — match the quote when it comes back', test: p => p.stage === 'requested' },
       { id: 'ordered', title: '📦 Ordered Material', hint: 'PO issued — not yet picked up, or in and not sent to Jonathan', test: p => p.po && ['ordered', 'received', 'sent'].includes(p.stage) },
       { id: 'waiting', title: '⏳ Waiting on PO', hint: 'Quotes for material being bought', test: p => p.stage === 'waiting' },
       { id: 'complete', title: '✓ Complete Orders', hint: 'Sent, every line on a job or Stock', test: p => p.po && p.stage === 'closed' },
-      { id: 'nopo', title: '🧾 Non-PO Purchase', hint: 'Picked up or put on jobs with no PO — add it when you find it', test: p => !p.po && !['pricing', 'waiting'].includes(p.stage) },
+      { id: 'nopo', title: '🧾 Non-PO Purchase', hint: 'Picked up or put on jobs with no PO — add it when you find it', test: p => !p.po && !['pricing', 'waiting', 'requested'].includes(p.stage) },
     ]
     return (
       <div style={{ padding: '10px 12px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -3815,13 +3852,46 @@ function PurchasesOverview({ layout = 'overview', q, orders, feedRows, prevRows,
     )
   }
 
+  if (layout === 'pricing') {
+    const P = shown.filter(p => p.stage === 'pricing').sort((a, b) => String(b.date).localeCompare(String(a.date)))
+    const SECS = [
+      { id: 'confirm', title: '❓ Came back — confirm it\'s for pricing', hint: 'A quote came in for a pricing request — OK it once and it stays here', L: P.filter(p => p.flags.some(f => f.id === 'confirmpricing')) },
+      { id: 'asked', title: '📨 Pricing requests sent', hint: 'Sent from a quote, prices not back yet', L: P.filter(p => !p.rows.length && !p.slips.length && !p.flags.some(f => f.id === 'confirmpricing')) },
+      { id: 'have', title: '💲 Pricing quotes', hint: 'Prices back — for the Catalog and quotes, never ordered', L: P.filter(p => (p.rows.length || p.slips.length) && !p.flags.some(f => f.id === 'confirmpricing')) },
+    ]
+    return (
+      <div style={{ padding: '10px 12px 6px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {SECS.map(g => {
+          const open = g.id === 'confirm' ? g.L.length > 0 : (q ? g.L.length > 0 : !!(groupOpen || {})['pricing_' + g.id])
+          if (g.id === 'confirm' && !g.L.length) return null
+          return (
+            <div key={g.id} style={{ border: '1px solid ' + (g.id === 'confirm' ? '#9fb8d6' : 'var(--border)'), borderRadius: 8, overflow: 'hidden', background: 'var(--surface)' }}>
+              <div onClick={() => setGroupOpen(x => ({ ...(x || {}), ['pricing_' + g.id]: !open }))} title={g.hint}
+                style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '9px 14px', cursor: 'pointer', background: g.id === 'confirm' ? '#eef4fb' : open ? 'var(--surface-2)' : 'var(--surface)' }}>
+                <span style={{ fontSize: 11, color: 'var(--text-light)' }}>{open ? '▾' : '▸'}</span>
+                <span style={{ fontFamily: 'var(--font-d)', fontSize: 15, fontWeight: 800, flex: 1 }}>{g.title}</span>
+                <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--text-mid)' }}>{g.L.length} item{g.L.length === 1 ? '' : 's'}</span>
+              </div>
+              {open && <div style={{ padding: 6, borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {g.L.length ? g.L.map(p => tile(p)) : <div style={{ padding: 6, fontSize: 12, color: 'var(--text-light)' }}>None.</div>}
+              </div>}
+            </div>
+          )
+        })}
+      </div>
+    )
+  }
+
+  // Pricing has its own tab — the overview is only what's being bought
+  const OV_STAGES = STAGES.filter(s => s.id !== 'pricing')
+  const attentionOv = attention.filter(p => p.stage !== 'pricing')
   const flaggedIn = id => shown.filter(p => p.stage === id && p.flags.length).length
   const list = stageOnly ? by(stageOnly) : null
   return (
     <div style={{ padding: '10px 12px 24px' }}>
       {/* the glance: how many in each stage, how many need you */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(96px, 1fr))', gap: 6, marginBottom: 12 }}>
-        {STAGES.map(s => {
+        {OV_STAGES.map(s => {
           const n = by(s.id).length, f = flaggedIn(s.id), on = stageOnly === s.id
           return (
             <button key={s.id} onClick={() => setStageOnly(on ? '' : s.id)} title={s.hint}
@@ -3847,13 +3917,13 @@ function PurchasesOverview({ layout = 'overview', q, orders, feedRows, prevRows,
         </>
       ) : (
         <>
-          <div style={{ border: '1px solid ' + (attention.length ? '#e3a49c' : 'var(--border)'), borderRadius: 8, marginBottom: 12, overflow: 'hidden' }}>
-            <div style={{ padding: '8px 12px', background: attention.length ? '#fdecea' : '#e6f4ea', fontSize: 13.5, fontWeight: 800, color: attention.length ? '#8e1f14' : '#1e7a34' }}>
-              {attention.length ? `⚠ Needs you (${attention.length})` : '✓ Nothing needs you right now'}
+          <div style={{ border: '1px solid ' + (attentionOv.length ? '#e3a49c' : 'var(--border)'), borderRadius: 8, marginBottom: 12, overflow: 'hidden' }}>
+            <div style={{ padding: '8px 12px', background: attentionOv.length ? '#fdecea' : '#e6f4ea', fontSize: 13.5, fontWeight: 800, color: attentionOv.length ? '#8e1f14' : '#1e7a34' }}>
+              {attentionOv.length ? `⚠ Needs you (${attentionOv.length})` : '✓ Nothing needs you right now'}
             </div>
-            {attention.length > 0 && <div style={{ padding: 6, display: 'flex', flexDirection: 'column', gap: 4 }}>{attention.map(p => tile(p, true))}</div>}
+            {attentionOv.length > 0 && <div style={{ padding: 6, display: 'flex', flexDirection: 'column', gap: 4 }}>{attentionOv.map(p => tile(p, true))}</div>}
           </div>
-          {STAGES.map(s => {
+          {OV_STAGES.map(s => {
             const L = by(s.id)
             const open = q ? L.length > 0 : !!((secOpen || {})[s.id] ?? s.id === 'requested')
             return (
@@ -4353,7 +4423,13 @@ export default function Materials({ screen }) {
   const feedForCharges = useOrdersFeed()
   // A quote / slip that came back for an order built from job plans: tag its
   // untagged lines to those jobs (each job's share as it asked)
-  const [sentRequests] = useLocalStore(REQUESTS_KEY, [])
+  const [sentRequests, setSentRequests] = useLocalStore(REQUESTS_KEY, [])
+  // A pricing request sent from a quote: when its quote comes back, file it
+  // with the request (as Pricing) and ask once to confirm
+  useEffect(() => {
+    const next = autoMatchPricingRequests(sentRequests, feedForCharges || [])
+    if (next) setSentRequests(next)
+  }, [sentRequests, feedForCharges]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     const next = tagSlipsFromRequests(orders, Array.isArray(sentRequests) ? sentRequests : [], feedForCharges)
     if (next) setOrders(next)

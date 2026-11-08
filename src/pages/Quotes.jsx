@@ -1326,7 +1326,7 @@ function LineAddRow({ onAdd, showPartNo }) {
   )
 }
 
-function LineGroup({ label, items, onAdd, onUpdate, onDelete, markup, showPartNo }) {
+function LineGroup({ label, items, onAdd, onUpdate, onDelete, markup, showPartNo, quote }) {
   const [selectedIds, setSelectedIds] = useState(() => new Set())
   const rawTotal = items.reduce((s, i) => s + (Number(i.qty) || 0) * (Number(i.rate) || 0), 0)
   const subtotal = markup != null ? rawTotal * (1 + markup / 100) : rawTotal
@@ -1361,8 +1361,9 @@ function LineGroup({ label, items, onAdd, onUpdate, onDelete, markup, showPartNo
           </div>
           <WholesalerExportBar
             items={exportItems} date={todayLocal()}
-            subjectPrefix="Material pricing request"
+            subjectPrefix={`Material pricing request${quote && quote.quoteNumber ? ' — ' + quote.quoteNumber : ''}`}
             saveFolder="Quotes/Materials Pricing Requests"
+            quote={quote ? { id: quote.id, number: quote.quoteNumber || '', title: quote.title || '' } : null}
             emptyMessage="Check at least one material first."
           />
         </div>
@@ -1523,6 +1524,7 @@ function ScopeBlock({ quote, scope, expanded, onToggle, onRename, onDelete, onUp
             onDelete={id => onDeleteLine('materials', id)}
             markup={matPct}
             showPartNo
+            quote={quote}
           />
           <MaterialsPricingUpload onAddLines={dataArray => onAddLines('materials', dataArray)} />
           <div style={{ height: 8 }} />
