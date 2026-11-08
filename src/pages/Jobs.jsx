@@ -18,6 +18,7 @@ import { planLineStatus, planSummary, stockFree, findStockFor, addPlanLinesToOrd
 import { useOrdersFeed, partsForJob, openQuotePdf } from '../api/orders.js'
 import PostTimeToLabor, { unpostedCount } from '../components/PostTimeToLabor.jsx'
 import { jobDeficiencies, openLaborFlags, LABOR_FLAG_KINDS } from '../api/jobHealth.js'
+import { closeBlockers, statusPatch } from '../api/jobClose.js'
 import SlipLinesForJob from '../components/SlipLinesForJob.jsx'
 import { drawFromStock, adjustStockDraw, chargesFullStock, stockLinePrice } from '../api/stockDraw.js'
 import { normPo } from '../api/orders.js'
@@ -458,11 +459,13 @@ function StatusDot({ status, onCycle }) {
 }
 
 // Full confirmation gate before a job moves to Completed — mirrors the Quotes approval modal
-function CompletionModal({ project, onConfirm, onClose }) {
+function CompletionModal({ project, onConfirm, onClose, onUpdate }) {
   const [jobDone, setJobDone] = useState(false)
-  const [billingDone, setBillingDone] = useState(false)
-  const laborFlags = openLaborFlags(project)
-  const canConfirm = jobDone && billingDone && !laborFlags.length
+  const [billed, setBilled] = useState('unbilled')
+  const [orders] = useLocalStore('material_orders', [])
+  // same rules as the status dropdown (api/jobClose.js)
+  const { laborFlags, leftovers } = closeBlockers(project, orders)
+  const canConfirm = jobDone && !laborFlags.length && !leftovers.length
 
   return (
     <ModalOverlay onClose={onClose}>
@@ -474,19 +477,24 @@ function CompletionModal({ project, onConfirm, onClose }) {
           <input type="checkbox" checked={jobDone} onChange={e => setJobDone(e.target.checked)} style={{ marginTop: 2 }} />
           This job is fully complete
         </label>
-        <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 16, cursor: 'pointer', fontSize: 13, color: 'var(--text-mid)' }}>
-          <input type="checkbox" checked={billingDone} onChange={e => setBillingDone(e.target.checked)} style={{ marginTop: 2 }} />
-          Billing is up to date for this job
-        </label>
+        <div style={{ display: 'flex', gap: 14, marginBottom: 16, fontSize: 13, color: 'var(--text-mid)' }}>
+          <label style={{ display: 'flex', gap: 6, cursor: 'pointer' }}><input type="radio" checked={billed === 'unbilled'} onChange={() => setBilled('unbilled')} /> Still to bill</label>
+          <label style={{ display: 'flex', gap: 6, cursor: 'pointer' }}><input type="radio" checked={billed === 'billed'} onChange={() => setBilled('billed')} /> Fully billed</label>
+        </div>
         {laborFlags.length > 0 && (
           <div style={{ marginBottom: 14, padding: '8px 10px', background: '#fdf3f1', border: '1px solid #e3a49c', borderRadius: 6, fontSize: 12, color: '#7a2a1e' }}>
             <b style={{ color: '#a12a1e' }}>⚑ {laborFlags.length} flagged labor entr{laborFlags.length === 1 ? 'y' : 'ies'}</b> — resolve {laborFlags.length === 1 ? 'it' : 'them'} in Labor before completing:
             {laborFlags.map(e => <div key={e.id} style={{ marginTop: 3 }}>• {e.date || 'undated'} · {e.worker || '—'} — <b>{e.flag.kind}</b>{e.flag.note ? ': ' + e.flag.note : ''}</div>)}
           </div>
         )}
+        {leftovers.length > 0 && onUpdate && (
+          <div style={{ marginBottom: 14 }}>
+            <MaterialCloseout project={project} onUpdate={onUpdate} title="Before completing: close out this job's slip material" />
+          </div>
+        )}
         <div style={{ display: 'flex', gap: 8 }}>
           <button style={modalBtnStyleJ(false)} onClick={onClose}>Cancel</button>
-          <button style={modalBtnStyleJ(true, !canConfirm)} disabled={!canConfirm} onClick={onConfirm}>Mark Complete</button>
+          <button style={modalBtnStyleJ(true, !canConfirm)} disabled={!canConfirm} onClick={() => onConfirm(billed)}>Mark Complete</button>
         </div>
       </div>
     </ModalOverlay>
@@ -2139,19 +2147,7 @@ export function LifecycleStatusDropdown({ project, onUpdate }) {
     doChange(value)
   }
   function doChange(value) {
-    const patch = { lifecycleStatus: value }
-    // Keep the legacy completed flag in sync so anything else in the app
-    // still reading it (older views, exports) stays sensible.
-    if (value === 'onGoing') Object.assign(patch, { completed: false })
-    if (value === 'deficiencies' || value === 'unbilled' || value === 'billed') {
-      Object.assign(patch, { completed: true, dateComplete: project.dateComplete || todayLocal() })
-    }
-    // Moving a job on to Complete (Unbilled/Billed) means its deficiencies are
-    // done — close any still open so they stop showing up as outstanding.
-    if ((value === 'unbilled' || value === 'billed') && openDeficiencies.length) {
-      const at = new Date().toISOString()
-      patch.deficiencies = (project.deficiencies || []).map(d => d.resolved ? d : { ...d, resolved: true, resolvedAt: at, resolvedNote: 'Closed when job was marked complete' })
-    }
+    const patch = statusPatch(project, value)
     onUpdate(patch)
     const label = LIFECYCLE_OPTIONS.find(o => o.value === value)?.label || value
     setConfirmedLabel(`✓ Moved to ${label} — go back to see it filed there`)
@@ -4723,10 +4719,11 @@ export default function Jobs({ screen, navigate, goBack }) {
 
       {statusTarget && !statusTarget.completed && (
         <CompletionModal
-          project={statusTarget}
+          project={projects.find(p => p.id === statusTarget.id) || statusTarget}
           onClose={() => setStatusTarget(null)}
-          onConfirm={() => {
-            updateProject(statusTarget.id, { completed: true, status: 'green', dateComplete: todayLocal() })
+          onUpdate={patch => updateProject(statusTarget.id, patch)}
+          onConfirm={value => {
+            updateProject(statusTarget.id, statusPatch(projects.find(p => p.id === statusTarget.id) || statusTarget, value))
             setStatusTarget(null)
           }}
         />
@@ -4736,7 +4733,7 @@ export default function Jobs({ screen, navigate, goBack }) {
           project={statusTarget}
           onClose={() => setStatusTarget(null)}
           onConfirm={() => {
-            updateProject(statusTarget.id, { completed: false, status: 'yellow' })
+            updateProject(statusTarget.id, statusPatch(statusTarget, 'onGoing'))
             setStatusTarget(null)
           }}
         />
