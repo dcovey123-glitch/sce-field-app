@@ -12,12 +12,33 @@ function lsGet(key, fallback) {
   }
 }
 
+// The app's own storage holds about 5 MB. A save that doesn't fit used to be
+// dropped without a word — now it raises a banner (main.jsx), and there's an
+// early warning while there's still room.
+const STORAGE_WARN_CHARS = 3_500_000
+let lastSizeCheck = 0
+let warnedFull = false
+export function storageUsedChars() {
+  let n = 0
+  try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); n += k.length + (localStorage.getItem(k) || '').length } } catch { /* unreadable */ }
+  return n
+}
 function lsSet(key, value) {
   try {
     localStorage.setItem(PREFIX + key, JSON.stringify(value))
     scheduleLocalSnapshot() // keep the copy in the data folder (and so in backups) current
-  } catch {
-    // storage full or unavailable — ignore for now
+  } catch (err) {
+    window.dispatchEvent(new CustomEvent('fieldapp-save-failed', { detail: { key, message: String(err && err.message || err) } }))
+    return
+  }
+  // once a minute at most: getting close to full?
+  if (Date.now() - lastSizeCheck > 60000) {
+    lastSizeCheck = Date.now()
+    const used = storageUsedChars()
+    if (used > STORAGE_WARN_CHARS && !warnedFull) {
+      warnedFull = true
+      window.dispatchEvent(new CustomEvent('fieldapp-storage-nearly-full', { detail: { used } }))
+    }
   }
 }
 

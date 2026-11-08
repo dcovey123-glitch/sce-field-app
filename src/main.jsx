@@ -29,7 +29,7 @@ let appRendered = false
 function escapeHtml(t) {
   return String(t ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
 }
-function showErrorBanner(message, detail) {
+function showErrorBanner(message, detail, { title = "Something didn't work.", tail = "Your other work is still here — if something you just did didn't stick, try it again.", warn = false } = {}) {
   let bar = document.getElementById('fieldapp-error-banner')
   if (!bar) {
     bar = document.createElement('div')
@@ -39,7 +39,7 @@ function showErrorBanner(message, detail) {
   }
   bar.innerHTML = `
     <div style="flex:1;min-width:0">
-      <b>Something didn't work.</b> ${escapeHtml(message)} Your other work is still here — if something you just did didn't stick, try it again.
+      <b>${escapeHtml(title)}</b> ${escapeHtml(message)} ${escapeHtml(tail)}
       <details style="margin-top:4px"><summary style="cursor:pointer;color:#8a4a4a">Details (send to Claude to get it fixed)</summary>
       <pre style="white-space:pre-wrap;font-size:11px;max-height:180px;overflow:auto;margin:6px 0 0">${escapeHtml(detail)}</pre></details>
     </div>
@@ -54,6 +54,14 @@ function reportError(message, detail) {
 window.addEventListener('error', (e) => {
   if (/ResizeObserver loop/.test(e.message || '')) return // harmless browser noise
   reportError(e.message || 'A script error occurred.', `${e.message}\n${e.error?.stack || ''}`)
+})
+// A save that didn't fit in the app's storage — never silent
+window.addEventListener('fieldapp-save-failed', (e) => {
+  const what = String(e.detail?.key || 'something').replace(/_/g, ' ')
+  showErrorBanner(`Couldn't save "${what}" — the app's storage is full or blocked. What's on screen is NOT saved yet: don't close the app; send this to Claude.`, `${e.detail?.key}: ${e.detail?.message}`, { title: 'Not saved!', tail: '' })
+})
+window.addEventListener('fieldapp-storage-nearly-full', (e) => {
+  showErrorBanner(`The app's storage is getting full (${Math.round((e.detail?.used || 0) / 1e5) / 10} MB of about 5 MB). Everything is saved for now — tell Claude so the big lists can move to files.`, `used ${e.detail?.used} chars`, { title: 'Heads up:', tail: '' })
 })
 window.addEventListener('unhandledrejection', (e) => {
   reportError(e.reason?.message || 'An operation failed.', `${e.reason?.message || e.reason}\n${e.reason?.stack || ''}`)
