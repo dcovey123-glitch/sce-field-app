@@ -1,15 +1,13 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { scheduleLocalSnapshot } from './localSnapshot.js'
+import { readValue, writeValue, isFileKey } from './fileStore.js'
 
 const PREFIX = 'fieldapp_'
 
+// Big lists come from their own files in the data folder (fileStore.js);
+// everything else from internal storage
 function lsGet(key, fallback) {
-  try {
-    const raw = localStorage.getItem(PREFIX + key)
-    return raw ? JSON.parse(raw) : fallback
-  } catch {
-    return fallback
-  }
+  return readValue(key, fallback)
 }
 
 // The app's own storage holds about 5 MB. A save that doesn't fit used to be
@@ -25,8 +23,8 @@ export function storageUsedChars() {
 }
 function lsSet(key, value) {
   try {
-    localStorage.setItem(PREFIX + key, JSON.stringify(value))
-    scheduleLocalSnapshot() // keep the copy in the data folder (and so in backups) current
+    writeValue(key, value)
+    if (!isFileKey(key)) scheduleLocalSnapshot() // keep the copy in the data folder (and so in backups) current
   } catch (err) {
     window.dispatchEvent(new CustomEvent('fieldapp-save-failed', { detail: { key, message: String(err && err.message || err) } }))
     return

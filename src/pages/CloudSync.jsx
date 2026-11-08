@@ -9,6 +9,7 @@ import { findProposal } from '../api/proposal.js'
 import { unpostedCount } from '../components/PostTimeToLabor.jsx'
 import { partsList } from '../components/MaterialUsed.jsx'
 import { phoneTasksPayload, applyPhoneOp } from '../api/tasks.js'
+import { readValue } from '../api/fileStore.js'
 
 const isDesktop = typeof window !== 'undefined' && !!window.desktop
 
@@ -55,7 +56,7 @@ export default function CloudSync({ background = false }) {
   // A short summary of each job / quote for the phone (opened by tapping it)
   const r2 = v => Math.round((Number(v) || 0) * 100) / 100
   const clip = (t, n) => { const x = String(t || '').trim(); return x.length > n ? x.slice(0, n - 1) + '…' : x }
-  const ls = k => { try { const v = JSON.parse(localStorage.getItem('fieldapp_' + k) || '[]'); return Array.isArray(v) ? v : [] } catch { return [] } }
+  const ls = k => { const v = readValue(k, []); return Array.isArray(v) ? v : [] }
   function jobSummary(p) {
     const labor = p.laborEntries || []
     const hours = labor.reduce((a, e) => a + (Number(e.hours) || 0), 0)

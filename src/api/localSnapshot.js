@@ -6,6 +6,8 @@
 // Secrets (the AI key and the cloud upload key) stay on this PC only and are
 // never written into the data folder.
 
+import { fileStoreActive, nonFileKeys } from './fileStore.js'
+
 const PREFIX = 'fieldapp_'
 const SECRET_KEYS = new Set(['anthropic_api_key', 'cloud_sync_upload_key'])
 const EMPTY_VALUES = new Set(['', '[]', '{}', 'null', '""', 'false', '0'])
@@ -23,9 +25,11 @@ function ourKeys() {
   return keys
 }
 
+// The big lists have their own files in the data folder once those are in use
 function collect() {
   const out = {}
-  for (const k of ourKeys()) out[k.slice(PREFIX.length)] = localStorage.getItem(k)
+  const names = ourKeys().map(k => k.slice(PREFIX.length))
+  for (const n of (fileStoreActive() ? nonFileKeys(names) : names)) out[n] = localStorage.getItem(PREFIX + n)
   return out
 }
 
@@ -56,6 +60,9 @@ function saveNow() {
     window.desktop.saveLocalSnapshot(json).catch(() => {})
   } catch { /* best effort */ }
 }
+
+// Once the big lists are in their own files, rewrite the copy without them
+export function refreshLocalSnapshot() { saveNow() }
 
 // Called by useLocalStore after every change.
 export function scheduleLocalSnapshot() {

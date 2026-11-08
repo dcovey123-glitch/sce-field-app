@@ -847,6 +847,52 @@ ipcMain.handle('localdata:load', () => {
   return readJsonSafe(localSnapshotPath(), null)
 })
 
+// ── The big lists, one file each ──
+// Orders, Catalog, Stock, timesheets, notes… each in "App Data/<name>.json".
+// Saved the same safe way as job files; the copy before the last save is kept
+// as "<name>.previous.json". Other open windows are sent the new copy.
+const APP_FILE_KEY = /^[a-z0-9_]{1,60}$/
+const appFilePath = key => path.join(dataRoot, 'App Data', key + '.json')
+
+function saveAppFile(sender, key, json) {
+  if (!dataRoot || !APP_FILE_KEY.test(String(key)) || typeof json !== 'string') return false
+  try {
+    const data = JSON.parse(json)
+    const p = appFilePath(key)
+    if (fs.existsSync(p)) { try { fs.copyFileSync(p, path.join(dataRoot, 'App Data', key + '.previous.json')) } catch { /* best effort */ } }
+    writeJson(p, data)
+    for (const w of BrowserWindow.getAllWindows()) {
+      if (sender && w.webContents === sender) continue
+      try { w.webContents.send('appfile:changed', key, json) } catch { /* window closing */ }
+    }
+    return true
+  } catch (err) {
+    console.error('appfile:save', key, err)
+    return false
+  }
+}
+
+ipcMain.handle('appfile:loadAll', (e, keys) => {
+  const out = {}
+  if (!dataRoot || !Array.isArray(keys)) return out
+  for (const key of keys) {
+    if (!APP_FILE_KEY.test(String(key))) continue
+    const p = appFilePath(key)
+    if (!fs.existsSync(p)) continue
+    let text = null
+    try { text = fs.readFileSync(p, 'utf-8'); JSON.parse(text) } catch {
+      // damaged (cut off mid-save, OneDrive conflict…): keep it aside and use the copy from before the last save
+      try { fs.copyFileSync(p, path.join(dataRoot, 'App Data', `${key}.damaged-${Date.now()}.json`)) } catch { /* ignore */ }
+      try { text = fs.readFileSync(path.join(dataRoot, 'App Data', key + '.previous.json'), 'utf-8'); JSON.parse(text) } catch { text = null }
+    }
+    // still nothing readable: report it so the app doesn't start from an empty list and save over it
+    out[key] = text == null ? { damaged: true } : text
+  }
+  return out
+})
+ipcMain.handle('appfile:save', (e, key, json) => saveAppFile(e.sender, key, json))
+ipcMain.on('appfile:saveSync', (e, key, json) => { e.returnValue = saveAppFile(e.sender, key, json) })
+
 // True once, right after a backup restore — the renderer then replaces its
 // internal storage with the snapshot that came back with the restored folder.
 ipcMain.handle('localdata:takeRestoreFlag', () => {

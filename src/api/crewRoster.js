@@ -1,6 +1,7 @@
 import { useCallback } from 'react'
 import { useLocalStore } from './useLocalStore.js'
 import { scheduleLocalSnapshot } from './localSnapshot.js'
+import { readValue, writeValue, isFileKey } from './fileStore.js'
 
 // ── Crew roster ──────────────────────────────────────────────────────
 // One list of people used everywhere a worker name is picked: Time Tracking
@@ -12,7 +13,6 @@ import { scheduleLocalSnapshot } from './localSnapshot.js'
 // have). Renaming or merging someone here rewrites that name in the stored
 // data too, so their history never splits — see renameEverywhere().
 
-const PREFIX = 'fieldapp_'
 export const ROSTER_KEY = 'crew_roster'
 export const ROLES = ['Journeyman', 'Apprentice', 'Labourer', 'Other']
 const DEFAULT_ME = 'Dustin Covey'
@@ -22,10 +22,10 @@ const norm = s => (s || '').trim().replace(/\s+/g, ' ')
 const same = (a, b) => norm(a).toLowerCase() === norm(b).toLowerCase()
 
 function readLS(key, fallback) {
-  try { const raw = localStorage.getItem(PREFIX + key); return raw ? JSON.parse(raw) : fallback } catch { return fallback }
+  return readValue(key, fallback)
 }
 function writeLS(key, value) {
-  try { localStorage.setItem(PREFIX + key, JSON.stringify(value)); scheduleLocalSnapshot() } catch { /* ignore */ }
+  try { writeValue(key, value); if (!isFileKey(key)) scheduleLocalSnapshot() } catch { /* ignore */ }
   queueMicrotask(() => window.dispatchEvent(new CustomEvent('fieldapp-local', { detail: { key, from: 'crewRoster' } })))
 }
 

@@ -3,7 +3,8 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App.jsx'
 import './styles/global.css'
-import { initLocalSnapshot } from './api/localSnapshot.js'
+import { initLocalSnapshot, refreshLocalSnapshot } from './api/localSnapshot.js'
+import { initFileStore } from './api/fileStore.js'
 
 // Catches errors that happen outside React's render cycle too (a module
 // throwing at import time, an unhandled promise rejection, etc.) — without
@@ -97,7 +98,7 @@ class ErrorBoundary extends React.Component {
 
 // Bring back materials/timesheets/notes etc. from the data folder first if
 // this PC has none (new PC, reinstall) or a backup was just restored.
-initLocalSnapshot().finally(() => {
+initLocalSnapshot().then(() => initFileStore()).then(() => refreshLocalSnapshot()).catch(() => {}).finally(() => {
   ReactDOM.createRoot(document.getElementById('root')).render(
     <React.StrictMode>
       <ErrorBoundary>

@@ -9,6 +9,7 @@
 // poNumber once Jonathan gives it one (slips on that PO then file under it).
 import { distributorName } from './monthDist.js'
 import { partNosOf } from './partAliases.js'
+import { readValue, writeValue } from './fileStore.js'
 
 export const REQUESTS_KEY = 'material_requests'
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4)
@@ -20,9 +21,7 @@ export function addRequestTo(list, r) {
 // Store it straight to local storage (the export bar lives on several pages)
 export function saveSentRequest(r) {
   try {
-    const k = 'fieldapp_' + REQUESTS_KEY
-    const cur = JSON.parse(localStorage.getItem(k) || '[]')
-    localStorage.setItem(k, JSON.stringify(addRequestTo(cur, r)))
+    writeValue(REQUESTS_KEY, addRequestTo(readValue(REQUESTS_KEY, []), r))
     window.dispatchEvent(new CustomEvent('fieldapp-local', { detail: { key: REQUESTS_KEY, from: 'export' } }))
   } catch { /* ignore */ }
 }
@@ -48,8 +47,8 @@ export function quoteCandidates(req, rows, takenIds = new Set()) {
 const lc = s => String(s || '').toLowerCase().trim()
 export function catalogPriceFor(item) {
   try {
-    const cat = JSON.parse(localStorage.getItem('fieldapp_material_catalog') || '[]')
-    const stock = JSON.parse(localStorage.getItem('fieldapp_material_stock') || '[]')
+    const cat = readValue('material_catalog', []) || []
+    const stock = readValue('material_stock', []) || []
     const p = pn(item.partNo), d = lc(item.desc || item.nickname || item.name)
     const c = (p && cat.find(c => partNosOf(c).some(x => pn(x) === p)))
       || (d && cat.find(c => lc(c.nickname) === d || lc(c.name) === d))

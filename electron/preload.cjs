@@ -38,6 +38,16 @@ contextBridge.exposeInMainWorld('desktop', {
   loadLocalSnapshot: () => ipcRenderer.invoke('localdata:load'),
   takeLocalRestoreFlag: () => ipcRenderer.invoke('localdata:takeRestoreFlag'),
 
+  // The big lists, one file each in "App Data" (see src/api/fileStore.js)
+  appFileLoadAll: (keys) => ipcRenderer.invoke('appfile:loadAll', keys),
+  appFileSave: (key, json) => ipcRenderer.invoke('appfile:save', key, json),
+  appFileSaveSync: (key, json) => ipcRenderer.sendSync('appfile:saveSync', key, json),
+  onAppFileChanged: (cb) => {
+    const fn = (e, key, json) => cb(key, json)
+    ipcRenderer.on('appfile:changed', fn)
+    return () => ipcRenderer.removeListener('appfile:changed', fn)
+  },
+
   createBackup: () => ipcRenderer.invoke('backup:create'),
   listBackups: () => ipcRenderer.invoke('backup:list'),
   restoreBackup: (name) => ipcRenderer.invoke('backup:restore', name),
