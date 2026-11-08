@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import NoteGroups from '../components/NoteGroups.jsx'
 import FlagBanner from '../components/FlagBanner.jsx'
 import { quotePlannedMaterials } from '../api/plannedMaterials.js'
 import { linkedJobsCustomer } from '../api/sharedCustomer.js'
@@ -2103,13 +2104,8 @@ function QuoteNotesSection({ quote, onUpdate }) {
           Add note
         </button>
       </div>
-      {notes.length === 0 ? (
-        <div style={{ padding: '6px 16px 14px', color: 'var(--text-light)', fontSize: 12.5 }}>
-          No notes yet. Notes you approve from email in Assistant Update show up here too.
-        </div>
-      ) : (
-        notes.map(n => <NoteEntryRow key={n.id} note={n} onUpdate={patch => updateNote(n.id, patch)} onDelete={() => deleteNote(n.id)} />)
-      )}
+      <NoteGroups notes={notes} emptyText="No notes yet. Notes you approve from email in Assistant Update show up here too."
+        renderRow={n => <NoteEntryRow key={n.id} note={n} onUpdate={patch => updateNote(n.id, patch)} onDelete={() => deleteNote(n.id)} />} />
     </div>
   )
 }

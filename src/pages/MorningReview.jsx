@@ -3,6 +3,7 @@ import { useHubStore } from '../api/useHubStore.js'
 import { useLocalStore } from '../api/useLocalStore.js'
 import { FlagButton, FlaggedList } from '../components/Flags.jsx'
 import { todayLocal } from '../api/albertaTime.js'
+import { fileAssistantNote } from '../api/notes.js'
 
 // ── Morning Review ──
 // Claude's morning email run reads your SCE inbox, picks out emails that
@@ -67,8 +68,8 @@ function resolveTarget(target, jobs, quotes) {
 }
 
 
-// Miscellaneous email notes are filed into one General Note per day the
-// email came in: "Oct 29th - Misc Notes", entries in time order.
+// Miscellaneous email notes are filed onto Daily Notes, on the day the email
+// came in (one assistant section per day, entries in time order).
 const ordinal = n => n + ((n % 100 >= 11 && n % 100 <= 13) ? 'th' : ({ 1: 'st', 2: 'nd', 3: 'rd' }[n % 10] || 'th'))
 function miscDayTitle(day) {
   const [y, m, d] = day.split('-').map(Number)
@@ -263,10 +264,10 @@ function NoteCard({ item, jobs, quotes, options, onApprove, onSkip, busy }) {
             newName: newName.trim(),
             fields: Object.fromEntries(fillable.filter(k => useFields[k]).map(k => [k, item.fields[k]])),
             workOrder: useWO ? item.workOrder : null,
-          })}>{pick === 'new' ? '✓ Approve — create job & add note' : pick === 'misc' ? '✓ Approve — add to Misc Notes' : '✓ Approve — add note'}</button>
+          })}>{pick === 'new' ? '✓ Approve — create job & add note' : pick === 'misc' ? '✓ Approve — add to Daily Notes' : '✓ Approve — add note'}</button>
         {pick !== 'misc' && (
-          <button style={{ ...btn(), opacity: text.trim() && !busy ? 1 : 0.5 }} disabled={!text.trim() || busy} title={`Adds it to “${miscDayTitle(emailDay(item))}” in General Notes`}
-            onClick={() => onApprove(item, 'misc', text.trim(), {})}>🗂 File as Misc note</button>
+          <button style={{ ...btn(), opacity: text.trim() && !busy ? 1 : 0.5 }} disabled={!text.trim() || busy} title={`Adds it to Notes → Daily Notes on ${miscDayTitle(emailDay(item)).replace(' - Misc Notes', '')}`}
+            onClick={() => onApprove(item, 'misc', text.trim(), {})}>🗂 File on Daily Notes</button>
         )}
         <button style={btn()} disabled={busy} title="Not needed — clears it from the list without saving it anywhere" onClick={() => onSkip(item)}>✕ Dismiss — not needed</button>
       </div>
@@ -295,10 +296,10 @@ export default function MorningReview({ onCountChange , navigate }) {
   const custName = { job: {}, quote: {} }
   ;(jobsHub.customers || []).forEach(c => { custName.job[c.id] = c.name })
   ;(quotesHub.customers || []).forEach(c => { custName.quote[c.id] = c.name })
-  const [, setGeneralNotes] = useLocalStore('general_notes', [])
+  const [, setDailyNotes] = useLocalStore('daily_notes', {})
   const isDone = j => j.closed === true || j.lifecycleStatus === 'billed'
   const options = [
-    { value: 'misc', icon: '🗂', label: 'Miscellaneous', sub: 'Notes → General Notes → that day’s “Misc Notes”' },
+    { value: 'misc', icon: '🗂', label: 'Miscellaneous', sub: 'Notes → Daily Notes, on the day the email came in' },
     ...jobs.slice().sort((a, b) => (isDone(a) - isDone(b)) || a.name.localeCompare(b.name)).map(j => ({
       value: `job:${j.id}`, icon: '🔧', label: j.name,
       sub: ['Job', custName.job[j.customerId], j.co && `CO/PO ${j.co}`, isDone(j) && 'closed'].filter(Boolean).join(' · '),
@@ -448,23 +449,7 @@ export default function MorningReview({ onCountChange , navigate }) {
         const time = emailTime(item)
         const head = [time, item.from, item.subject && `“${item.subject}”`].filter(Boolean).join(' · ')
         const entry = { id: item.id, at: item.time || item.receivedAt || '', block: `${head ? `${head}\n` : ''}${text}` }
-        const build = list => list.slice().sort((a, b) => (a.at || '~').localeCompare(b.at || '~')).map(e => e.block).join('\n\n')
-        setGeneralNotes(list => {
-          const existing = (list || []).find(n => n.miscDate === day)
-          if (!existing) {
-            const content = build([entry])
-            return [...(list || []), { id: uid(), title, miscDate: day, miscEntries: [entry], miscContent: content, content, updatedAt: new Date().toISOString() }]
-          }
-          if ((existing.miscEntries || []).some(e => e.id === item.id)) return list
-          const entries = [...(existing.miscEntries || []), entry]
-          const generated = build(entries)
-          // Untouched since it was built: rebuild in time order. Edited by hand: add to the end.
-          const untouched = (existing.content || '') === (existing.miscContent || '')
-          const patch = untouched
-            ? { content: generated, miscContent: generated }
-            : { content: `${(existing.content || '').trim()}\n\n${entry.block}`.trim() }
-          return list.map(n => n.id === existing.id ? { ...n, ...patch, miscEntries: entries, updatedAt: new Date().toISOString() } : n)
-        })
+        setDailyNotes(all => fileAssistantNote(all, day, entry))
         await decide(item.id, { status: 'approved', target: { kind: 'misc', name: title }, text })
         return
       }

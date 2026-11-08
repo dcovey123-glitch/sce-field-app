@@ -12,7 +12,7 @@ import Todo from './pages/Todo.jsx'
 import SlipGrabber from './components/SlipGrabber.jsx'
 import Backup from './pages/Backup.jsx'
 import Trash from './pages/Trash.jsx'
-import Notes from './pages/Notes.jsx'
+import Notes, { useMoveMiscNotesToDaily } from './pages/Notes.jsx'
 import Billing from './pages/Billing.jsx'
 import Photos from './pages/Photos.jsx'
 import Orders from './pages/Orders.jsx'
@@ -95,6 +95,7 @@ const HUB_ROOT = {
 }
 
 export default function App() {
+  useMoveMiscNotesToDaily()
   const windowRoute = useWindowRoute()
   const [screen, setScreen]   = useState({ hub: 'home' })   // current screen object
   const [history, setHistory] = useState([])      // stack of previous screens

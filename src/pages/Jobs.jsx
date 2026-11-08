@@ -26,6 +26,7 @@ import { partNosOf } from '../api/partAliases.js'
 import { slipKind, lineJobsOf, lineUse, lineRemaining, slipEntry, slipLineKey, sameItem, leftoverLinesForJob, closeOutLines, mergeIntoStock, moveQuoteChargesToSlips, moveFeedChargesToSlips, takeFromStock, setSlipLineUse } from '../api/slips.js'
 import { hit } from '../api/search.js'
 import { todayLocal, monthLocal } from '../api/albertaTime.js'
+import NoteGroups from '../components/NoteGroups.jsx'
 
 function uid() {
   return Math.random().toString(36).slice(2, 10)
@@ -3846,15 +3847,10 @@ function NotesSection({ project, onUpdate }) {
         </button>
         {notes.some(n => n.needsMe && !n.addressedAt) && <div style={{ fontSize: 11.5, color: '#8a5d00', marginTop: 6 }}>⚑ {notes.filter(n => n.needsMe && !n.addressedAt).length} note{notes.filter(n => n.needsMe && !n.addressedAt).length === 1 ? '' : 's'} on your Needs you list — tick them off there (☀ Today) when they're dealt with.</div>}
       </div>
-      {notes.length === 0 && timeNotes.length === 0 ? (
-        <div style={{ padding: '24px 16px', textAlign: 'center', color: 'var(--text-light)', fontSize: 13 }}>
-          No notes yet — add one above.
-        </div>
-      ) : (
+      <NoteGroups notes={[...notes].sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''))} emptyText="No notes yet — add one above."
+        renderRow={n => <NoteEntryRow key={n.id} note={n} onUpdate={patch => updateNote(n.id, patch)} onDelete={() => deleteNote(n.id)} />} />
+      {timeNotes.length > 0 && (
         <div>
-          {notes.map(n => (
-            <NoteEntryRow key={n.id} note={n} onUpdate={patch => updateNote(n.id, patch)} onDelete={() => deleteNote(n.id)} />
-          ))}
           {timeNotes.length > 0 && (
             <div style={{ padding: '10px 16px 4px', fontSize: 10, fontWeight: 700, color: 'var(--text-light)', textTransform: 'uppercase', letterSpacing: '.07em' }}>
               ⏱ Tracked time — what was done each day (edit in Time Tracking)
