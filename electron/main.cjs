@@ -268,6 +268,33 @@ ipcMain.handle('window:openMaterials', (e, view) => {
   createMaterialsWindow(view)
 })
 
+// ⏱ Time — Time Tracking + Timesheets in their own window (like Materials)
+function createTimeWindow(view) {
+  const win = new BrowserWindow({
+    width: 1100,
+    height: 820,
+    minWidth: 600,
+    backgroundColor: '#f6f8fb',
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  })
+  setupEditingSupport(win)
+  const hash = `/time/${view || 'tracking'}`
+  if (isDev) {
+    win.loadURL(`http://localhost:5173/#${hash}`)
+  } else {
+    win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'), { hash })
+  }
+  return win
+}
+ipcMain.handle('window:openTime', (e, view) => {
+  createTimeWindow(view)
+})
+
 function createManageCustomersWindow() {
   const win = new BrowserWindow({
     width: 980,

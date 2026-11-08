@@ -6,17 +6,14 @@ import NoteEdit from '../components/NoteEdit.jsx'
 import TimeEntryEditor from '../components/TimeEntryEditor.jsx'
 import { useCrewRoster } from '../api/crewRoster.js'
 import PostTimeToLabor, { unpostedCount } from '../components/PostTimeToLabor.jsx'
-import { addDayToSheets } from '../api/timesheetFromClock.js'
+import { pushClockTime, sentSessionsOf, lineOnSheet } from '../api/timesheetFromClock.js'
+import { startOfWeek, weekKeyOf, weekEndKey } from '../api/weekStart.js'
 
 // Crew-clock time tracking. Confirmed days are written to job.trackedTime and
 // (optionally) the weekly timesheet. Nothing here feeds labor actuals, T&M
 // totals or billing.
 
-function startOfWeek(d) {
-  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate())
-  x.setDate(x.getDate() - x.getDay()) // Sunday — same Sun–Sat weeks as Timesheets
-  return x
-}
+// Weeks: same start day as Timesheets (api/weekStart.js — Sunday unless changed)
 function inRange(dateStr, range) {
   if (range === 'all') return true
   const d = new Date(dateStr + 'T00:00:00')
@@ -34,7 +31,7 @@ const pill = active => ({
   background: active ? 'var(--navy)' : '#fff', color: active ? '#fff' : 'var(--text-mid)',
 })
 
-export default function TimeTracking() {
+export default function TimeTracking({ embedded = false }) {
   const [pending] = useLocalStore('time_pending', [])
   const [nonJob, setNonJob] = useLocalStore('time_nonjob_log', [])
   const [tab, setTab] = useState('catchup')
@@ -96,33 +93,31 @@ export default function TimeTracking() {
   // Accounting (selected range)
   const rangeEntries = allEntries.filter(e => inRange(e.date, range))
 
-  // 📋 Push to timesheet: every confirmed entry in the range goes onto the
-  // weekly Timesheets. Days already sent from End-of-day Catch-up are left
-  // alone; pushing again replaces only what this button put there.
+  // 📋 Push to timesheet. Each person's share of each confirmed entry is one
+  // timesheet line: push one line (from "Confirmed for this day"), or the whole
+  // week. Pushing again replaces the same lines — never doubles. Lines already
+  // sent from End-of-day Catch-up are left alone.
   const [sheets, setSheets] = useLocalStore('timesheets', {})
   const [pushMsg, setPushMsg] = useState('')
-  const sentSessions = new Set(Object.values(sheets || {}).flatMap(w => (w.workers || []).flatMap(x => (x.days || []).flatMap(d => (Array.isArray(d) ? d : [d]).map(r => r && r.fromSession)))).filter(Boolean))
-  const toPush = rangeEntries.filter(e => !(e.sessionId && sentSessions.has(e.sessionId)) && (e.workers || []).length > 0)
-  function pushToTimesheet() {
-    const byDate = {}
-    for (const e of toPush.slice().sort((a, b) => String(a.startedAt || '').localeCompare(String(b.startedAt || '')))) {
-      const n = (e.workers || []).length
-      const hrs = Math.round((Number(e.hoursEach) || (Number(e.totalHours) || 0) / n) * 100) / 100
-      if (!(hrs > 0)) continue
-      const project = e.kind === 'job' ? `${e.customer && e.customer !== '—' ? e.customer + ' — ' : ''}${e.jobName}` : (e.jobName || 'Non-job')
-      const day = byDate[e.date] || (byDate[e.date] = {})
-      ;(e.workers || []).forEach((name, i) => {
-        const key = String(name).trim().toLowerCase()
-        const p = day[key] || (day[key] = { name, workerId: (e.workerIds || [])[i] || crew.findByName?.(name)?.id || '', rows: [] })
-        p.rows.push({ jobId: e.kind === 'job' ? e.jobId : '', project, hours: hrs, ot: !!e.ot, note: e.note || '' })
-      })
-    }
-    const dates = Object.keys(byDate).sort()
-    if (!dates.length) { setPushMsg('Nothing new to push — everything in this range is already on the timesheet.'); return }
+  const sent = sentSessionsOf(sheets)
+  const withProject = e => ({ ...e, project: e.kind === 'job' ? `${e.customer && e.customer !== '—' ? e.customer + ' — ' : ''}${e.jobName}` : (e.jobName || 'Non-job') })
+  // On the catch-up tab the week is the one holding the day on screen
+  const pushWeekKey = weekKeyOf(tab === 'catchup' ? day : new Date())
+  const pushEntries = tab === 'catchup'
+    ? allEntries.filter(e => e.date >= pushWeekKey && e.date <= weekEndKey(pushWeekKey))
+    : rangeEntries
+  const notOnSheet = es => es.reduce((n, e) => n + (e.workers || []).filter(w => !lineOnSheet(sent, e, w)).length, 0)
+  const toPushCount = notOnSheet(pushEntries)
+  function doPush(entries, only) {
     const me = crew.me ? { name: crew.me.name, id: crew.me.id } : null
-    setSheets(sh => dates.reduce((acc, date) => addDayToSheets(acc, { date, sessionId: 'tt:' + date, people: Object.values(byDate[date]), me }), sh))
-    const hours = dates.reduce((t, d) => t + Object.values(byDate[d]).reduce((a, p) => a + p.rows.reduce((x, r) => x + r.hours, 0), 0), 0)
-    setPushMsg(`✓ Pushed ${fmt(hours)} h over ${dates.length} day${dates.length === 1 ? '' : 's'} to Timesheets. Pushing again replaces these rows (no doubles).`)
+    const r = pushClockTime(sheets, { entries: entries.map(withProject), dayPool: allEntries.map(withProject), me, findPerson: crew.findByName, only })
+    if (!r.dates.length) { setPushMsg('Nothing to push — no confirmed time with a worker on it.'); return }
+    setSheets(r.sheets)
+    setPushMsg(`✓ ${r.fresh ? 'Pushed' : 'Re-pushed'} ${fmt(r.hours)} h to Timesheets (${r.dates.map(d => new Date(d + 'T00:00:00').toLocaleDateString('en-CA', { weekday: 'short', month: 'short', day: 'numeric' })).join(', ')}). Pushing again replaces these lines — no doubles.`)
+  }
+  function pushToTimesheet() {
+    if (!toPushCount) { setPushMsg('Already on — everything in this week is on the timesheet.'); return }
+    doPush(pushEntries)
   }
   const rangeTotal = rangeEntries.reduce((s, e) => s + hoursOf(e), 0)
   const group = keyFn => {
@@ -228,12 +223,12 @@ export default function TimeTracking() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'auto' }}>
-      <div style={{ background: 'var(--navy)', color: '#fff', padding: '14px 16px' }}>
+      {!embedded && <div style={{ background: 'var(--navy)', color: '#fff', padding: '14px 16px' }}>
         <div style={{ fontFamily: 'var(--font-d)', fontSize: 18, fontWeight: 700 }}>⏱ Time Tracking</div>
         <div style={{ fontSize: 12, color: 'rgba(255,255,255,.6)', marginTop: 2 }}>
           Crew clock time from your phone. Confirmed days go onto the timesheet — never used for billing.
         </div>
-      </div>
+      </div>}
 
       <div style={{ padding: 16, maxWidth: 820 }}>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10, alignItems: 'center' }}>
@@ -246,10 +241,10 @@ export default function TimeTracking() {
           {tab !== 'catchup' && tab !== 'post' && [['week', 'This week'], ['lastweek', 'Last week'], ['month', 'This month'], ['all', 'All time']].map(([id, label]) => (
             <button key={id} style={pill(range === id)} onClick={() => { setRange(id); setPushMsg('') }}>{label}</button>
           ))}
-          {(
-            <button onClick={pushToTimesheet} title="Put every confirmed entry in this period onto the weekly Timesheets (days already sent are skipped)"
-              style={{ ...pill(false), background: '#1e7a34', borderColor: '#1e7a34', color: '#fff' }}>📋 Push {({ week: 'this week', lastweek: 'last week', month: 'this month', all: 'all time' })[range]} to timesheet{toPush.length ? ` (${toPush.length})` : ''}</button>
-          )}
+          <button onClick={pushToTimesheet} title="Put every confirmed entry in this period onto the weekly Timesheets (lines already on are left as they are)"
+            style={{ ...pill(false), background: '#1e7a34', borderColor: '#1e7a34', color: '#fff' }}>
+            📋 Push {tab === 'catchup' ? `week of ${new Date(pushWeekKey + 'T00:00:00').toLocaleDateString('en-CA', { month: 'short', day: 'numeric' })}` : ({ week: 'this week', lastweek: 'last week', month: 'this month', all: 'all time' })[range]} to timesheet{toPushCount ? ` (${toPushCount})` : ' ✓'}
+          </button>
         </div>
         {pushMsg && <div style={{ fontSize: 12.5, marginBottom: 10, padding: '6px 10px', borderRadius: 6, background: pushMsg.startsWith('✓') ? '#e6f4ea' : 'var(--surface-2)', color: pushMsg.startsWith('✓') ? '#1e7a34' : 'var(--text-mid)' }}>{pushMsg}</div>}
 
@@ -291,23 +286,53 @@ export default function TimeTracking() {
 
             <TimeReview day={day} allowManual />
 
-            {heading('Confirmed for this day')}
+            {heading('Confirmed for this day — by worker')}
             {dayEntries.length === 0
               ? <div style={{ fontSize: 13, color: 'var(--text-light)' }}>Nothing confirmed for this day yet.</div>
-              : dayEntries.map(e => (
-                <div key={e.id} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '6px 0', borderTop: '1px solid var(--border)', fontSize: 12 }}>
-                  <span style={{ width: 62, color: 'var(--text-mid)' }}>{fmtTime(e.startedAt) || '—'}</span>
-                  <span style={{ flex: 1 }}>
-                    <b>{e.kind === 'job' ? `${e.customer} — ${e.jobName}` : e.jobName}</b>
-                    <span style={{ color: 'var(--text-light)' }}> · {(e.workers?.length || 1)} × {e.hoursEach} h</span>
-                    {e.ot && <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, color: '#9a6610' }}>OT</span>}
-                    <div><NoteEdit value={e.note} onSave={v => saveNote(e, v)} /></div>
-                  </span>
-                  <b>{fmt(e.totalHours)} h</b>
-                  {editBtn(e)}
-                  {removeBtn(e)}
-                </div>
-              ))}
+              : (() => {
+                  // one group per person: their share of each entry that day
+                  const names = []
+                  dayEntries.forEach(e => (e.workers?.length ? e.workers : ['(no worker)']).forEach(w => { if (!names.some(n => n.toLowerCase() === String(w).toLowerCase())) names.push(w) }))
+                  return names.map(name => {
+                    const mine = dayEntries.filter(e => (e.workers?.length ? e.workers : ['(no worker)']).some(w => String(w).toLowerCase() === String(name).toLowerCase()))
+                    const hrs = mine.reduce((t, e) => t + (Number(e.hoursEach) || 0), 0)
+                    const waiting = name !== '(no worker)' ? mine.filter(e => !lineOnSheet(sent, e, name)) : []
+                    return (
+                      <div key={name} style={{ marginBottom: 12, border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', background: 'var(--surface-2, #eef1f4)' }}>
+                          <b style={{ fontSize: 14, flex: 1 }}>👷 {name}</b>
+                          <b style={{ fontSize: 13 }}>{fmt(hrs)} h</b>
+                          {waiting.length > 0 && (
+                            <button onClick={() => doPush(waiting, name)} title={`Put ${name}'s ${waiting.length} line${waiting.length === 1 ? '' : 's'} for this day on the timesheet`}
+                              style={{ ...pill(false), padding: '3px 10px', borderColor: '#1e7a34', color: '#1e7a34' }}>📋 Push {name.split(' ')[0]}'s day</button>
+                          )}
+                        </div>
+                        {mine.map(e => {
+                          const onSheet = name !== '(no worker)' && lineOnSheet(sent, e, name)
+                          return (
+                            <div key={e.id} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '6px 10px', borderTop: '1px solid var(--border)', fontSize: 12 }}>
+                              <span style={{ width: 62, color: 'var(--text-mid)' }}>{fmtTime(e.startedAt) || '—'}</span>
+                              <span style={{ flex: 1, minWidth: 0 }}>
+                                <b>{e.kind === 'job' ? `${e.customer} — ${e.jobName}` : e.jobName}</b>
+                                {(e.workers?.length || 0) > 1 && <span style={{ color: 'var(--text-light)' }}> · with {e.workers.filter(w => String(w).toLowerCase() !== String(name).toLowerCase()).join(', ')}</span>}
+                                {e.ot && <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, color: '#9a6610' }}>OT</span>}
+                                <div><NoteEdit value={e.note} onSave={v => saveNote(e, v)} /></div>
+                              </span>
+                              <b style={{ width: 56, textAlign: 'right' }}>{fmt(e.hoursEach)} h</b>
+                              {name === '(no worker)' ? <span style={{ width: 92 }} />
+                                : onSheet
+                                  ? <span title="On the timesheet — push again to update it" onClick={() => doPush([e], name)} style={{ width: 92, textAlign: 'center', fontSize: 11, fontWeight: 700, color: '#1e7a34', cursor: 'pointer' }}>✓ On timesheet</span>
+                                  : <button onClick={() => doPush([e], name)} title={`Put this line (${name}, ${fmt(e.hoursEach)} h) on the timesheet`}
+                                      style={{ ...pill(false), width: 92, padding: '3px 6px', borderColor: '#1e7a34', color: '#1e7a34' }}>📋 Push</button>}
+                              {editBtn(e)}
+                              {removeBtn(e)}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )
+                  })
+                })()}
             {dayEntries.length > 0 && <div style={{ textAlign: 'right', fontSize: 12, marginTop: 6 }}>Crew total: <b>{fmt(dayTotal)} h</b></div>}
           </>
         )}

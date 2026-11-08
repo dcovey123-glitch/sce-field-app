@@ -140,7 +140,7 @@ export function useNeedsYou(navigate) {
   if (tp.length) {
     const days = [...new Set(tp.map(e => String(e.date || e.startedAt || '').slice(0, 10)).filter(Boolean))].sort()
     add('time', '⏱ Time', [{ key: 'timepending', tone: days[0] && days[0] < today() ? 'warn' : 'info', text: `Confirm ${tp.length} clocked entr${tp.length === 1 ? 'y' : 'ies'}`,
-      detail: days.length ? `End-of-day Catch-up · ${days.map(fmtDay).join(', ')}` : 'End-of-day Catch-up', action: 'Catch-up', onGo: go({ hub: 'timetracking' }) }])
+      detail: days.length ? `End-of-day Catch-up · ${days.map(fmtDay).join(', ')}` : 'End-of-day Catch-up', action: 'Catch-up', onGo: go({ hub: 'time', view: 'tracking' }) }])
   }
 
   // (Quotes waiting on an answer are left off: some take months, some never

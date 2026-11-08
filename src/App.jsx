@@ -5,9 +5,8 @@ import Home from './pages/Home.jsx'
 import Jobs from './pages/Jobs.jsx'
 import Quotes from './pages/Quotes.jsx'
 import Materials from './pages/Materials.jsx'
-import Timesheets from './pages/Timesheets.jsx'
+import TimeHub from './pages/TimeHub.jsx'
 import CloudSync from './pages/CloudSync.jsx'
-import TimeTracking from './pages/TimeTracking.jsx'
 import Crew from './pages/Crew.jsx'
 import Todo from './pages/Todo.jsx'
 import SlipGrabber from './components/SlipGrabber.jsx'
@@ -39,6 +38,8 @@ function parseWindowRoute() {
   if (window.location.hash === '#/manage-customers') return { kind: 'manage-customers' }
   m = window.location.hash.match(/^#\/materials\/(.+)$/)
   if (m) return { kind: 'materials', view: m[1] }
+  m = window.location.hash.match(/^#\/time\/(.+)$/)
+  if (m) return { kind: 'time', view: m[1] }
   m = window.location.hash.match(/^#\/deficiencies\/(.+)$/)
   if (m) return { kind: 'deficiencies', customerId: m[1] }
   return null
@@ -61,8 +62,7 @@ const NAV_ITEMS = [
   { id: 'materials',  label: 'Materials',  icon: '📦' },
   { id: 'orders',     label: 'Orders & POs', icon: '📑' },
   { id: 'review',     label: 'Assistant Update', icon: '☀️' },
-  { id: 'timesheets', label: 'Timesheets', icon: '🧾' },
-  { id: 'timetracking', label: 'Time Tracking', icon: '⏱' },
+  { id: 'time',       label: 'Time',       icon: '⏱' },
   { id: 'crew',       label: 'Crew',       icon: '👷' },
   { id: 'photos',     label: 'Photos',     icon: '📷' },
   { id: 'billing',    label: 'Billing',    icon: '💰' },
@@ -82,8 +82,9 @@ const HUB_ROOT = {
   orders:     { hub: 'materials', view: 'ordered' },
   review:     { hub: 'review' },
   snapshot:   { hub: 'snapshot' },
-  timesheets: { hub: 'timesheets' },
-  timetracking: { hub: 'timetracking' },
+  time:       { hub: 'time', view: 'tracking' },
+  timesheets: { hub: 'time', view: 'timesheets' },   // older links
+  timetracking: { hub: 'time', view: 'tracking' },
   crew:       { hub: 'crew' },
   billing:    { hub: 'billing' },
   photos:     { hub: 'photos' },
@@ -199,6 +200,13 @@ export default function App() {
       </div>
     )
   }
+  if (windowRoute?.kind === 'time') {
+    return (
+      <div style={{ height: '100vh', overflowY: 'auto', background: 'var(--bg, #f6f8fb)' }}>
+        <TimeHub view={windowRoute.view} onView={v => { window.location.hash = '#/time/' + v }} />
+      </div>
+    )
+  }
   if (windowRoute?.kind === 'deficiencies') {
     return <DeficienciesWindow customerId={windowRoute.customerId} />
   }
@@ -256,6 +264,7 @@ export default function App() {
           <Home agingDeficiencyCount={agingDeficiencyCount} ordersAttentionCount={ordersAttentionCount} reviewCount={reviewCount} onOpenHub={(id, view) => {
             if (id === 'customers') navigate(HUB_ROOT.jobs)
             else if (id === 'materials') navigate({ hub: 'materials', view: view || 'ordered' })
+            else if (id === 'time') navigate({ hub: 'time', view: view || 'tracking' })
             else navigate(HUB_ROOT[id])
           }} />
         )}
@@ -284,17 +293,14 @@ export default function App() {
           <Snapshot />
         )}
 
-        {screen?.hub === 'timetracking' && (
-          <TimeTracking />
+        {screen?.hub === 'time' && (
+          <TimeHub view={screen.view} onView={v => navigate({ hub: 'time', view: v })} />
         )}
 
         {screen?.hub === 'crew' && (
           <Crew />
         )}
 
-        {screen?.hub === 'timesheets' && (
-          <Timesheets />
-        )}
 
         {screen?.hub === 'cloudsync' && (
           <CloudSync />
@@ -324,7 +330,7 @@ export default function App() {
           <Todo navigate={navigate} />
         )}
 
-        {screen && screen.hub !== 'home' && screen.hub !== 'jobs' && screen.hub !== 'quotes' && screen.hub !== 'materials' && screen.hub !== 'orders' && screen.hub !== 'review' && screen.hub !== 'snapshot' && screen.hub !== 'timesheets' && screen.hub !== 'timetracking' && screen.hub !== 'crew' && screen.hub !== 'cloudsync' && screen.hub !== 'backup' && screen.hub !== 'trash' && screen.hub !== 'notes' && screen.hub !== 'billing' && screen.hub !== 'photos' && screen.hub !== 'todo' && (
+        {screen && screen.hub !== 'home' && screen.hub !== 'jobs' && screen.hub !== 'quotes' && screen.hub !== 'materials' && screen.hub !== 'orders' && screen.hub !== 'review' && screen.hub !== 'snapshot' && screen.hub !== 'time' && screen.hub !== 'crew' && screen.hub !== 'cloudsync' && screen.hub !== 'backup' && screen.hub !== 'trash' && screen.hub !== 'notes' && screen.hub !== 'billing' && screen.hub !== 'photos' && screen.hub !== 'todo' && (
           <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-light)' }}>
             <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 6, color: 'var(--text)' }}>
               {NAV_ITEMS.find(n => n.id === screen.hub)?.label} — not built yet

@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('desktop', {
   loadJobsOnly: () => ipcRenderer.invoke('data:loadJobsOnly'),
   openCustomerWindow: (customerId, projectId, opts) => ipcRenderer.invoke('window:openCustomer', customerId, projectId, opts),
   openMaterialsWindow: (view) => ipcRenderer.invoke('window:openMaterials', view),
+  openTimeWindow: (view) => ipcRenderer.invoke('window:openTime', view),
   openManageCustomersWindow: () => ipcRenderer.invoke('window:openManageCustomers'),
   openFilesWindow: (customerId, kind) => ipcRenderer.invoke('window:openFiles', { customerId, kind }),
   openDeficienciesWindow: (customerId) => ipcRenderer.invoke('window:openDeficiencies', customerId),

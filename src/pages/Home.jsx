@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { useHubStore } from '../api/useHubStore.js'
 import logoUrl from '../assets/logo_sce_new.jpg'
 import { effectiveLifecycleStatus } from './Jobs.jsx'
+import { TIME_VIEWS } from './TimeHub.jsx'
 
 // ── Home: big logo in the middle, six launch bubbles around it ──
 const MATERIALS_VIEWS = [
@@ -15,12 +16,11 @@ const MATERIALS_VIEWS = [
 // angle in degrees, 0 = right, -90 = top, going clockwise
 const BUBBLES = [
   { id: 'customers',    label: 'Customers',     icon: '👥', angle: -90 },
-  { id: 'materials',    label: 'Materials',     icon: '📦', angle: -39 },
-  { id: 'review',       label: 'Assistant Update', icon: '☀️', angle: 13 },
-  { id: 'notes',        label: 'Notes',         icon: '📝', angle: 64 },
-  { id: 'timesheets',   label: 'Timesheets',    icon: '🧾', angle: 116 },
-  { id: 'timetracking', label: 'Time Tracking', icon: '⏱', angle: 167 },
-  { id: 'billing',      label: 'Billing',       icon: '💰', angle: 219 },
+  { id: 'materials',    label: 'Materials',     icon: '📦', angle: -30 },
+  { id: 'review',       label: 'Assistant Update', icon: '☀️', angle: 30 },
+  { id: 'notes',        label: 'Notes',         icon: '📝', angle: 90 },
+  { id: 'time',         label: 'Time',          icon: '⏱', angle: 150 },
+  { id: 'billing',      label: 'Billing',       icon: '💰', angle: 210 },
 ]
 
 function Popout({ bubble, children }) {
@@ -85,7 +85,7 @@ export default function Home({ onOpenHub, agingDeficiencyCount = 0, ordersAttent
   }
 
   function clickBubble(b) {
-    if (b.id === 'customers' || b.id === 'materials') {
+    if (b.id === 'customers' || b.id === 'materials' || b.id === 'time') {
       setOpenId(id => id === b.id ? null : b.id)
       setCustSearch('')
     } else {
@@ -97,6 +97,11 @@ export default function Home({ onOpenHub, agingDeficiencyCount = 0, ordersAttent
     close()
     if (window.desktop) window.desktop.openCustomerWindow(c.id)
     else onOpenHub && onOpenHub('customers')
+  }
+  function openTime(view) {
+    close()
+    if (window.desktop?.openTimeWindow) window.desktop.openTimeWindow(view)
+    else onOpenHub && onOpenHub('time', view)
   }
   function openMaterials(view) {
     close()
@@ -196,7 +201,7 @@ export default function Home({ onOpenHub, agingDeficiencyCount = 0, ordersAttent
               >
                 <span style={{ fontSize: 22 }}>{b.icon}</span>
                 {b.label}
-                {(b.id === 'customers' || b.id === 'materials') && <span style={{ fontSize: 11, opacity: .7 }}>▾</span>}
+                {(b.id === 'customers' || b.id === 'materials' || b.id === 'time') && <span style={{ fontSize: 11, opacity: .7 }}>▾</span>}
               </button>
               {b.id === 'customers' && agingDeficiencyCount > 0 && (
                 <span
@@ -257,6 +262,14 @@ export default function Home({ onOpenHub, agingDeficiencyCount = 0, ordersAttent
                     {jobsHub.loading && <div style={{ padding: 14, fontSize: 12, color: 'var(--text-light)' }}>Loading…</div>}
                     {!jobsHub.loading && shownCustomers.length === 0 && <div style={{ padding: 14, fontSize: 12, color: 'var(--text-light)' }}>{customers.length === 0 ? 'No customers yet.' : 'No matches.'}</div>}
                     {shownCustomers.map(c => <PopoutItem key={c.id} onClick={() => openCustomer(c)}>{c.name}</PopoutItem>)}
+                  </div>
+                </Popout>
+              )}
+
+              {active && b.id === 'time' && (
+                <Popout bubble={b}>
+                  <div style={{ overflowY: 'auto' }}>
+                    {TIME_VIEWS.map(v => <PopoutItem key={v.id} onClick={() => openTime(v.id)}>{v.label}</PopoutItem>)}
                   </div>
                 </Popout>
               )}

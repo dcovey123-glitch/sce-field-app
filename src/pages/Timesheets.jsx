@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { useHubStore } from '../api/useHubStore.js'
 import { clockEntriesInRange, pushClockTime } from '../api/timesheetFromClock.js'
+import { weekKeyOf, weekdayName } from '../api/weekStart.js'
 import { useLocalStore } from '../api/useLocalStore.js'
 import { EXPORT_EXTRA_KEY, normPoKeyTs } from '../api/timesheetExport.js'
 import FileAttachments, { FileTile } from '../components/FileAttachments.jsx'
@@ -13,24 +14,14 @@ import { todayLocal } from '../api/albertaTime.js'
 const isDesktop = typeof window !== 'undefined' && !!window.desktop
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
-const DAY_FULL = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 const WORKERS_DEFAULT = ['Dustin Covey']
 
 function uid() {
   return Math.random().toString(36).slice(2, 10)
 }
 
-// ── Week helpers (Sun–Sat, same as the old app) ────────────────────
-function getWeekStart(date = new Date()) {
-  const d = new Date(date)
-  d.setDate(d.getDate() - d.getDay())
-  d.setHours(0, 0, 0, 0)
-  return d
-}
-function weekKey(date) {
-  const d = getWeekStart(date)
-  return d.toISOString().slice(0, 10)
-}
+// ── Week helpers (Sun–Sat unless changed — api/weekStart.js) ─────────
+function weekKey(date) { return weekKeyOf(date || new Date()) }
 function weekLabel(key) {
   const d = new Date(key + 'T00:00:00')
   const end = new Date(d); end.setDate(end.getDate() + 6)
@@ -207,7 +198,7 @@ function WorkerSheet({ worker, weekKey: wk, onChange, onRemove, isOnly, findPers
       </div>
 
       <div>
-        {DAYS.map((day, i) => {
+        {DAYS.map((_, i) => {
           const entries = normDays[i]
           const dayReg = entries.reduce((a, d) => a + (parseFloat(d.reg) || 0), 0)
           const dayOT = entries.reduce((a, d) => a + (parseFloat(d.ot) || 0), 0)
@@ -216,7 +207,7 @@ function WorkerSheet({ worker, weekKey: wk, onChange, onRemove, isOnly, findPers
             <div key={i} style={{ borderBottom: '1px solid var(--border)', background: hasData ? 'var(--surface)' : 'var(--surface-2)' }}>
               <div style={{ display: 'flex', alignItems: 'center', padding: '7px 12px 4px', gap: 8 }}>
                 <div style={{ width: 42, flexShrink: 0 }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--navy)' }}>{day}</div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--navy)' }}>{weekdayName(wk, i, true)}</div>
                   <div style={{ fontSize: 10, color: 'var(--text-light)' }}>{dayDate(wk, i)}</div>
                 </div>
                 {(dayReg > 0 || dayOT > 0) && (
@@ -653,15 +644,15 @@ export default function Timesheets() {
     setUndoWeek(null)
   }
 
-  // ⏱ Pull in the crew-clock time for the week on screen (Sun–Sat)
+  // ⏱ Pull in the crew-clock time for the week on screen
   const [nonJobLog] = useLocalStore('time_nonjob_log', [])
   const [pullMsg, setPullMsg] = useState('')
   function pullClockTime() {
     const end = new Date(activeKey + 'T00:00:00'); end.setDate(end.getDate() + 6)
     const to = `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, '0')}-${String(end.getDate()).padStart(2, '0')}`
     const entries = clockEntriesInRange({ jobs: jobsHub.records || [], customers: jobsHub.customers || [], nonJob: nonJobLog, from: activeKey, to })
-    const r = pushClockTime(sheets, { entries, me: crew.me ? { name: crew.me.name, id: crew.me.id } : null, findPerson: crew.findByName })
-    if (!r.dates.length) { setPullMsg(entries.length ? 'Already on — every clock entry this week is on the timesheet.' : 'No confirmed clock time this week.'); return }
+    const r = pushClockTime(sheets, { entries, dayPool: entries, me: crew.me ? { name: crew.me.name, id: crew.me.id } : null, findPerson: crew.findByName })
+    if (!r.dates.length || !r.fresh) { setPullMsg(entries.length ? 'Already on — every clock entry this week is on the timesheet.' : 'No confirmed clock time this week.'); return }
     setSheets(r.sheets)
     setPullMsg(`✓ Pulled ${r.hours} h from Time Tracking (${r.dates.map(d => new Date(d + 'T00:00:00').toLocaleDateString('en-CA', { weekday: 'short' })).join(', ')}). Pulling again replaces these rows — no doubles.`)
   }
@@ -801,7 +792,7 @@ export default function Timesheets() {
           if (!hasAny) return ''
           const dayReg = entries.reduce((a, d) => a + (parseFloat(d.reg) || 0), 0)
           const dayOT = entries.reduce((a, d) => a + (parseFloat(d.ot) || 0), 0)
-          const dayCell = `<strong>${DAY_FULL[i]}</strong> <span style="font-weight:400;color:#aaa;font-size:10px">${dayDate(activeKey, i)}</span>`
+          const dayCell = `<strong>${weekdayName(activeKey, i)}</strong> <span style="font-weight:400;color:#aaa;font-size:10px">${dayDate(activeKey, i)}</span>`
           const cust = dayByCustomer(entries, weekMain)
           const custHtml = cust.length === 1
             ? `<span style="color:#333">${escHtml(cust[0].customer)}</span>`

@@ -20,6 +20,7 @@ import { REQUESTS_KEY, quoteCandidates, catalogQuoteTotal } from '../api/request
 import { addPlanLinesToOrderList, tagSlipsFromRequests } from '../api/materialPlan.js'
 import StockCount, { lastFullCount } from '../components/StockCount.jsx'
 import { EXPORT_EXTRA_KEY, exportWeekKey } from '../api/timesheetExport.js'
+import { startOfWeek } from '../api/weekStart.js'
 import { FlagButton, FlagNote } from '../components/Flags.jsx'
 import { useFlags, readFlagJump, clearFlagJump } from '../api/flags.js'
 import CatalogApprovals, { CATALOG_PENDING_KEY, NewItemForApproval } from '../components/CatalogApprovals.jsx'
@@ -3908,7 +3909,7 @@ function PoBox({ onSave, width = 92 }) {
 // The timesheet to Jonathan lists a slip once ALL its lines are received —
 // dated by when it was received, and carried to later weeks until sent.
 // This tab shows each slip's timesheet status so it can be checked.
-const tsWeek = d => { const x = new Date(d); x.setDate(x.getDate() - x.getDay()); x.setHours(0, 0, 0, 0); return x }
+const tsWeek = d => startOfWeek(d) // first day of its timesheet week (api/weekStart.js)
 function ReceivedTab({ orders, onUpdateOrder, renderRow }) {
   const [open, setOpen] = useState(null)
   const [picked, setPicked] = useState(new Set())
