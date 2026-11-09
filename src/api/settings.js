@@ -46,6 +46,7 @@ export const STORE = {
   crew_roster: { what: 'Crew list and rates' },
   // Calendar
   calendar_events: { file: true, what: 'Calendar events you added, or OK\'d from email' },
+  hit_list: { file: true, what: 'Hit List — quick to-do list on Home' },
   // Notes, tasks, flags
   general_notes: { file: true, what: 'General Notes' },
   daily_notes: { file: true, what: 'Daily Notes' },

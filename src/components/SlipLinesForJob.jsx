@@ -4,7 +4,7 @@ import { useHubStore } from '../api/useHubStore.js'
 import { useOrdersFeed, matchOrdersByPo, orderParts } from '../api/orders.js'
 import {
   ordersForJob, slipLineKey, lineJobsOf, lineUse, lineRemaining, leftoverLinesForJob, lineWithRestInStock,
-  mergeIntoStock, slipEntry, slipUnit, GENERAL_STOCK_ID,
+  mergeIntoStock, slipEntry, slipUnit, GENERAL_STOCK_ID, takeFromStock,
 } from '../api/slips.js'
 import { money } from '../api/format.js'
 
@@ -49,13 +49,23 @@ export default function SlipLinesForJob({ project, entries, onSetEntries }) {
   function setUsed(o, li, idx, qty) {
     const key = slipLineKey(o.id, li, idx)
     const use = { ...lineUse(o, li) }
-    const others = Object.entries(use).filter(([k]) => k !== project.id).reduce((a, [, v]) => a + num(v), 0)
-    const q = r3(Math.max(0, Math.min(num(qty), num(li.qty) - others)))
-    if (q > 0) use[project.id] = q; else delete use[project.id]
     const onLine = lineJobsOf(o, li).includes(project.id)
+    // A job on the line can take back what went to Stock (e.g. received while
+    // the line was on Stock, then tagged to this job)
+    const inStock = onLine ? num(use[GENERAL_STOCK_ID]) : 0
+    const others = Object.entries(use).filter(([k]) => k !== project.id).reduce((a, [, v]) => a + num(v), 0)
+    const q = r3(Math.max(0, Math.min(num(qty), num(li.qty) - others + inStock)))
+    const fromStock = r3(Math.max(0, q + others - num(li.qty)))
+    if (fromStock > 0) {
+      const restInStock = r3(inStock - fromStock)
+      if (restInStock > 0) use[GENERAL_STOCK_ID] = restInStock; else delete use[GENERAL_STOCK_ID]
+      if (li.received) setStock(list => takeFromStock(list || [], li, fromStock))
+    }
+    if (q > 0) use[project.id] = q; else delete use[project.id]
     setOrders(list => list.map(x => x.id !== o.id ? x : {
       ...x, lineItems: (x.lineItems || []).map((l2, i) => i !== idx ? l2 : {
         ...l2, usedBy: use,
+        ...(fromStock > 0 && !use[GENERAL_STOCK_ID] ? { jobIds: (l2.jobIds || []).filter(id => id !== GENERAL_STOCK_ID) } : {}),
         // using a line that wasn't on this job puts this job on it (shared)
         ...(onLine ? {} : { jobIds: [...new Set([...lineJobsOf(x, l2), project.id])] }),
       }),
@@ -111,11 +121,12 @@ export default function SlipLinesForJob({ project, entries, onSetEntries }) {
               const remaining = lineRemaining(o, li)
               const others = Object.entries(use).filter(([k, v]) => k !== project.id && num(v) > 0)
               const onLine = lineJobsOf(o, li).includes(project.id)
-              const max = r3(mine + remaining)
+              const inStock = onLine ? num(use[GENERAL_STOCK_ID]) : 0
+              const max = r3(mine + remaining + inStock)
               return (
                 <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '3px 16px 3px 38px', fontSize: 12, opacity: onLine || mine ? 1 : 0.75 }}>
-                  <input type="checkbox" checked={mine > 0} disabled={!mine && remaining <= 0}
-                    title={mine ? 'Untick to take it off this job' : 'Tick to use everything that’s left on this job'}
+                  <input type="checkbox" checked={mine > 0} disabled={!mine && max <= 0}
+                    title={mine ? 'Untick to take it off this job' : remaining <= 0 && inStock > 0 ? 'Tick to take it back from Stock for this job' : 'Tick to use everything that’s left on this job'}
                     onChange={e => setUsed(o, li, idx, e.target.checked ? max : 0)} />
                   <input type="number" step="any" min="0" value={draft[key] ?? (mine || '')} placeholder="0"
                     onChange={e => setDraft(d => ({ ...d, [key]: e.target.value }))}
@@ -126,8 +137,8 @@ export default function SlipLinesForJob({ project, entries, onSetEntries }) {
                     <span style={{ color: 'var(--text-light)' }}>of {li.qty} {li.uom} </span>
                     {li.partNo ? <b>{li.partNo} </b> : null}{li.nickname || li.name}
                     <span style={small}>
-                      {' · '}<b style={{ color: remaining > 0 ? '#1a5fa0' : '#1e7a34' }}>{remaining > 0 ? `${remaining} left` : 'all used'}</b>
-                      {others.length > 0 && ` · ${others.map(([k, v]) => `${r3(num(v))} on ${jobName(k)}`).join(', ')}`}
+                      {' · '}<b style={{ color: remaining > 0 ? '#1a5fa0' : '#1e7a34' }}>{remaining > 0 ? `${remaining} left` : inStock > 0 ? `${inStock} in Stock — yours to take` : 'all used'}</b>
+                      {others.filter(([k]) => !(inStock > 0 && k === GENERAL_STOCK_ID)).length > 0 && ` · ${others.filter(([k]) => !(inStock > 0 && k === GENERAL_STOCK_ID)).map(([k, v]) => `${r3(num(v))} on ${jobName(k)}`).join(', ')}`}
                       {!onLine && !mine && ' · not on this job yet'}
                     </span>
                   </span>

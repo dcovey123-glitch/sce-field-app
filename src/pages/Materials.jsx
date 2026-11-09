@@ -4746,15 +4746,23 @@ export default function Materials({ screen }) {
     // goes all to that job), then refresh the jobs' Materials.
     const merged = { ...old, ...patch }
     const keyOf = ids => [...ids].sort().join(',')
+    const fromStock = []
     merged.lineItems = (merged.lineItems || []).map((li, i) => {
       const before = old.lineItems?.[i] ? lineJobsOf(old, old.lineItems[i]) : []
       const after = lineJobsOf(merged, li)
       if (keyOf(before) === keyOf(after)) return li
       const use = Object.fromEntries(Object.entries(lineUse(old, old.lineItems?.[i] || li)).filter(([k]) => k === GENERAL_STOCK_ID || after.includes(k)))
+      // Taken off Stock and put on a job: Stock's share goes back (to that job
+      // when it's the only one), and off the Stock list if it was received
+      if (after.length && use[GENERAL_STOCK_ID] && !(li.jobIds || []).includes(GENERAL_STOCK_ID)) {
+        if (li.received) fromStock.push({ li, qty: Number(use[GENERAL_STOCK_ID]) || 0 })
+        delete use[GENERAL_STOCK_ID]
+      }
       const used = Object.values(use).reduce((a, v) => a + (Number(v) || 0), 0)
       if (after.length === 1 && used === 0) use[after[0]] = Number(li.qty) || 0
       return { ...li, usedBy: use }
     })
+    if (fromStock.length) setStock(list => fromStock.reduce((a, x) => takeFromStock(a, x.li, x.qty), list || []))
     setOrders(list => list.map(o => o.id === id ? merged : o))
     writeSlipToJobs(merged)
   }

@@ -4,6 +4,7 @@ import logoUrl from '../assets/logo_sce_new.jpg'
 import { effectiveLifecycleStatus } from './Jobs.jsx'
 import { TIME_VIEWS } from './TimeHub.jsx'
 import MiniCalendar from '../components/MiniCalendar.jsx'
+import HitList from '../components/HitList.jsx'
 
 // ── Home: big logo in the middle, six launch bubbles around it ──
 const MATERIALS_VIEWS = [
@@ -175,8 +176,9 @@ export default function Home({ onOpenHub, agingDeficiencyCount = 0, ordersAttent
       </div>
 
       {/* Calendar — top-left: this month at a glance */}
-      <div style={{ position: 'absolute', top: 12, left: 16, zIndex: 30 }}>
+      <div style={{ position: 'absolute', top: 12, left: 16, zIndex: 30, display: 'flex', flexDirection: 'column', gap: 10 }}>
         <MiniCalendar />
+        <HitList />
       </div>
 
       <div style={{ width: 'min(1100px, calc(100% - 270px))', height: 'calc(100vh - 150px)', minWidth: 640, minHeight: 560, marginLeft: 'max(270px, calc((100% - 1100px) / 2))', position: 'relative' }}>
