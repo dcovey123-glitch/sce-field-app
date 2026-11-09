@@ -71,7 +71,21 @@ function wrapText(text, font, size, maxWidth) {
   return lines.length ? lines : ['']
 }
 
-export async function buildOrderFormPdfBytes({ wholesaler, date, items }) {
+// rfq: { number, title } — a pricing request sent from one of our quotes.
+// The PDF then reads "Request for Quote" with our quote number, so it's
+// clearly a request for pricing, not an order.
+export function orderFormHeading(rfq) {
+  if (!rfq) return { title: 'Material Order', ref: '', ask: '' }
+  const ref = [rfq.number, rfq.title].filter(Boolean).join(' — ')
+  return {
+    title: 'Request for Quote',
+    ref: ref ? `Our quote: ${ref}` : '',
+    ask: `Please quote pricing and availability for the items below${rfq.number ? ` and reference our quote ${rfq.number} on your quote` : ''}. This is not an order.`,
+  }
+}
+
+export async function buildOrderFormPdfBytes({ wholesaler, date, items, rfq = null }) {
+  const head = orderFormHeading(rfq)
   const doc = await PDFDocument.create()
   const font = await doc.embedFont(StandardFonts.Helvetica)
   const fontBold = await doc.embedFont(StandardFonts.HelveticaBold)
@@ -102,7 +116,11 @@ export async function buildOrderFormPdfBytes({ wholesaler, date, items }) {
 
     page.drawImage(logoImage, { x: MARGIN, y: y - logoDims.height, width: logoDims.width, height: logoDims.height })
     page.drawText('SCE Electric Western Canada Ltd.', { x: MARGIN + logoDims.width + 16, y: y - 16, size: 13, font: fontBold })
-    page.drawText('Material Order', { x: MARGIN + logoDims.width + 16, y: y - 34, size: 11, font, color: rgb(0.35, 0.35, 0.35) })
+    if (rfq) {
+      page.drawText(head.title.toUpperCase(), { x: MARGIN + logoDims.width + 16, y: y - 36, size: 15, font: fontBold, color: rgb(0.62, 0.36, 0.02) })
+    } else {
+      page.drawText(head.title, { x: MARGIN + logoDims.width + 16, y: y - 34, size: 11, font, color: rgb(0.35, 0.35, 0.35) })
+    }
     y -= (logoDims.height + 20)
 
     page.drawText(`Date: ${date}`, { x: MARGIN, y, size: 10, font })
@@ -110,6 +128,13 @@ export async function buildOrderFormPdfBytes({ wholesaler, date, items }) {
       page.drawText(`To: ${wholesaler}`, { x: MARGIN + 200, y, size: 10, font })
     }
     y -= 24
+    if (rfq) {
+      if (head.ref) {
+        wrapText(head.ref, fontBold, 11, PAGE_W - MARGIN * 2).forEach(line => { page.drawText(line, { x: MARGIN, y, size: 11, font: fontBold }); y -= 14 })
+      }
+      wrapText(head.ask, font, 9.5, PAGE_W - MARGIN * 2).forEach(line => { page.drawText(line, { x: MARGIN, y, size: 9.5, font, color: rgb(0.3, 0.3, 0.3) }); y -= 12 })
+      y -= 12
+    }
 
     // Header row background band, then labels, each inset from its column's divider
     const headerTop = y + 5
@@ -161,7 +186,8 @@ export async function buildOrderFormPdfBytes({ wholesaler, date, items }) {
   return doc.save()
 }
 
-export function orderFormFileName({ wholesaler, date }) {
+export function orderFormFileName({ wholesaler, date, rfq = null }) {
   const safe = (s) => String(s || '').replace(/[<>:"/\\|?*]/g, ' ').trim().replace(/[. ]+$/, '')
-  return `${date} - Material Order${wholesaler ? ` - ${safe(wholesaler)}` : ''}.pdf`
+  const kind = rfq ? `Request for Quote${rfq.number ? ` - ${safe(rfq.number)}` : ''}` : 'Material Order'
+  return `${date} - ${kind}${wholesaler ? ` - ${safe(wholesaler)}` : ''}.pdf`
 }

@@ -40,22 +40,26 @@ export default function WholesalerExportBar({ items, wholesaler, date, subjectPr
     try {
       const { buildOrderFormPdfBytes, orderFormFileName, WHOLESALERS } = await import('../api/exportOrderForm.js')
       const targetName = wholesalerKey ? WHOLESALERS[wholesalerKey].name : (wholesaler || '')
-      const bytes = await buildOrderFormPdfBytes({ wholesaler: targetName, date, items })
+      // From a quote: a Request for Quote with our quote number on it
+      const rfq = quote ? { number: quote.number || '', title: quote.title || '' } : null
+      const bytes = await buildOrderFormPdfBytes({ wholesaler: targetName, date, items, rfq })
       let binary = ''
       for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i])
       const base64 = btoa(binary)
-      const fileName = orderFormFileName({ wholesaler: targetName || 'Materials', date })
+      const fileName = orderFormFileName({ wholesaler: targetName || 'Materials', date, rfq })
 
       if (window.desktop) {
         const savedPath = await window.desktop.saveFile(saveFolder, fileName, base64)
         if (wholesalerKey) {
           const ws = WHOLESALERS[wholesalerKey]
-          const pricing = /pricing/i.test(subjectPrefix || '')
+          const pricing = /pricing|request for quote/i.test(subjectPrefix || '')
           const n = (items || []).length
           const text = [
             `Hi ${ws.contact || 'there'},`,
             '',
-            pricing
+            rfq
+              ? `Please see the attached request for quote (${n} item${n === 1 ? '' : 's'})${rfq.number ? ` for our quote ${rfq.number}${rfq.title ? ' — ' + rfq.title : ''}` : ''}. Could you send me pricing and availability, and reference ${rfq.number || 'it'} on your quote? Please note any lead times or substitutions.`
+              : pricing
               ? `Could you please price the attached list (${n} item${n === 1 ? '' : 's'}) and send me a quote? Please note any lead times or substitutions.`
               : `Please see the attached material order (${n} item${n === 1 ? '' : 's'}). Let me know on availability, and when it's ready for pick-up.`,
           ].join('\n') // no sign-off — Outlook adds the signature
@@ -78,10 +82,10 @@ export default function WholesalerExportBar({ items, wholesaler, date, subjectPr
         } else {
           await window.desktop.openFile(savedPath)
           if (confirmToSend) {
-            setLastExport({ to: wholesaler || '', file: savedPath, pricing: /pricing/i.test(subjectPrefix || '') })
+            setLastExport({ to: wholesaler || '', file: savedPath, pricing: /pricing|request for quote/i.test(subjectPrefix || '') })
             setNote('Saved. Once you\'ve sent it, press ✓ Confirm sent.')
           } else {
-            record(wholesaler || '', savedPath, /pricing/i.test(subjectPrefix || ''))
+            record(wholesaler || '', savedPath, /pricing|request for quote/i.test(subjectPrefix || ''))
             setNote(`Saved. It's in Materials → Orders & Slips${quote ? ' → 💲 Pricing' : ' as 📨 Sent'}, to match to the quote when it comes back (remove it there if you didn't send it).`)
           }
         }
@@ -125,7 +129,7 @@ export default function WholesalerExportBar({ items, wholesaler, date, subjectPr
           <button disabled={!(items || []).length}
             onClick={() => {
               const to = (lastExport && lastExport.to) || wholesaler || ''
-              record(to, (lastExport && lastExport.file) || '', lastExport ? lastExport.pricing : /pricing/i.test(subjectPrefix || ''))
+              record(to, (lastExport && lastExport.file) || '', lastExport ? lastExport.pricing : /pricing|request for quote/i.test(subjectPrefix || ''))
               setLastExport(null); setError('')
               setNote(`✓ Moved to 📨 Sent Request${to ? ' (' + to + ')' : ''} — match the quote there when it comes back. The list is cleared.`)
               onSent && onSent()
@@ -142,7 +146,7 @@ export default function WholesalerExportBar({ items, wholesaler, date, subjectPr
           {['Nedco', 'Gescan', 'Westburne', 'Wesco', 'Red Deer Fasteners', ...(wholesaler && !['Nedco', 'Gescan', 'Westburne', 'Wesco', 'Red Deer Fasteners'].includes(wholesaler) ? [wholesaler] : [])].map(w => <option key={w} value={w}>{w}</option>)}
         </select>
         <button disabled={!phoneTo || !(items || []).length} onClick={() => {
-            record(phoneTo, '', /pricing/i.test(subjectPrefix || ''), true)
+            record(phoneTo, '', /pricing|request for quote/i.test(subjectPrefix || ''), true)
             setNote(`Logged as phoned in to ${phoneTo}. It's in Materials → Orders & Slips as 📨 Sent, to match to the quote when it comes back.${confirmToSend ? ' The list is cleared for the next order.' : ''}`); setPhoneTo('')
             if (confirmToSend) { setLastExport(null); onSent && onSent() }
           }}

@@ -1348,7 +1348,7 @@ function LineGroup({ label, items, onAdd, onUpdate, onDelete, markup, showPartNo
           </div>
           <WholesalerExportBar
             items={exportItems} date={todayLocal()}
-            subjectPrefix={`Material pricing request${quote && quote.quoteNumber ? ' — ' + quote.quoteNumber : ''}`}
+            subjectPrefix={`Request for Quote${quote && quote.quoteNumber ? ' — ' + quote.quoteNumber : ''}${quote && quote.title ? ' — ' + quote.title : ''}`}
             saveFolder="Quotes/Materials Pricing Requests"
             quote={quote ? { id: quote.id, number: quote.quoteNumber || '', title: quote.title || '' } : null}
             emptyMessage="Check at least one material first."
