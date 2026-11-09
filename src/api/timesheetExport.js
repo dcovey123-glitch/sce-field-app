@@ -1,3 +1,4 @@
+import { slipPreTax } from './slips.js'
 import { weekKeyOf } from './weekStart.js'
 // The timesheet's "Material received" export list. Slips in Materials are on
 // it by their received date; "Push to export" (Orders → Done) puts a PO on
@@ -70,10 +71,8 @@ export function dayByCustomer(entries, weekMain) {
 
 // ── Material received this week — fully received orders from Materials,
 // added to the timesheet export so Jonathan sees them with the week's hours.
-export function orderTotalForReport(o) {
-  if (Number(o.invoiceTotal)) return Number(o.invoiceTotal)
-  return (o.lineItems || []).filter(li => !li.movedTo).reduce((a, li) => a + (Number(li.totalPrice) || (Number(li.qty) || 0) * (Number(li.cost) || 0)), 0)
-}
+// Before GST — Jonathan adds the tax
+export function orderTotalForReport(o) { return slipPreTax(o) }
 // Material orders received this week, plus any received earlier that never
 // went out to Jonathan — so nothing slips through if a week is missed.
 export function receivedInWeek(orders, wk, { skipped = false } = {}) {

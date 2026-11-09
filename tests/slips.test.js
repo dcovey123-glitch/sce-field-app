@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   GENERAL_STOCK_ID, slipKind, noPoState, lineUse, initialUse, lineRemaining, jobEntriesFromSlip, setSlipLineUse,
-  leftoverLinesForJob, closeOutLines, moveQuoteChargesToSlips, mergeIntoStock, slipUnit, sameOrder, archiveBlockers,
+  leftoverLinesForJob, closeOutLines, moveQuoteChargesToSlips, mergeIntoStock, slipUnit, sameOrder, archiveBlockers, slipPreTax,
 } from '../src/api/slips.js'
 
 let k = 0
@@ -134,6 +134,21 @@ describe('a quote replaced by its packing slips', () => {
     const r = moveQuoteChargesToSlips([quote, ps], job, uid)
     expect(r.orders.find(o => o.id === 'p1').lineItems[0].usedBy).toEqual({ j1: 20 })
     expect(r.stockTaken.map(s => s.qty)).toEqual([20]) // and off the shelf count
+  })
+})
+
+describe('what a slip cost — always before GST', () => {
+  it('uses the slip\'s own subtotal', () => {
+    expect(slipPreTax({ subtotal: 406.22, tax: 20.31, invoiceTotal: 426.53, lineItems: [{ qty: 1, totalPrice: 400 }] })).toBe(406.22)
+  })
+  it('uses the lines when the subtotal wasn\'t read, or when lines moved to a later slip', () => {
+    expect(slipPreTax({ invoiceTotal: 426.53, lineItems: [{ qty: 2, totalPrice: 406.22 }] })).toBe(406.22)
+    expect(slipPreTax({ subtotal: 500, lineItems: [{ qty: 1, totalPrice: 300 }, { qty: 1, totalPrice: 200, movedTo: 's2' }] })).toBe(300)
+  })
+  it('with only a total: takes the tax off when it was read, else uses the total as is', () => {
+    expect(slipPreTax({ invoiceTotal: 105, tax: 5 })).toBe(100)
+    expect(slipPreTax({ invoiceTotal: 250 })).toBe(250) // a balance line or a quote total — already before tax
+    expect(slipPreTax({})).toBe(0)
   })
 })
 

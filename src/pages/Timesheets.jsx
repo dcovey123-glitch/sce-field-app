@@ -437,7 +437,7 @@ function receivedMaterialHtml(list, links = {}) {
   return `<div class="worker-block">
     <div class="wk-head">
       <span class="wk-name">Material received this week</span>
-      <span class="wk-total">${list.length} order${list.length === 1 ? '' : 's'} · <strong style="color:#fff">${money(total)}</strong></span>
+      <span class="wk-total">${list.length} order${list.length === 1 ? '' : 's'} · <strong style="color:#fff">${money(total)}</strong> before GST</span>
     </div>
     <table class="wk-table">
       <thead><tr>
@@ -852,7 +852,7 @@ export default function Timesheets() {
           'Hours:',
           ...(workerLines.length ? workerLines : ['  • none entered']),
           ...(exp.length ? ['', `Expenses (${exp.length}, receipts are in the PDF):`, ...exp.map(e => `  • ${e._workerName ? e._workerName + ' — ' : ''}${e.desc || 'Expense'}${Number(e.amount) ? ': ' + money2(e.amount) : ''}`)] : []),
-          ...(receivedList.length ? ['', `Material received (${receivedList.length} slip${receivedList.length === 1 ? '' : 's'}, ${money2(recTotal)}${slipFiles.length ? ' — slips attached' : ''}):`,
+          ...(receivedList.length ? ['', `Material received (${receivedList.length} slip${receivedList.length === 1 ? '' : 's'}, ${money2(recTotal)} before GST${slipFiles.length ? ' — slips attached' : ''}):`,
             ...receivedList.map(o => `  • ${o.wholesaler || 'Slip'}${o.invoiceNumber ? ' #' + o.invoiceNumber : ''}${o.poNumber ? ' · PO ' + o.poNumber : ''}${(o.jobs || []).length ? ' · ' + o.jobs.map(j => j.name).filter(Boolean).join(', ') : ''}: ${money2(orderTotalForReport(o))}${o.timesheetNote ? ` (${o.timesheetNote})` : ''}`)] : []),
         ].join('\n') // no sign-off — Outlook adds the signature
         const emailResult = await window.desktop.draftEmail({

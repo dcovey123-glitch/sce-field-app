@@ -6,7 +6,7 @@ import { useHubStore } from '../api/useHubStore.js'
 import ConfirmDeleteButton from '../components/ConfirmDeleteButton.jsx'
 import WholesalerExportBar from '../components/WholesalerExportBar.jsx'
 import QuoteCompare from '../components/QuoteCompare.jsx'
-import { hasPoNumber, noPoState, slipKind, isArchived, isStockOnlyLine, lineIsAllocated, jobEntriesFromSlip, leftoverLinesForJob, slipSearchText, mergeIntoStock, feedPartLines , slipLineKey, lineJobsOf, lineUse, initialUse, lineRemaining, jobsOnSlip, lineWithRestInStock, isQuoteDoc, packingSlipsForQuote, isReplacedQuote, sameOrder, orderBaseKey, orderBaseLabel, moveQuoteChargesToSlips, moveFeedChargesToSlips, takeFromStock } from '../api/slips.js'
+import { hasPoNumber, noPoState, slipKind, isArchived, isStockOnlyLine, lineIsAllocated, jobEntriesFromSlip, leftoverLinesForJob, slipSearchText, mergeIntoStock, feedPartLines , slipLineKey, lineJobsOf, lineUse, initialUse, lineRemaining, jobsOnSlip, lineWithRestInStock, isQuoteDoc, packingSlipsForQuote, isReplacedQuote, sameOrder, orderBaseKey, orderBaseLabel, moveQuoteChargesToSlips, moveFeedChargesToSlips, takeFromStock, slipPreTax } from '../api/slips.js'
 import { orderParts, jobNamesOf, numKey } from '../api/orders.js'
 import { billingCheck, poStatus, orderedOnPo, orderStatus } from '../api/billingCheck.js'
 import { markReceivedByPo } from '../api/orders.js'
@@ -2213,12 +2213,8 @@ function UploadOrderFlow({ apiKey, onCommit, preloadedFile, onDismissPreloaded, 
   )
 }
 
-function orderTotal(order) {
-  if (order.invoiceTotal != null && order.invoiceTotal !== '') return Number(order.invoiceTotal)
-  const lineTotals = (order.lineItems || []).reduce((s, i) => s + (Number(i.totalPrice) || 0), 0)
-  if (lineTotals > 0) return lineTotals
-  return (order.lineItems || []).reduce((s, i) => s + (Number(i.qty) || 0) * (Number(i.cost) || 0), 0)
-}
+// Before GST, the same way everywhere (slips.js)
+const orderTotal = order => slipPreTax(order)
 
 // Rendered straight into the page body: drawn inside a faded (archived /
 // received) row it picked up the row's fade and the rows below covered it,

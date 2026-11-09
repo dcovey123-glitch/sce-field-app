@@ -96,6 +96,23 @@ describe('quote vs packing slips', () => {
     expect(p.stage).toBe('received')
     expect(p.flags.find(f => f.id === 'short').text).toBe('Slips short $200.00 — the balance goes on the timesheet export')
   })
+  it('compares before GST — a slip whose total includes GST still balances its quote', () => {
+    const q = { id: 'q1', kind: 'order', docType: 'quote', wholesaler: 'Westburne', invoiceNumber: '4547914', poNumber: '10118', subtotal: 406.22, lineItems: [{ id: 'a', partNo: 'BR120', qty: 10, totalPrice: 406.22 }] }
+    const s = { id: 's1', kind: 'order', wholesaler: 'Westburne', invoiceNumber: '4547914-01', poNumber: '10118', subtotal: 406.22, tax: 20.31, invoiceTotal: 426.53, jobs: [{ id: 'j1' }], lineItems: [{ id: 'a', partNo: 'BR120', qty: 10, totalPrice: 406.22, received: true }] }
+    const p = one({ slips: [q, s] })
+    expect(p.slipSum).toBe(406.22)
+    expect(p.shortBy).toBe(0)
+  })
+  it('one PO, two orders: each quote is compared only with its own order\'s slips', () => {
+    const q = { id: 'q1', kind: 'order', docType: 'quote', wholesaler: 'Nedco', invoiceNumber: '5982910', poNumber: '9790', jobs: [{ id: 'jA', name: 'Dyno' }], lineItems: [{ id: 'a', partNo: 'LED4', qty: 6, totalPrice: 539.70 }] }
+    const mine = { id: 's1', kind: 'order', wholesaler: 'Nedco', invoiceNumber: '5982910-01', poNumber: '9790', jobs: [{ id: 'jA' }], lineItems: [{ id: 'a', partNo: 'LED4', qty: 6, totalPrice: 539.70, received: true }] }
+    const other = { id: 's2', kind: 'order', wholesaler: 'Nedco', invoiceNumber: '5982913', poNumber: '9790', jobs: [{ id: 'jB', name: 'Tool Crib' }], lineItems: [{ id: 'b', partNo: 'X9', qty: 7, totalPrice: 738.18, received: true }] }
+    const p = one({ slips: [q, mine, other] })
+    expect(p.slipSum).toBe(539.70)
+    expect(p.otherSum).toBe(738.18)
+    expect(p.shortBy).toBe(0)
+    expect(p.why).toMatch(/\$738\.18 on another order on this PO/)
+  })
   it('a slip line moved to a later release is not counted twice', () => {
     const s1 = slip({ lineItems: [{ id: 'l1', partNo: 'A1', name: 'Fixture', qty: 10, totalPrice: 300, movedTo: 's2' }] })
     const s2 = slip({ id: 's2', invoiceNumber: '5962096-02', lineItems: [{ id: 'l1', partNo: 'A1', name: 'Fixture', qty: 10, totalPrice: 300, jobIds: ['j1'] }] })

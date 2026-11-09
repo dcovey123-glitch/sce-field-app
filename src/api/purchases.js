@@ -2,7 +2,7 @@
 // archived) and the slips saved in Materials, grouped by PO — or, with no PO,
 // by quote #. Each purchase sits in one stage, with plain-English flags for
 // anything that needs you, and a "why" line saying how it got there.
-import { hasPoNumber, slipKind, noPoState, isQuoteDoc, isArchived, lineIsAllocated, orderBaseKey } from './slips.js'
+import { hasPoNumber, slipKind, noPoState, isQuoteDoc, isArchived, lineIsAllocated, orderBaseKey, slipPreTax, sameOrder } from './slips.js'
 import { feedPoState, quoteNumbersOf, numKey } from './orders.js'
 import { distributorName } from './monthDist.js'
 import { catalogQuoteTotal } from './requests.js'
@@ -21,7 +21,7 @@ const poKey = s => String(s || '').toLowerCase().replace(/^po\s*#?\s*/, '').repl
 const poShow = s => String(s || '').replace(/^po\s*#?\s*/i, '').trim()
 const invBase = s => numKey(String(s || '').replace(/-\d{1,2}$/, ''))
 const days = d => { const t = Date.parse(d || ''); return isNaN(t) ? null : Math.floor((Date.now() - t) / 86400000) }
-const slipTotal = o => Number(o.invoiceTotal) || (o.lineItems || []).filter(li => !li.movedTo).reduce((a, li) => a + (Number(li.totalPrice) || (Number(li.qty) || 0) * (Number(li.cost) || 0)), 0)
+const slipTotal = o => slipPreTax(o) // before GST
 const isMaterialSlip = o => !o.kind || o.kind === 'order' || o.kind === 'pricing'
 
 export function buildPurchases({ slips = [], feed = [], previous = [], marks = {}, billingFlag = () => false, requests = [] }) {
@@ -84,10 +84,16 @@ function finish(p, mark, billingFlag) {
   const quoteTotal = r2(Math.max(rows.reduce((m, r) => Math.max(m, Number(r.quoteTotal) || 0), 0),
     slips.filter(isQuoteDoc).reduce((a, o) => a + (slipTotal(o) || Number(o.subtotal) || 0), 0),
     requests.filter(r => r.fromCatalog).reduce((a, r) => a + catalogQuoteTotal(r), 0)))
-  const slipSum = r2(packing.reduce((a, o) => a + slipTotal(o), 0))
-  const shortBy = packing.length && quoteTotal ? r2(quoteTotal - slipSum) : 0
+  // One PO can hold several orders (different jobs). When the quotes are
+  // here as documents, each is compared only with its own order's slips;
+  // slips for another order on the PO are left out of the comparison.
+  const qDocs = slips.filter(o => isQuoteDoc(o) && !o.archivedNote)
+  const compared = qDocs.length ? packing.filter(o => qDocs.some(q => sameOrder(q, o))) : packing
+  const otherSum = r2(packing.filter(o => !compared.includes(o)).reduce((a, o) => a + slipTotal(o), 0))
+  const slipSum = r2(compared.reduce((a, o) => a + slipTotal(o), 0))
+  const shortBy = compared.length && quoteTotal ? r2(quoteTotal - slipSum) : 0
   const money = v => '$' + v.toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-  const slipVsQuote = packing.length && quoteTotal ? `slips ${money(slipSum)} of ${money(quoteTotal)}` : ''
+  const slipVsQuote = compared.length && quoteTotal ? `slips ${money(slipSum)} of ${money(quoteTotal)}${otherSum ? ` · ${money(otherSum)} on another order on this PO` : ''}` : ''
 
   const oldRecord = slips.length > 0 && slips.every(o => o.archivedNote)
   // came back for a pricing request (sent from a quote) — kept for pricing; it
@@ -152,7 +158,7 @@ function finish(p, mark, billingFlag) {
     if (stage === 'waiting' && age != null && age > 14) flags.push({ id: 'oldwait', text: `No PO after ${age} days`, tone: 'warn' })
     if (rows.length && rows.every(r => r._prev) && stage === 'ordered') flags.push({ id: 'oldpo', text: 'Old PO — close it or add slips', tone: 'warn' })
   }
-  return { ...p, po, supplier, date, age, quotes, invoices, forWhat, jobs, total, quoteTotal, slipSum, shortBy, notes, stage, why, flags, oldRecord, liveSlips: live, mark }
+  return { ...p, po, supplier, date, age, quotes, invoices, forWhat, jobs, total, quoteTotal, slipSum, otherSum, shortBy, notes, stage, why, flags, oldRecord, liveSlips: live, mark }
 }
 
 // Sent, no quote back yet

@@ -430,3 +430,20 @@ export function moveFeedChargesToSlips(orders, job, feedRows, uid) {
   const quoteEntries = (job.materialEntries || []).filter(e => { const po = poOf(e); return po && slipsOn(po).length })
   return chargeQuoteEntriesToSlips(orders, job, quoteEntries, e => slipsOn(poOf(e)), uid)
 }
+
+// What a slip or quote cost, BEFORE GST — the working number everywhere
+// (purchases, quote vs slips, the weekly list to Jonathan; he adds tax).
+// The slip's own subtotal when it has one (and none of its lines moved to a
+// later slip), else its lines, else its total less any tax read off it.
+export function slipPreTax(o) {
+  const num = v => (v === '' || v == null ? NaN : Number(v))
+  const lines = (o.lineItems || []).filter(li => !li.movedTo)
+  const lineSum = lines.reduce((a, li) => a + (Number(li.totalPrice) || (Number(li.qty) || 0) * (Number(li.cost) || 0)), 0)
+  const moved = (o.lineItems || []).some(li => li.movedTo)
+  const sub = num(o.subtotal)
+  if (sub > 0 && !moved) return Math.round(sub * 100) / 100
+  if (lineSum > 0) return Math.round(lineSum * 100) / 100
+  const tot = num(o.invoiceTotal), tax = num(o.tax)
+  if (tot > 0) return Math.round((tax > 0 && tax < tot ? tot - tax : tot) * 100) / 100
+  return 0
+}

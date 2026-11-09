@@ -64,8 +64,9 @@ describe('material received on the weekly export', () => {
     expect(receivedInWeek([o({ timesheetSkipWeeks: [WK] })], WK)).toHaveLength(0)
     expect(receivedInWeek([o({ timesheetSkipWeeks: [WK] })], WK, { skipped: true })).toHaveLength(1)
   })
-  it('the amount is the slip total when one was read, else the lines (lines moved to a later slip left out)', () => {
-    expect(orderTotalForReport(o({ invoiceTotal: 105 }))).toBe(105)
+  it('the amount is before GST: the slip\'s subtotal, else its lines (lines moved to a later slip left out)', () => {
+    expect(orderTotalForReport(o({ subtotal: 406.22, tax: 20.31, invoiceTotal: 426.53 }))).toBe(406.22)
+    expect(orderTotalForReport(o({ invoiceTotal: 105, tax: 5 }))).toBe(100) // lines 100, never the GST total
     expect(orderTotalForReport(o({ lineItems: [{ qty: 2, totalPrice: 100 }, { qty: 1, cost: 40 }, { qty: 5, totalPrice: 50, movedTo: 'x' }] }))).toBe(140)
   })
 })
