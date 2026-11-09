@@ -57,6 +57,7 @@ export const STORE = {
   job_projects: { what: 'Jobs (copy of the folder list)' },
   quote_customers: { what: 'Quote customers (copy of the folder list)' },
   quote_quotes: { what: 'Quotes (copy of the folder list)' },
+  quote_email_contacts: { what: 'Who each customer\'s quotes are emailed to' },
   quote_sections_open: { what: 'Which quote sections are open', view: true },
   cable_tracker_sections: { what: 'Cable tracker sections', view: true },
   // Home, Today, Snapshot

@@ -10,6 +10,7 @@ import ConfirmDeleteButton from '../components/ConfirmDeleteButton.jsx'
 import WholesalerExportBar from '../components/WholesalerExportBar.jsx'
 import { hit } from '../api/search.js'
 import ProposalPill from '../components/ProposalPill.jsx'
+import EmailQuoteButton from '../components/EmailQuoteButton.jsx'
 import { generateQuoteDocxBase64, quoteExportFileName } from '../api/exportQuote.js'
 import { todayLocal } from '../api/albertaTime.js'
 import {
@@ -2841,7 +2842,10 @@ export function QuoteDetailPage({ customer, quote: rawQuote, onUpdate, linkedJob
           <FlagBanner record={rawQuote} onUpdate={onUpdate} style={{ margin: '8px 0 0' }} />
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, flexShrink: 0 }}>
-          <ProposalPill customerFolder={customer.folder} quote={rawQuote} size="big" />
+          <div style={{ display: 'flex', gap: 6 }}>
+            <ProposalPill customerFolder={customer.folder} quote={rawQuote} size="big" />
+            <EmailQuoteButton customerId={customer.id} customerFolder={customer.folder} quote={rawQuote} total={grandTotal} onUpdate={onUpdate} />
+          </div>
           <button
             onClick={handleExport}
             disabled={exporting}
