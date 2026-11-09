@@ -14,7 +14,7 @@ import ConfirmDeleteButton from '../components/ConfirmDeleteButton.jsx'
 import WholesalerExportBar from '../components/WholesalerExportBar.jsx'
 import JobTasks from '../components/JobTasks.jsx'
 import { missingSlipCharges, addMissingSlipCharges } from '../api/materialsAudit.js'
-import { planLineStatus, planSummary, stockFree, findStockFor, addPlanLinesToOrderList, ORDER_LIST_KEY, REQUESTS_KEY as PLAN_REQUESTS_KEY } from '../api/materialPlan.js'
+import { planLineStatus, planSummary, stockFree, findStockFor, addPlanLinesToOrderList, ORDER_LIST_KEY, REQUESTS_KEY as PLAN_REQUESTS_KEY, linkCandidates, linkLine, unlinkLine, linkedLines } from '../api/materialPlan.js'
 import { useOrdersFeed, partsForJob, openQuotePdf } from '../api/orders.js'
 import PostTimeToLabor, { unpostedCount } from '../components/PostTimeToLabor.jsx'
 import { jobDeficiencies, openLaborFlags, LABOR_FLAG_KINDS } from '../api/jobHealth.js'
@@ -2895,6 +2895,49 @@ function FromSlipsList({ entries, dupOf, onDelete, onSlipQty }) {
   )
 }
 
+// Link a plan line to the slip or quote line it actually came on, when it
+// didn't match on its own. This job's slips first, then the closest wording.
+function OrderLinkSearch({ orders, job, line, onPick, onClose }) {
+  const [q, setQ] = useState('')
+  const [hi, setHi] = useState(0)
+  const wrapRef = useRef(null)
+  useEffect(() => {
+    const away = ev => { if (wrapRef.current && !wrapRef.current.contains(ev.target)) onClose() }
+    document.addEventListener('mousedown', away)
+    return () => document.removeEventListener('mousedown', away)
+  }, [onClose])
+  const list = linkCandidates(orders, job, line, q).filter(c => !c.linked)
+  const pick = c => c && onPick(c.orderId, c.lineId)
+  return (
+    <span ref={wrapRef} style={{ position: 'relative', display: 'inline-block' }}>
+      <input autoFocus value={q} onChange={ev => { setQ(ev.target.value); setHi(0) }} placeholder="Search slips & quotes — part #, words, slip #, PO…"
+        onKeyDown={ev => {
+          if (ev.key === 'Escape') onClose()
+          if (ev.key === 'ArrowDown') { ev.preventDefault(); setHi(h => Math.min(h + 1, list.length - 1)) }
+          if (ev.key === 'ArrowUp') { ev.preventDefault(); setHi(h => Math.max(h - 1, 0)) }
+          if (ev.key === 'Enter') { ev.preventDefault(); pick(list[hi]) }
+        }}
+        style={{ fontSize: 12, width: 300, border: '1px solid var(--blue, #2563eb)', borderRadius: 6, padding: '4px 8px' }} />
+      <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 30, marginTop: 2, width: 520, maxHeight: 300, overflowY: 'auto', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 6, boxShadow: '0 6px 18px rgba(0,0,0,.14)' }}>
+        {list.length ? list.map((c, i) => (
+          <div key={c.orderId + c.lineId} onMouseDown={ev => { ev.preventDefault(); pick(c) }} onMouseEnter={() => setHi(i)}
+            style={{ display: 'flex', gap: 8, padding: '6px 10px', cursor: 'pointer', fontSize: 12, background: i === hi ? '#e8f2fc' : 'transparent', borderBottom: '1px solid var(--border)' }}>
+            <span style={{ flex: 1, minWidth: 0 }}>
+              <b>{c.li.name || c.li.partNo || 'Line'}</b>
+              <span style={{ color: 'var(--text-light)' }}>{c.li.partNo ? ' · ' + c.li.partNo : ''}</span>
+              <div style={{ fontSize: 11, color: 'var(--text-light)' }}>
+                {c.o.wholesaler} {c.o.docType === 'quote' ? 'quote ' : '#'}{c.o.invoiceNumber}{c.o.poNumber ? ` · PO ${c.o.poNumber}` : ''}{c.date ? ` · ${fmtDate(c.date)}` : ''}
+                {c.onJob ? <b style={{ color: '#1e7a34' }}> · this job</b> : ''}{c.li.received ? ' · received' : ''}
+              </div>
+            </span>
+            <span style={{ whiteSpace: 'nowrap', fontWeight: 700 }}>{c.li.qty} {c.li.uom || ''}</span>
+          </div>
+        )) : <div style={{ padding: 10, fontSize: 12, color: 'var(--text-light)' }}>{q ? `No slip or quote line matches “${q}”.` : 'No slips or quotes in the last 4 months — type to search older ones.'}</div>}
+      </div>
+    </span>
+  )
+}
+
 // Searchable Stock picker for a plan line: type part #, nickname or words
 // (any order); best matches for the line come first. Enter picks the top one.
 function StockPickSearch({ stock, line, onPick, onClose }) {
@@ -3501,6 +3544,7 @@ function MaterialsPlanned({ project, onUpdate, quotesStore, customer }) {
   const jobsAll = useHubStore({ hub: 'jobs', recordFileName: 'project.json', getRecordFolderName: p => p.name, customersKey: 'job_customers', recordsKey: 'job_projects' }).records
   const [msg, setMsg] = useState('')
   const [pickFor, setPickFor] = useState('')
+  const [linkFor, setLinkFor] = useState('')
   const setPlanned = next => onUpdate(cur => ({ plannedMaterials: typeof next === 'function' ? next(cur.plannedMaterials || []) : next }))
   const ctx = { orders: orders || [], requests: requests || [], feedRows: feedRows || [], orderList: orderList || [], stock: stock || [], jobs: jobsAll }
   const statusOf = e => planLineStatus(e, project, ctx)
@@ -3610,6 +3654,17 @@ function MaterialsPlanned({ project, onUpdate, quotesStore, customer }) {
                 pickFor === e.id
                   ? <StockPickSearch stock={stock} line={e} onPick={id => { updateEntry(e.id, { stockPick: id }); setPickFor('') }} onClose={() => setPickFor('')} />
                   : <a href="#" onClick={ev => { ev.preventDefault(); setPickFor(e.id) }} style={{ fontSize: 11.5, color: 'var(--blue, #2563eb)' }}>{sf ? (sf.item.nickname || sf.item.name) : 'pick item'}</a>
+              )}
+              {e.source !== 'stock' && linkedLines(e, orders).map(k => (
+                <span key={k.orderId + k.lineId} title={k.sub} style={{ fontSize: 11, padding: '1px 4px 1px 8px', borderRadius: 10, border: `1px solid ${k.gone ? '#e5b3ad' : '#c9dbef'}`, background: k.gone ? '#fdeeee' : '#eef4fb', color: k.gone ? '#a12a1e' : '#1a5fa0', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                  🔗 {k.label}{k.li ? ` · ${k.li.qty} ${k.li.uom || ''}`.trimEnd() : ''}
+                  <button onClick={() => updateEntry(e.id, unlinkLine(e, k.orderId, k.lineId))} title="Unlink" style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'inherit', fontSize: 11, padding: '0 3px' }}>✕</button>
+                </span>
+              ))}
+              {e.source !== 'stock' && !done && (
+                linkFor === e.id
+                  ? <OrderLinkSearch orders={orders} job={project} line={e} onPick={(oid, lid) => { updateEntry(e.id, linkLine(e, oid, lid)); setLinkFor('') }} onClose={() => setLinkFor('')} />
+                  : <a href="#" onClick={ev => { ev.preventDefault(); setLinkFor(e.id) }} title="It came on a slip or quote the app didn't match — pick the line" style={{ fontSize: 11.5, color: 'var(--blue, #2563eb)' }}>🔗 Link to order</a>
               )}
               <span style={{ flex: 1 }} />
               {e.source === 'order' && st.id === 'toorder' && <button onClick={() => toOrderSheet([e.id])} style={{ ...btn, padding: '3px 9px', fontSize: 11 }}>→ Order sheet</button>}

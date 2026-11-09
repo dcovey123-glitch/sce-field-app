@@ -47,7 +47,7 @@ export function jobDeficiencies(job, { orders = [], requests = [], orderSheet = 
     // a line already on Materials Actual is taken care of, whatever its source
     const onActual = l => entries.some(e => sameItem({ partNo: e.partNo, name: e.item }, { partNo: l.partNo, name: l.item }))
     const undecided = plan.filter(l => l.source !== 'stock' && l.source !== 'order' && !onActual(l))
-    const toOrder = plan.filter(l => l.source === 'order' && !outRefs.has(job.id + ':' + l.id))
+    const toOrder = plan.filter(l => l.source === 'order' && !outRefs.has(job.id + ':' + l.id) && !(l.links || []).length) // linked to a slip/quote by hand = ordered
     const unpicked = plan.filter(l => l.source === 'stock' && !l.stockPick)
     const short = plan.filter(l => {
       if (l.source !== 'stock' || !l.stockPick) return false

@@ -1,6 +1,6 @@
 // A job's material plan, and what's still open before a job is "Project current"
 import { describe, it, expect } from 'vitest'
-import { reservedElsewhere, stockFree, planLineStatus, planSummary, addPlanLinesToOrderList, tagSlipsFromRequests } from '../src/api/materialPlan.js'
+import { reservedElsewhere, stockFree, planLineStatus, planSummary, addPlanLinesToOrderList, tagSlipsFromRequests, linkCandidates, linkLine, unlinkLine, linkedLines } from '../src/api/materialPlan.js'
 import { jobDeficiencies } from '../src/api/jobHealth.js'
 import { missingSlipCharges, slipDuplicateOf } from '../src/api/materialsAudit.js'
 
@@ -107,5 +107,42 @@ describe('job health — is the project current?', () => {
       'Notes: 1 to address — Ask Edwin about keys',
       'Deficiencies: 1 open — Cover plate missing',
     ])
+  })
+})
+
+describe('linking a plan line to an order by hand', () => {
+  const line = { id: 'l1', partNo: 'GFCI15W', item: 'GFCI 15A white', qty: 12, source: 'order' }
+  const J = job({ plannedMaterials: [line] })
+  // Nedco wrote it its own way and the slip isn't tagged to the job: no auto-match
+  const slip = { id: 's1', kind: 'order', wholesaler: 'Nedco', invoiceNumber: '6056920-01', poNumber: 'P0022311', orderDate: '2026-11-04', jobs: [], lineItems: [{ id: 'x', partNo: 'LEVGFTR1W', name: 'LEV SMARTLOCK GFCI 15A WH', qty: 12, received: true }] }
+  it('without a link the line is still "To order"', () => {
+    expect(planLineStatus(line, J, { orders: [slip] }).id).toBe('toorder')
+  })
+  it('the picker finds it by the words in the line, recent first', () => {
+    const c = linkCandidates([slip], J, line, '', { today: '2026-11-09' })
+    expect(c[0]).toMatchObject({ orderId: 's1', lineId: 'x', overlap: 2 })
+    expect(linkCandidates([slip], J, line, 'smartlock', { today: '2026-11-09' })).toHaveLength(1)
+    expect(linkCandidates([slip], J, line, 'breaker', { today: '2026-11-09' })).toHaveLength(0)
+  })
+  it('linked: follows that slip line — received, and says it isn\'t charged to the job yet', () => {
+    const linked = linkLine(line, 's1', 'x')
+    const s = planLineStatus(linked, J, { orders: [slip] })
+    expect(s.id).toBe('received')
+    expect(s.detail).toMatch(/not charged to this job yet/)
+    expect(linkedLines(linked, [slip])[0]).toMatchObject({ label: 'Nedco #6056920-01', gone: false })
+    expect(planLineStatus(unlinkLine(linked, 's1', 'x'), J, { orders: [slip] }).id).toBe('toorder')
+  })
+  it('linked to a slip on a PO that isn\'t in yet → On PO; to a quote with no PO → Quoted', () => {
+    const notIn = { ...slip, lineItems: [{ ...slip.lineItems[0], received: false }] }
+    expect(planLineStatus(linkLine(line, 's1', 'x'), J, { orders: [notIn] }).id).toBe('onpo')
+    const quote = { ...slip, id: 'q1', docType: 'quote', poNumber: '', invoiceNumber: '6056920', lineItems: [{ ...slip.lineItems[0], received: false }] }
+    expect(planLineStatus(linkLine(line, 'q1', 'x'), J, { orders: [quote] })).toMatchObject({ id: 'quoted', detail: 'Needs a PO · linked by you' })
+  })
+  it('linked to a quote line that was received counts as received', () => {
+    const q = { ...slip, id: 'q2', docType: 'quote', invoiceNumber: '6040938' }
+    expect(planLineStatus(linkLine(line, 'q2', 'x'), J, { orders: [q] }).id).toBe('received')
+  })
+  it('job health stops listing a linked line as "to order, not sent"', () => {
+    expect(jobDeficiencies(job({ plannedMaterials: [linkLine(line, 's1', 'x')] }), { status: 'ongoing' })).toEqual([])
   })
 })
