@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { aiPost, AI_MODEL } from './ai.js'
 
 // Orders & POs — read the feed Claude's morning email run writes to OneDrive
 // ("Field App/orders.json") and lay this PC's own changes on top
@@ -508,23 +509,14 @@ export function withSlipQuotes(feed, local) {
 const SLIP_PROMPT = 'This PDF is an electrical wholesaler document sent to SCE Electric: usually a QUOTATION (Nedco, Gescan, Westburne/Rexel, Triangle, WOW Lighting…), sometimes an ORDER CONFIRMATION. Extract: kind ("quote" or "order"), supplier (the wholesaler company that issued it, e.g. "Nedco", "Gescan", "Westburne"), contact (the quoting person\'s name if shown), number (the quote number, or the order number for an order confirmation; for Gescan drop a trailing "-00"), date (YYYY-MM-DD), jobRef (the customer reference / job name printed on it, e.g. "WAY FINDING", "RESI"), poNumber (only if printed), subtotal (the pre-tax total exactly as printed: Nedco "TOTAL Before Taxes", Gescan the final TOTAL before tax, others "Subtotal"), and every line item: qty (plain units — each, metres or feet as printed; never rescale), uom, partNo (the supplier product code), desc (short readable description), ext (the extended/line total exactly as printed). Respond with ONLY raw JSON: {"kind":"quote","supplier":"","contact":"","number":"","date":"","jobRef":"","poNumber":"","subtotal":0,"lines":[{"qty":0,"uom":"","partNo":"","desc":"","ext":0}]}'
 
 async function parseQuoteSlip(base64, apiKey) {
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true',
-    },
-    body: JSON.stringify({
-      model: 'claude-sonnet-5',
+  const res = await aiPost(apiKey, {
+      model: AI_MODEL,
       max_tokens: 8000,
       messages: [{ role: 'user', content: [
         { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } },
         { type: 'text', text: SLIP_PROMPT },
       ] }],
-    }),
-  })
+    })
   if (!res.ok) {
     let detail = `API error ${res.status}`
     try { const b = await res.json(); if (b?.error?.message) detail = b.error.message } catch { /* status only */ }

@@ -7,6 +7,8 @@ import { groupMonthDist } from '../api/monthDist.js'
 import { FlagButton, FlagNote } from '../components/Flags.jsx'
 import { useFlags, readFlagJump } from '../api/flags.js'
 import { EXPORT_EXTRA_KEY, exportWeekKey, normPoKeyTs } from '../api/timesheetExport.js'
+import { money, fmtDate as fmtDateShared } from '../api/format.js'
+import { useApiKey } from '../api/ai.js'
 
 // ── Orders & POs: wholesaler quotes → Jonathan's PO → order → received ──
 // The list comes from Claude's morning email run (orders.json in the
@@ -24,12 +26,7 @@ const STATUS_STYLE = {
   'Closed':       { bg: 'var(--gray-light)', fg: 'var(--text-light)' },
 }
 
-function fmtDate(d) {
-  if (!d) return ''
-  const t = Date.parse(d.length === 10 ? d + 'T12:00:00' : d)
-  if (isNaN(t)) return d
-  return new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-}
+const fmtDate = d => fmtDateShared(d) || d || ''
 
 function fmtUpdated(iso, mtime) {
   const t = iso ? Date.parse(iso) : mtime
@@ -231,7 +228,7 @@ function OrderTitleBar({ o, open, onToggle, onNote, bal }) {
       {flagged && flagged.note ? <span title={flagged.note} style={{ ...cell, color: '#a12a1e', fontWeight: 700, fontSize: 12 }}>⚑ {flagged.note}</span> : <input value={note} placeholder="Quick note…" onClick={e => e.stopPropagation()} onChange={e => setNote(e.target.value)} onBlur={save}
         onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') { setNote(o.note || ''); e.currentTarget.blur() } }}
         style={{ fontSize: 12, border: '1px solid var(--border)', borderRadius: 4, padding: '3px 7px', background: note ? 'var(--yellow, #fff8d6)' : 'var(--surface)', minWidth: 0, fontFamily: 'var(--font)' }} />}
-      <span style={{ textAlign: 'right', fontWeight: 700, color: 'var(--text-mid)' }}>{Number(o.quoteTotal) ? '$' + Number(o.quoteTotal).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : ''}</span>
+      <span style={{ textAlign: 'right', fontWeight: 700, color: 'var(--text-mid)' }}>{Number(o.quoteTotal) ? money(o.quoteTotal) : ''}</span>
     </div>
   )
 }
@@ -255,7 +252,7 @@ function OrderRowBody({ o, exportStateOf, onPushExport, onSetPricing, onSetStatu
   const [forcing, setForcing] = useState(null) // reason text while the force box is open
   const bal = o.poNumber && balanceOf ? balanceOf(o) : null
   const done = o.status === 'Received' || o.status === 'Closed'
-  const quoted = Number(o.quoteTotal) ? `Quoted $${Number(o.quoteTotal).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ''
+  const quoted = Number(o.quoteTotal) ? `Quoted ${money(o.quoteTotal)}` : ''
   const before = [o.supplier, o.contact].filter(Boolean).join(' · ')
   const after = [quoted, fmtDate(o.date)].filter(Boolean).join(' · ')
   // Quote numbers on this row: from the run's links, or split the quote # text.
@@ -494,7 +491,7 @@ export default function Orders({ onAttentionChange, embedded = false, query, ext
 
   // ↻ Refresh: re-read the feed, then pick up any quote PDFs that landed in
   // Quote Slips since the last check (new quotes and revised ones).
-  const [apiKey] = useLocalStore('anthropic_api_key', '')
+  const [apiKey] = useApiKey()
   const [slipCheck, setSlipCheck] = useState({ busy: false, msg: '' })
   const [poMsg, setPoMsg] = useState(null) // { applied, unmatched, missing }
   const refresh = useCallback(async () => {

@@ -4,12 +4,12 @@
 import {
   slipKind, isReplacedQuote, lineUse, lineJobsOf, slipLineKey, jobEntriesFromSlip, GENERAL_STOCK_ID,
 } from './slips.js'
+import { money } from './format.js'
 
 const n = v => Number(v) || 0
 const pn = s => String(s || '').toUpperCase().replace(/[^0-9A-Z]/g, '')
 const nm = s => String(s || '').toUpperCase().replace(/[^0-9A-Z]/g, '').slice(0, 14)
 const nameWords = t => new Set(String(t || '').toLowerCase().replace(/[^a-z0-9"/ ]/g, ' ').split(/\s+/).filter(w => w.length >= 3))
-const money = v => '$' + n(v).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const unitOf = li => (n(li.totalPrice) && n(li.qty) ? n(li.totalPrice) / n(li.qty) : n(li.cost))
 export const isOpenJob = j => !j.trashedAt && j.lifecycleStatus !== 'billed'
 const label = o => `${String(o.wholesaler || '').split(/[\s(-]/)[0] || 'Slip'} #${o.invoiceNumber || '—'}${o.poNumber ? ' · PO ' + String(o.poNumber).replace(/^po\s*#?\s*/i, '') : ''}`

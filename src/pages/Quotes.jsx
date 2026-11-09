@@ -19,6 +19,8 @@ import {
   buildCompleteDraft, scopeCostLines, totalLineFor, finalLineFor, allowanceCostLines, adjustmentLinesFor,
   referenceLinesFor, DEFAULT_MARKUP, proposalMoney, defaultGeneral, includedAllowanceText, combinedScopeText,
 } from '../api/quoteMath.js'
+import { money } from '../api/format.js'
+import { aiPost, AI_MODEL, useApiKey } from '../api/ai.js'
 
 function uid() {
   return Math.random().toString(36).slice(2, 10)
@@ -168,11 +170,7 @@ Write a GENERAL overview scope of work covering all of it, for the customer to r
 - Leave out allowances (permits, engineering, fire alarm, sub-trades); they are listed separately.
 - No prices, quantities of hours, or dollar amounts.
 Reply with only the lines.`
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-    body: JSON.stringify({ model: 'claude-sonnet-5', max_tokens: 1500, messages: [{ role: 'user', content: prompt }] }),
-  })
+  const res = await aiPost(apiKey, { model: AI_MODEL, max_tokens: 1500, messages: [{ role: 'user', content: prompt }] })
   if (!res.ok) {
     let detail = `API error ${res.status}`
     try { const e = await res.json(); if (e?.error?.message) detail = e.error.message } catch { /* status only */ }
@@ -184,16 +182,8 @@ Reply with only the lines.`
 }
 
 async function parseReferencePdf(base64, apiKey) {
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true',
-    },
-    body: JSON.stringify({
-      model: 'claude-sonnet-5',
+  const res = await aiPost(apiKey, {
+      model: AI_MODEL,
       max_tokens: 8000,
       messages: [{
         role: 'user',
@@ -205,8 +195,7 @@ async function parseReferencePdf(base64, apiKey) {
           },
         ],
       }],
-    }),
-  })
+    })
   if (!res.ok) {
     let detail = `API error ${res.status}`
     try {
@@ -362,7 +351,7 @@ function PRUploadFlow({ apiKey, onCommit, commitLabel }) {
 
 function PriceReferenceTab() {
   const [, setCatalog] = useLocalStore('material_catalog', [])
-  const [apiKey] = useLocalStore('anthropic_api_key', '')
+  const [apiKey] = useApiKey()
   const [references, setReferences] = useLocalStore('quote_price_references', [])
   const [discrepancies, setDiscrepancies] = useState([])
   const [justAdded, setJustAdded] = useState([])
@@ -1148,10 +1137,6 @@ const subGroupLabelStyle = {
   textTransform: 'uppercase', padding: '8px 16px 2px 34px',
 }
 
-function money(v) {
-  const n = Number(v) || 0
-  return `${n < 0 ? '-' : ''}$${Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-}
 
 // All quote math lives in api/quoteMath.js (shared with Jobs, Mobile and the
 // Word export). It reads older quotes the new way without changing totals.
@@ -1379,7 +1364,7 @@ function LineGroup({ label, items, onAdd, onUpdate, onDelete, markup, showPartNo
 // Stock — this is just filling in what the quote should charge for materials.
 function MaterialsPricingUpload({ onAddLines }) {
   const [, setCatalog] = useLocalStore('material_catalog', [])
-  const [apiKey] = useLocalStore('anthropic_api_key', '')
+  const [apiKey] = useApiKey()
   const [open, setOpen] = useState(false)
   const [discrepancies, setDiscrepancies] = useState([])
   const [justAdded, setJustAdded] = useState([])
@@ -2414,7 +2399,7 @@ function CompleteQuoteTab({ quote, customer, onUpdate }) {
   const [activeBlockId, setActiveBlockId] = useState(null)
   const [confirmMode, setConfirmMode] = useState(null) // 'rebuild' | 'blank'
   const [piecesOpen, setPiecesOpen] = useState(true)
-  const [apiKey] = useLocalStore('anthropic_api_key', '')
+  const [apiKey] = useApiKey()
   const [writing, setWriting] = useState({ busy: false, error: '' })
 
   useEffect(() => {

@@ -3,12 +3,10 @@ import { useHubStore } from '../api/useHubStore.js'
 import ConfirmDeleteButton from '../components/ConfirmDeleteButton.jsx'
 import { effectiveJobTotal, sortByCO } from './Jobs.jsx'
 import { removeBillingEntryPatch } from '../api/billing.js'
+import { money, fmtDate } from '../api/format.js'
 
 const isDesktop = typeof window !== 'undefined' && !!window.desktop
 
-function money(v) {
-  return `$${(Number(v) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-}
 function monthLabel(monthKey) {
   const [y, m] = monthKey.split('-').map(Number)
   return new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
@@ -98,7 +96,7 @@ export default function Billing() {
             <td style="text-align:right">${money(e.jobValue)}</td>
             <td style="text-align:right">${e.percent}%</td>
             <td style="text-align:right">${money(e.amount)}</td>
-            <td>${new Date(e.date).toLocaleDateString()}</td>
+            <td>${fmtDate(e.date, 'medium')}</td>
           </tr>
         `).join('')
         return `
@@ -185,7 +183,7 @@ export default function Billing() {
                       {e.customerName} — {e.jobName}
                     </div>
                     <div style={{ fontSize: 11, color: 'var(--text-light)' }}>
-                      CO {e.co || '—'} · Job value {money(e.jobValue)} · {e.percent}% · {new Date(e.date).toLocaleDateString()}
+                      CO {e.co || '—'} · Job value {money(e.jobValue)} · {e.percent}% · {fmtDate(e.date, 'medium')}
                     </div>
                   </div>
                 </div>

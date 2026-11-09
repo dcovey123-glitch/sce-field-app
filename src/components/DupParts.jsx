@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import { partNosOf, priceByRule } from '../api/partAliases.js'
+import { moneyUnit as money } from '../api/format.js'
 
 // Catalog duplicates: the same part entered more than once (same part #, or
 // the same description when there's no part #). Merging keeps one Catalog
@@ -9,7 +10,6 @@ import { partNosOf, priceByRule } from '../api/partAliases.js'
 
 const norm = s => String(s || '').toLowerCase().replace(/[^0-9a-z]/g, '')
 const normDesc = s => String(s || '').toLowerCase().replace(/[^0-9a-z]+/g, ' ').trim()
-const money = v => '$' + (Number(v) || 0).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 4 })
 const r4 = v => Math.round(v * 10000) / 10000
 const FT_PER_M = 3.28084
 // price per `from` unit → price per `to` unit (only M ↔ FT converts)

@@ -6,10 +6,8 @@ import { SectionPage, ProjectBlock, ProjectColumnHeader, effectiveLifecycleStatu
 import { quoteGrandTotal, QuoteAddRow, nextQuoteNumber, sortByQuoteNumber, EditableField, QuoteDetailPage, ApprovalDot, ApprovalModal, SimpleApprovalConfirm, InvalidateQuoteModal } from './Quotes.jsx'
 import { generateQuoteDocxBase64, quoteExportFileName } from '../api/exportQuote.js'
 import { todayLocal } from '../api/albertaTime.js'
+import { money, fmtDate } from '../api/format.js'
 
-function money(v) {
-  return `$${(Number(v) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-}
 // Blank-last date sort, newest first among the ones that have a date.
 function sortByDateDesc(list, key) {
   return [...list].sort((a, b) => {
@@ -136,7 +134,7 @@ function NeedsReviewSection({ projects, updateProject }) {
       <div style={{ minWidth: 0 }}>
         <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{p.name || 'Untitled job'}</div>
         <div style={{ fontSize: 11, color: 'var(--text-light)' }}>
-          {p.co ? `CO ${p.co} · ` : ''}{p.dateComplete ? `Completed ${new Date(p.dateComplete).toLocaleDateString()}` : 'No completion date set'}
+          {p.co ? `CO ${p.co} · ` : ''}{p.dateComplete ? `Completed ${fmtDate(p.dateComplete, 'medium')}` : 'No completion date set'}
         </div>
       </div>
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>

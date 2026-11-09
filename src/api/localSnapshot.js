@@ -9,7 +9,8 @@
 import { fileStoreActive, nonFileKeys } from './fileStore.js'
 
 const PREFIX = 'fieldapp_'
-const SECRET_KEYS = new Set(['anthropic_api_key', 'cloud_sync_upload_key'])
+import { SECRET_KEYS as SECRET_LIST } from './settings.js'
+const SECRET_KEYS = new Set(SECRET_LIST)
 const EMPTY_VALUES = new Set(['', '[]', '{}', 'null', '""', 'false', '0'])
 
 const isDesktop = typeof window !== 'undefined' && !!window.desktop

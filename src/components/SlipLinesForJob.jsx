@@ -6,6 +6,7 @@ import {
   ordersForJob, slipLineKey, lineJobsOf, lineUse, lineRemaining, leftoverLinesForJob, lineWithRestInStock,
   mergeIntoStock, slipEntry, slipUnit, GENERAL_STOCK_ID,
 } from '../api/slips.js'
+import { money } from '../api/format.js'
 
 // On a job's Materials: the material-order slips on this job.
 //
@@ -15,7 +16,6 @@ import {
 // What's left only goes to Stock once every job on the line is complete.
 
 function uid() { return Math.random().toString(36).slice(2, 10) }
-const money = v => '$' + (Number(v) || 0).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const num = v => Number(v) || 0
 const r3 = v => Math.round(v * 1000) / 1000
 

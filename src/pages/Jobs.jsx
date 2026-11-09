@@ -27,6 +27,8 @@ import { slipKind, lineJobsOf, lineUse, lineRemaining, slipEntry, slipLineKey, s
 import { hit } from '../api/search.js'
 import { todayLocal, monthLocal } from '../api/albertaTime.js'
 import NoteGroups from '../components/NoteGroups.jsx'
+import { money, fmtDate } from '../api/format.js'
+import { aiPost, AI_MODEL, useApiKey } from '../api/ai.js'
 
 function uid() {
   return Math.random().toString(36).slice(2, 10)
@@ -818,12 +820,7 @@ function CostCompareRow({ label, quoted, actual, onSaveQuoted, isQuoted }) {
   )
 }
 
-function formatDate(iso) {
-  if (!iso) return ''
-  // "2026-08-31" is a local day — read it as noon so it doesn't slip a day in Alberta
-  const d = new Date(/^\d{4}-\d{2}-\d{2}$/.test(iso) ? `${iso}T12:00:00` : iso)
-  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
-}
+const formatDate = iso => fmtDate(iso, 'medium')
 
 // Bills up to the current Progress %, accounting for what's already been billed
 function TypeBanner({ project }) {
@@ -1084,16 +1081,8 @@ async function fileToBase64Job(file) {
 }
 
 async function parseCoDocument(base64, apiKey) {
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true',
-    },
-    body: JSON.stringify({
-      model: 'claude-sonnet-5',
+  const res = await aiPost(apiKey, {
+      model: AI_MODEL,
       max_tokens: 1000,
       messages: [{
         role: 'user',
@@ -1105,8 +1094,7 @@ async function parseCoDocument(base64, apiKey) {
           },
         ],
       }],
-    }),
-  })
+    })
   if (!res.ok) {
     let detail = `API error ${res.status}`
     try {
@@ -1137,7 +1125,7 @@ async function parseCoDocument(base64, apiKey) {
 // parsed value against whatever's already there and flags a mismatch before
 // committing, rather than silently overwriting it.
 function CoRow({ project, customer, onUpdate }) {
-  const [apiKey] = useLocalStore('anthropic_api_key', '')
+  const [apiKey] = useApiKey()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [conflict, setConflict] = useState(null) // { coNumber, coValue, coDate, fileName, base64, existingValue }
@@ -1454,7 +1442,7 @@ export async function generateWorkSummary(project, apiKey, quoteInfo = null) {
   const workLines = entries
     .filter(e => (e.workCompleted || '').trim())
     .map(e => `${e.date || 'undated'}: ${e.workCompleted.trim()}`)
-  const noteLines = (project.notesLog || []).map(n => `${new Date(n.timestamp).toLocaleDateString()}: ${n.text}`)
+  const noteLines = (project.notesLog || []).map(n => `${fmtDate(n.timestamp, 'medium')}: ${n.text}`)
   const materialLines = (project.materialEntries || []).map(m => `${m.qty || 0} ${m.uom || ''} ${m.item || 'material'}`.trim())
 
   const context = [
@@ -1470,16 +1458,8 @@ export async function generateWorkSummary(project, apiKey, quoteInfo = null) {
     return 'Work was completed on this job as scoped. See the materials and labor details below for a full breakdown.'
   }
 
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true',
-    },
-    body: JSON.stringify({
-      model: 'claude-sonnet-5',
+  const res = await aiPost(apiKey, {
+      model: AI_MODEL,
       max_tokens: 1000,
       messages: [{
         role: 'user',
@@ -1487,8 +1467,7 @@ export async function generateWorkSummary(project, apiKey, quoteInfo = null) {
           ? `This electrical contracting job was done for a fixed, quoted price. Using the quoted scope and the internal job records below, write a short, professional summary of the work performed for the customer — the kind that would go in a document sent directly to them. 2-4 sentences, plain and clear, no bullet points, no headers, no markdown formatting. Describe the work in terms of the quoted scope, in a way a homeowner or business owner (not an electrician) would understand. Only say work was completed if the work log or notes support it; if the records only cover part of the scope, describe what was done without claiming the rest is finished. Don't mention prices, internal notes, worker names, or anything not appropriate to share with a customer. Don't invent details.\n\n${context}`
           : `Based on the following internal job records for an electrical contracting job, write a short, professional summary of the work performed — the kind that would go in a document sent directly to the customer. 2-4 sentences, plain and clear, no bullet points, no headers, no markdown formatting. Describe what was done in a way a homeowner or business owner (not an electrician) would understand. Don't mention internal notes, worker names, or anything not appropriate to share with a customer. Don't invent details that aren't supported by the records below — stick to what's actually described.\n\n${context}`,
       }],
-    }),
-  })
+    })
   if (!res.ok) {
     let detail = `API error ${res.status}`
     try {
@@ -1506,23 +1485,14 @@ export async function generateDailySummaries(project, apiKey) {
   const entries = (project.laborEntries || []).filter(e => (e.workCompleted || '').trim())
   if (!entries.length) return {}
   const list = entries.map(e => `${e.id}|${e.date || 'undated'}|${e.workCompleted.trim()}`).join('\n')
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true',
-    },
-    body: JSON.stringify({
-      model: 'claude-sonnet-5',
+  const res = await aiPost(apiKey, {
+      model: AI_MODEL,
       max_tokens: 1500,
       messages: [{
         role: 'user',
         content: `Below are labor entries from an electrical job, one per line as id|date|what was done. For EACH entry write one short, customer-friendly sentence (max ~25 words) saying what was done that day, based only on that entry. No worker names, no invented details, no markdown. Reply with ONLY a JSON object mapping each id to its sentence.\n\n${list}`,
       }],
-    }),
-  })
+    })
   if (!res.ok) throw new Error(`API error ${res.status}`)
   const data = await res.json()
   const text = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n')
@@ -1536,7 +1506,7 @@ export function CustomerSummaryModal(props) {
 }
 
 function TMSummaryModal({ project, customer, onClose }) {
-  const [apiKey] = useLocalStore('anthropic_api_key', '')
+  const [apiKey] = useApiKey()
   const [stage, setStage] = useState('generating') // generating | ready | error
   const [summary, setSummary] = useState('')
   const [error, setError] = useState('')
@@ -1612,22 +1582,22 @@ function TMSummaryModal({ project, customer, onClose }) {
         <tr>
           <td>${m.item || 'Material'}</td>
           <td style="text-align:center">${m.qty || 0} ${m.uom || ''}</td>
-          <td style="text-align:right">$${m.markedUpPrice.toFixed(2)}</td>
-          <td style="text-align:right">$${((Number(m.qty) || 0) * m.markedUpPrice).toFixed(2)}</td>
+          <td style="text-align:right">${money(m.markedUpPrice)}</td>
+          <td style="text-align:right">${money(((Number(m.qty) || 0) * m.markedUpPrice))}</td>
         </tr>
       `).join('')
       const laborRows = laborEntries.map(e => `
         <tr>
-          <td>${e.date ? new Date(e.date).toLocaleDateString() : '—'}</td>
+          <td>${e.date ? fmtDate(e.date, 'medium') : '—'}</td>
           <td>${e.rateLabel}</td>
           <td style="text-align:center">${e.hours || 0}</td>
-          <td style="text-align:right">$${e.rateAmount.toFixed(2)}/hr</td>
-          <td style="text-align:right">$${((Number(e.hours) || 0) * e.rateAmount).toFixed(2)}</td>
+          <td style="text-align:right">${money(e.rateAmount)}/hr</td>
+          <td style="text-align:right">${money(((Number(e.hours) || 0) * e.rateAmount))}</td>
         </tr>
         ${isTM && (daily[e.id] || '').trim() ? `<tr><td colspan="5" style="font-size:11px;color:#555;padding-top:0">${daily[e.id].trim().replace(/</g, '&lt;')}</td></tr>` : ''}
       `).join('')
       const noteRows = (project.notesLog || []).slice().reverse().map(n => `
-        <div class="note"><span class="note-date">${new Date(n.timestamp).toLocaleDateString()}</span> — ${n.text}</div>
+        <div class="note"><span class="note-date">${fmtDate(n.timestamp, 'medium')}</span> — ${n.text}</div>
       `).join('')
 
       const html = `
@@ -1647,7 +1617,7 @@ function TMSummaryModal({ project, customer, onClose }) {
           .photo { width: 140px; height: 140px; object-fit: cover; border-radius: 4px; border: 1px solid #ddd; }
         </style></head><body>
           <h1>${customer?.name || 'Customer'}</h1>
-          <div class="meta">${project.name || 'Job'}${project.co ? ` · CO ${project.co}` : ''} · ${new Date().toLocaleDateString()}</div>
+          <div class="meta">${project.name || 'Job'}${project.co ? ` · CO ${project.co}` : ''} · ${fmtDate(new Date(), 'medium')}</div>
           <div class="summary">${summary}</div>
 
           ${materials.length > 0 ? `
@@ -1656,7 +1626,7 @@ function TMSummaryModal({ project, customer, onClose }) {
             <thead><tr><th>Item</th><th style="text-align:center">Qty</th><th style="text-align:right">Unit Price</th><th style="text-align:right">Total</th></tr></thead>
             <tbody>${materialRows}</tbody>
           </table>
-          <div style="text-align:right; font-size:12px; font-weight:bold; margin-bottom: 10px;">Materials subtotal: $${materialsTotal.toFixed(2)}</div>
+          <div style="text-align:right; font-size:12px; font-weight:bold; margin-bottom: 10px;">Materials subtotal: ${money(materialsTotal)}</div>
           ` : ''}
 
           ${laborEntries.length > 0 ? `
@@ -1665,10 +1635,10 @@ function TMSummaryModal({ project, customer, onClose }) {
             <thead><tr><th>Date</th><th>Type</th><th style="text-align:center">Hours</th><th style="text-align:right">Rate</th><th style="text-align:right">Total</th></tr></thead>
             <tbody>${laborRows}</tbody>
           </table>
-          <div style="text-align:right; font-size:12px; font-weight:bold; margin-bottom: 10px;">Labor subtotal: $${laborTotal.toFixed(2)}</div>
+          <div style="text-align:right; font-size:12px; font-weight:bold; margin-bottom: 10px;">Labor subtotal: ${money(laborTotal)}</div>
           ` : ''}
 
-          <div class="total-line"><span>Total</span><span>$${grandTotal.toFixed(2)}</span></div>
+          <div class="total-line"><span>Total</span><span>${money(grandTotal)}</span></div>
 
           ${photoTiles ? `<h2>Photos</h2><div class="photo-grid">${photoTiles}</div>` : ''}
 
@@ -1830,7 +1800,7 @@ const QUOTED_REPORT_PARTS = [
 ]
 
 function QuotedSummaryModal({ project, customer, onClose }) {
-  const [apiKey] = useLocalStore('anthropic_api_key', '')
+  const [apiKey] = useApiKey()
   const quotesStore = useHubStore({
     hub: 'quotes', recordFileName: 'quote.json',
     getRecordFolderName: q => q.title ? `${q.quoteNumber} - ${q.title}` : q.quoteNumber,
@@ -1903,7 +1873,7 @@ function QuotedSummaryModal({ project, customer, onClose }) {
         <tr><td style="width:110px;white-space:nowrap">${e.date ? new Date(e.date + 'T12:00:00').toLocaleDateString() : '—'}</td><td>${escHtml((daily[e.id] || e.workCompleted || '').trim())}</td></tr>`).join('')
       const quotes = info ? info.quotes : []
       const priceRows = quotes.length > 1 ? quotes.map(q => `
-        <tr><td>${escHtml(q.title || q.number)}${q.number ? ` <span class="muted">(${escHtml(q.number)})</span>` : ''}${q.co ? ` <span class="muted">· ${escHtml(coLabel(q.co))}</span>` : ''}</td><td style="text-align:right">$${(Number(q.value) || 0).toFixed(2)}</td></tr>`).join('') : ''
+        <tr><td>${escHtml(q.title || q.number)}${q.number ? ` <span class="muted">(${escHtml(q.number)})</span>` : ''}${q.co ? ` <span class="muted">· ${escHtml(coLabel(q.co))}</span>` : ''}</td><td style="text-align:right">${money((Number(q.value) || 0))}</td></tr>`).join('') : ''
       const contract = info ? info.contractTotal : effectiveJobTotal(project)
       const quoteRef = quotes.length === 1 ? `${quotes[0].number}${quotes[0].co ? ` · ${coLabel(quotes[0].co)}` : ''}` : coLabel(project.co)
 
@@ -1927,7 +1897,7 @@ function QuotedSummaryModal({ project, customer, onClose }) {
           .photo { width: 140px; height: 140px; object-fit: cover; border-radius: 4px; border: 1px solid #ddd; }
         </style></head><body>
           <h1>${escHtml(customer?.name || 'Customer')}</h1>
-          <div class="meta">${escHtml(project.name || 'Job')}${quoteRef ? ` · ${escHtml(quoteRef)}` : ''} · ${new Date().toLocaleDateString()}</div>
+          <div class="meta">${escHtml(project.name || 'Job')}${quoteRef ? ` · ${escHtml(quoteRef)}` : ''} · ${fmtDate(new Date(), 'medium')}</div>
           <div class="summary">${escHtml(summary).replace(/\n/g, '<br>')}</div>
 
           ${parts.scope && scopeBlock ? `<h2>Scope of Work</h2>${scopeBlock}` : ''}
@@ -1937,22 +1907,22 @@ function QuotedSummaryModal({ project, customer, onClose }) {
           ${parts.price ? `
           <h2>Contract Price</h2>
           ${priceRows ? `<table><tbody>${priceRows}</tbody></table>` : ''}
-          <div class="total-line"${priceRows ? '' : ' style="border-top:none;margin-top:0"'}><span>Total contract price${quotes.length === 1 && quotes[0].title ? ` — ${escHtml(quotes[0].title)}` : ''}</span><span>$${(Number(contract) || 0).toFixed(2)}</span></div>
+          <div class="total-line"${priceRows ? '' : ' style="border-top:none;margin-top:0"'}><span>Total contract price${quotes.length === 1 && quotes[0].title ? ` — ${escHtml(quotes[0].title)}` : ''}</span><span>${money((Number(contract) || 0))}</span></div>
           <div class="muted">Taxes not included.</div>
-          ${parts.billing && billedPct > 0 ? `<div style="margin-top:8px;font-size:12px">Billed to date: <b>${billedPct}%</b> ($${((Number(contract) || 0) * billedPct / 100).toFixed(2)}) · Remaining: $${((Number(contract) || 0) * (1 - billedPct / 100)).toFixed(2)}</div>` : ''}
+          ${parts.billing && billedPct > 0 ? `<div style="margin-top:8px;font-size:12px">Billed to date: <b>${billedPct}%</b> (${money(((Number(contract) || 0) * billedPct / 100))}) · Remaining: ${money(((Number(contract) || 0) * (1 - billedPct / 100)))}</div>` : ''}
           ` : ''}
 
           ${parts.breakdown && (materials.length || laborEntries.length) ? `
           <h2>Labor &amp; Materials Breakdown</h2>
-          ${materials.length ? `<table><thead><tr><th>Item</th><th style="text-align:center">Qty</th><th style="text-align:right">Total</th></tr></thead><tbody>${materials.map(m => `<tr><td>${escHtml(m.item || 'Material')}</td><td style="text-align:center">${m.qty || 0} ${escHtml(m.uom || '')}</td><td style="text-align:right">$${((Number(m.qty) || 0) * m.markedUpPrice).toFixed(2)}</td></tr>`).join('')}</tbody></table>
-          <div style="text-align:right;font-size:12px;font-weight:bold;margin-bottom:10px">Materials: $${materialsTotal.toFixed(2)}</div>` : ''}
-          ${laborEntries.length ? `<table><thead><tr><th>Date</th><th>Type</th><th style="text-align:center">Hours</th><th style="text-align:right">Total</th></tr></thead><tbody>${laborEntries.map(e => `<tr><td>${e.date ? new Date(e.date + 'T12:00:00').toLocaleDateString() : '—'}</td><td>${escHtml(e.rateLabel)}</td><td style="text-align:center">${e.hours || 0}</td><td style="text-align:right">$${((Number(e.hours) || 0) * e.rateAmount).toFixed(2)}</td></tr>`).join('')}</tbody></table>
-          <div style="text-align:right;font-size:12px;font-weight:bold;margin-bottom:10px">Labor: $${laborTotal.toFixed(2)}</div>` : ''}
+          ${materials.length ? `<table><thead><tr><th>Item</th><th style="text-align:center">Qty</th><th style="text-align:right">Total</th></tr></thead><tbody>${materials.map(m => `<tr><td>${escHtml(m.item || 'Material')}</td><td style="text-align:center">${m.qty || 0} ${escHtml(m.uom || '')}</td><td style="text-align:right">${money(((Number(m.qty) || 0) * m.markedUpPrice))}</td></tr>`).join('')}</tbody></table>
+          <div style="text-align:right;font-size:12px;font-weight:bold;margin-bottom:10px">Materials: ${money(materialsTotal)}</div>` : ''}
+          ${laborEntries.length ? `<table><thead><tr><th>Date</th><th>Type</th><th style="text-align:center">Hours</th><th style="text-align:right">Total</th></tr></thead><tbody>${laborEntries.map(e => `<tr><td>${e.date ? new Date(e.date + 'T12:00:00').toLocaleDateString() : '—'}</td><td>${escHtml(e.rateLabel)}</td><td style="text-align:center">${e.hours || 0}</td><td style="text-align:right">${money(((Number(e.hours) || 0) * e.rateAmount))}</td></tr>`).join('')}</tbody></table>
+          <div style="text-align:right;font-size:12px;font-weight:bold;margin-bottom:10px">Labor: ${money(laborTotal)}</div>` : ''}
           ` : ''}
 
           ${photoTiles ? `<h2>Photos</h2><div class="photo-grid">${photoTiles}</div>` : ''}
 
-          ${parts.notes && (project.notesLog || []).length ? `<h2>Notes</h2>${(project.notesLog || []).slice().reverse().map(n => `<div class="note"><span class="note-date">${new Date(n.timestamp).toLocaleDateString()}</span> — ${escHtml(n.text)}</div>`).join('')}` : ''}
+          ${parts.notes && (project.notesLog || []).length ? `<h2>Notes</h2>${(project.notesLog || []).slice().reverse().map(n => `<div class="note"><span class="note-date">${fmtDate(n.timestamp, 'medium')}</span> — ${escHtml(n.text)}</div>`).join('')}` : ''}
         </body></html>
       `
       const pdfBase64 = await window.desktop.pdfFromHtml(html)
@@ -2791,9 +2761,6 @@ function materialsTotal(entries) {
   }, 0)
 }
 
-function money(v) {
-  return `$${(Number(v) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-}
 
 // Job Value is a newer field most existing jobs won't have filled in yet —
 // fall back to CO Value (already set on most quoted jobs) so the Un-billed/

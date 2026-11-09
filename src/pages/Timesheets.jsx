@@ -11,6 +11,7 @@ import logoUrl from '../assets/logo_sce_new.jpg'
 import { useCrewRoster, pickerNames } from '../api/crewRoster.js'
 import { useOrdersFeed, matchOrdersByPo, quoteNumbersOf } from '../api/orders.js'
 import { todayLocal } from '../api/albertaTime.js'
+import { money, fmtDate } from '../api/format.js'
 
 const isDesktop = typeof window !== 'undefined' && !!window.desktop
 
@@ -418,12 +419,11 @@ function receivedMaterialHtml(list, links = {}) {
   const files = links.files || {}, quotes = links.quotes || {}, qmap = links.qmap || {}
   const a = (url, text) => url ? `<a href="${escHtml(url)}" style="color:#1a3fa0;text-decoration:underline">${escHtml(text)}</a>` : escHtml(text)
   const anyLink = list.some(o => files[o.id] || (qmap[o.id] || []).some(n => quotes[n]))
-  const money = v => '$' + (Number(v) || 0).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
   const th = 'padding:6px 12px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#555;background:#eef0f8;text-align:left;border-bottom:1px solid #d0d4e8'
   const rows = list.map(o => {
     const jobs = (o.jobs || []).map(j => j.name).filter(Boolean).join(', ')
     return `<tr>
-      <td style="width:80px;color:#888">${new Date(o.receivedAt).toLocaleDateString('en-CA', { month: 'short', day: 'numeric' })}</td>
+      <td style="width:80px;color:#888">${fmtDate(o.receivedAt)}</td>
       <td><strong>${escHtml(o.wholesaler || '—')}</strong></td>
       <td>${a(files[o.id], o.invoiceNumber || (files[o.id] ? 'slip' : '—'))}</td>
       <td>${escHtml(o.poNumber || '—')}</td>
@@ -485,8 +485,7 @@ function ReceivedExportModal({ wk, orders, setOrders, included, onClose }) {
   const patch = (id, p) => setOrders(l => l.map(o => o.id === id ? { ...o, ...p } : o))
   const skipW = o => [...new Set([...(o.timesheetSkipWeeks || []), wk])]
   const unskipW = o => (o.timesheetSkipWeeks || []).filter(w => w !== wk)
-  const money = v => '$' + (Number(v) || 0).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-  const day = iso => { try { return new Date(iso).toLocaleDateString('en-CA', { month: 'short', day: 'numeric' }) } catch { return '' } }
+  const day = iso => fmtDate(iso)
   const btn = { fontSize: 11, fontWeight: 700, padding: '3px 9px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-mid)', cursor: 'pointer', whiteSpace: 'nowrap' }
   const total = list.reduce((a, o) => a + orderTotalForReport(o), 0)
   const rp = { patch, skipW, unskipW, money, day, btn }
@@ -603,7 +602,7 @@ export default function Timesheets() {
       adds.push({ id: balKey(pk, activeKey), feedId: 'bal:' + pk, week: activeKey, receivedAt: first.receivedAt || new Date().toISOString(),
         wholesaler: first.wholesaler || (rows[0] || {}).supplier || '', invoiceNumber: 'Balance of PO — slip missing', poNumber: first.poNumber,
         invoiceTotal: bal, jobs: first.jobs || [], forceReceivedAt: first.forceReceivedAt || (rows.find(r => r.forcedReceived) ? new Date().toISOString() : undefined), forceReason: 'slip missing',
-        timesheetNote: `PO total $${poTotal.toFixed(2)} less slips on hand $${sum.toFixed(2)}`, auto: true })
+        timesheetNote: `PO total ${money(poTotal)} less slips on hand ${money(sum)}`, auto: true })
     }
     if (adds.length) setExportExtra(l => [...(l || []).filter(x => !adds.some(a => a.id === x.id)), ...adds])
   }, [activeKey, includeReceived, feedRows, materialOrdersRaw, exportExtra]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -746,7 +745,7 @@ export default function Timesheets() {
           }).join('')
           const expTotalRow = wkFilledExp.length > 1 ? `<tr class="exp-total-row">
             <td colspan="2" style="text-align:right;font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:#777">Total</td>
-            <td style="text-align:right;color:#1a237e">$${wkExpTotal.toFixed(2)}</td>
+            <td style="text-align:right;color:#1a237e">${money(wkExpTotal)}</td>
           </tr>` : ''
           expHtml = `<div class="exp-head">Expenses</div>
           <table class="exp-table">
@@ -833,7 +832,6 @@ export default function Timesheets() {
         }
 
         // A written email with the timesheet and the received slips attached
-        const money2 = v => '$' + (Number(v) || 0).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
         const hrs = v => (Math.round(v * 100) / 100).toString()
         const workerLines = (w.workers || []).filter(wk => wk.name.trim()).map(wk => {
           const days = wk.days.map(d => Array.isArray(d) ? d : [d])
@@ -851,9 +849,9 @@ export default function Timesheets() {
           '',
           'Hours:',
           ...(workerLines.length ? workerLines : ['  • none entered']),
-          ...(exp.length ? ['', `Expenses (${exp.length}, receipts are in the PDF):`, ...exp.map(e => `  • ${e._workerName ? e._workerName + ' — ' : ''}${e.desc || 'Expense'}${Number(e.amount) ? ': ' + money2(e.amount) : ''}`)] : []),
-          ...(receivedList.length ? ['', `Material received (${receivedList.length} slip${receivedList.length === 1 ? '' : 's'}, ${money2(recTotal)} before GST${slipFiles.length ? ' — slips attached' : ''}):`,
-            ...receivedList.map(o => `  • ${o.wholesaler || 'Slip'}${o.invoiceNumber ? ' #' + o.invoiceNumber : ''}${o.poNumber ? ' · PO ' + o.poNumber : ''}${(o.jobs || []).length ? ' · ' + o.jobs.map(j => j.name).filter(Boolean).join(', ') : ''}: ${money2(orderTotalForReport(o))}${o.timesheetNote ? ` (${o.timesheetNote})` : ''}`)] : []),
+          ...(exp.length ? ['', `Expenses (${exp.length}, receipts are in the PDF):`, ...exp.map(e => `  • ${e._workerName ? e._workerName + ' — ' : ''}${e.desc || 'Expense'}${Number(e.amount) ? ': ' + money(e.amount) : ''}`)] : []),
+          ...(receivedList.length ? ['', `Material received (${receivedList.length} slip${receivedList.length === 1 ? '' : 's'}, ${money(recTotal)} before GST${slipFiles.length ? ' — slips attached' : ''}):`,
+            ...receivedList.map(o => `  • ${o.wholesaler || 'Slip'}${o.invoiceNumber ? ' #' + o.invoiceNumber : ''}${o.poNumber ? ' · PO ' + o.poNumber : ''}${(o.jobs || []).length ? ' · ' + o.jobs.map(j => j.name).filter(Boolean).join(', ') : ''}: ${money(orderTotalForReport(o))}${o.timesheetNote ? ` (${o.timesheetNote})` : ''}`)] : []),
         ].join('\n') // no sign-off — Outlook adds the signature
         const emailResult = await window.desktop.draftEmail({
           to: 'Jonathandumont@sceelectric.com',

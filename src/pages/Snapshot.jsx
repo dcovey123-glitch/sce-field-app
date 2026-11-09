@@ -6,6 +6,7 @@ import { quoteGrandTotal } from '../api/quoteMath.js'
 import { linkedJobsCustomer } from '../api/sharedCustomer.js'
 import { openFlags, addFlagPatch } from '../components/FlagBanner.jsx'
 import logoUrl from '../assets/logo_sce_new.jpg'
+import { money, moneyWhole as money0, fmtDate, parseDay } from '../api/format.js'
 
 const JONATHAN = 'Jonathandumont@sceelectric.com'
 
@@ -91,14 +92,11 @@ const REPRICE_DAYS = 60
 const AHEAD_DAYS = 120
 const EMAIL_NOTE_DAYS = 21
 
-const money = v => `${Number(v) < 0 ? '-' : ''}$${Math.abs(Number(v) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-const money0 = v => `$${Math.round(Number(v) || 0).toLocaleString('en-US')}`
 const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-const parseDay = s => { if (!s) return null; const t = Date.parse(String(s).length === 10 ? s + 'T12:00:00' : s); return isNaN(t) ? null : new Date(t) }
-const fmtDay = s => { const d = parseDay(s); return d ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '' }
-const fmtDayLong = s => { const d = parseDay(s); return d ? d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : '' }
-const longMonth = k => { const d = parseDay(k + '-15'); return d ? d.toLocaleDateString('en-US', { month: 'long' }) : k }
-const fmtMonth = k => { const d = parseDay(k + '-15'); return d ? d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' }) : k }
+const fmtDay = s => fmtDate(s)
+const fmtDayLong = s => fmtDate(s, 'weekday')
+const longMonth = k => fmtDate(k, 'month') || k
+const fmtMonth = k => fmtDate(k, 'monthShort') || k
 
 const QUOTE_CHIP = { 'Sent': ['#1e7a34', '#e6f4ea'], 'Not sent': ['#9a6610', '#fff4dd'], 'No sent date': ['#9a6610', '#fff4dd'], 'Pulled back': ['#b42318', '#fdecea'] }
 const STATUS_LABEL = { onGoing: 'Active', deficiencies: 'Deficiencies', unbilled: 'Complete (unbilled)', billed: 'Complete (billed)' }

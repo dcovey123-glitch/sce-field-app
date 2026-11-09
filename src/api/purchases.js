@@ -6,6 +6,7 @@ import { hasPoNumber, slipKind, noPoState, isQuoteDoc, isArchived, lineIsAllocat
 import { feedPoState, quoteNumbersOf, numKey } from './orders.js'
 import { distributorName } from './monthDist.js'
 import { catalogQuoteTotal } from './requests.js'
+import { money } from './format.js'
 
 export const STAGES = [
   { id: 'requested', label: 'Requested', icon: '📨', hint: 'Order or pricing list sent — waiting for the quote to come back' },
@@ -92,7 +93,6 @@ function finish(p, mark, billingFlag) {
   const otherSum = r2(packing.filter(o => !compared.includes(o)).reduce((a, o) => a + slipTotal(o), 0))
   const slipSum = r2(compared.reduce((a, o) => a + slipTotal(o), 0))
   const shortBy = compared.length && quoteTotal ? r2(quoteTotal - slipSum) : 0
-  const money = v => '$' + v.toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
   const slipVsQuote = compared.length && quoteTotal ? `slips ${money(slipSum)} of ${money(quoteTotal)}${otherSum ? ` · ${money(otherSum)} on another order on this PO` : ''}` : ''
 
   const oldRecord = slips.length > 0 && slips.every(o => o.archivedNote)
@@ -172,7 +172,6 @@ function sentOnly(p, requests, mark) {
   const flags = []
   if (q.fromCatalog) {
     const total = catalogQuoteTotal(q), po = poShow(q.poNumber)
-    const money = v => '$' + v.toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
     if (!po && !mark.closed && age != null && age > 14) flags.push({ id: 'oldwait', text: `No PO after ${age} days`, tone: 'warn' })
     if (po && !mark.closed && age != null && age > 21) flags.push({ id: 'oldorder', text: `Ordered ${age} days ago`, tone: 'warn' })
     return {

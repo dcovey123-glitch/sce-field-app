@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { drawFromStock, stockLinePrice } from '../api/stockDraw.js'
 import { partNosOf, hasPartNo } from '../api/partAliases.js'
+import { money } from '../api/format.js'
 
 // Materials → "Material Used": search an item, enter the qty, pick the job.
 // Each one waits here (from the desktop or the phone) until you approve it;
@@ -8,7 +9,6 @@ import { partNosOf, hasPartNo } from '../api/partAliases.js'
 // stock item). The same search row also feeds the Material Order list.
 
 function uid() { return Math.random().toString(36).slice(2, 10) }
-const money = v => '$' + (Number(v) || 0).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const lc = s => String(s || '').toLowerCase()
 export const STOCK_TARGET = { id: '__stock__', name: 'Stock (shop / truck)', customerName: '' }
 

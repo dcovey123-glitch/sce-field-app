@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { useLocalStore } from '../api/useLocalStore.js'
 import { hit } from '../api/search.js'
+import { money, fmtDate } from '../api/format.js'
 
 // Stock count: go category by category (here or on the phone), type
 // what's there, then review the differences and apply them in one go.
@@ -10,8 +11,7 @@ import { hit } from '../api/search.js'
 // history (stock_count_history): [{ at, counted, changed, before, after }]
 
 const n = v => Number(v) || 0
-const money = v => '$' + n(v).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-const day = iso => { try { return new Date(iso).toLocaleDateString('en-CA', { month: 'short', day: 'numeric', year: 'numeric' }) } catch { return '' } }
+const day = iso => fmtDate(iso, 'medium')
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4)
 const inp = { fontSize: 13, border: '1px solid var(--border)', borderRadius: 6, padding: '5px 8px', fontFamily: 'var(--font)', boxSizing: 'border-box', background: '#fff' }
 const btn = (kind) => ({ fontSize: 12.5, fontWeight: 700, padding: '7px 14px', borderRadius: 6, cursor: 'pointer', whiteSpace: 'nowrap',

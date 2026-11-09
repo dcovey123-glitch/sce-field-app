@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { normalizeLines } from '../api/units.js'
 import { useLocalStore } from '../api/useLocalStore.js'
 import { parseOrderPdf } from '../pages/Materials.jsx'
+import { useApiKey } from '../api/ai.js'
 
 // Runs quietly in the background (mounted once by App) so slips are grabbed
 // and read before you open Materials:
@@ -34,7 +35,7 @@ export default function SlipGrabber() {
   const [pending, setPending] = useLocalStore('materials_pending_slips', [])
   const [orders] = useLocalStore('material_orders', [])
   const [seen, setSeen] = useLocalStore('materials_email_slips_seen', [])
-  const [apiKey] = useLocalStore('anthropic_api_key', '')
+  const [apiKey] = useApiKey()
   const busy = useRef(false)
   const [tick, setTick] = useState(0)
 

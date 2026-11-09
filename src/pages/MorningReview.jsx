@@ -4,6 +4,7 @@ import { useLocalStore } from '../api/useLocalStore.js'
 import { FlagButton, FlaggedList } from '../components/Flags.jsx'
 import { todayLocal } from '../api/albertaTime.js'
 import { fileAssistantNote } from '../api/notes.js'
+import { money, fmtDate as fmtDateShared } from '../api/format.js'
 
 // ── Morning Review ──
 // Claude's morning email run reads your SCE inbox, picks out emails that
@@ -21,12 +22,7 @@ function uid() {
 
 const norm = s => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ')
 
-function fmtDate(d) {
-  if (!d) return ''
-  const t = Date.parse(d.length === 10 ? d + 'T12:00:00' : d)
-  if (isNaN(t)) return d
-  return new Date(t).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
-}
+const fmtDate = d => fmtDateShared(d, 'weekday') || d || ''
 
 const btn = (kind) => ({
   padding: '6px 12px', fontSize: 12.5, fontWeight: 700, borderRadius: 'var(--rs)', cursor: 'pointer', whiteSpace: 'nowrap',
@@ -100,7 +96,7 @@ function dayHeading(day) {
 // Job fields an email suggestion may fill in. Only fields that are still
 // empty on the job are ever filled — nothing you typed gets overwritten.
 const FIELD_LABELS = { co: 'CO/PO #', jobValue: 'Job value', dateApproved: 'Date approved', dateStart: 'Scheduled to start', dateComplete: 'To be completed by' }
-const fieldShown = (k, v) => k === 'jobValue' ? `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : v
+const fieldShown = (k, v) => k === 'jobValue' ? money(v) : v
 const isBlank = v => v === undefined || v === null || String(v).trim() === ''
 
 function escHtml(s) {

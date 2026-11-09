@@ -1,3 +1,4 @@
+import { fmtDate } from './format.js'
 // Job tasks: what has to be done on a job, ticked off with the date and who.
 // Kept on the job itself (job.tasks), so it travels with the job's file.
 //
@@ -85,8 +86,4 @@ export function phoneTasksPayload(jobs, customers) {
   }
 }
 
-export const fmtDay = iso => {
-  if (!iso) return ''
-  const d = new Date(String(iso).length === 10 ? iso + 'T00:00:00' : iso)
-  return isNaN(d) ? '' : d.toLocaleDateString('en-CA', { month: 'short', day: 'numeric' })
-}
+export const fmtDay = iso => fmtDate(iso)

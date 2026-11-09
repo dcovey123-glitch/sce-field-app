@@ -1,9 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { useFlags, setFlagJump } from '../api/flags.js'
+import { fmtDate } from '../api/format.js'
 
 const RED = '#c0392b'
 const stop = e => e.stopPropagation()
-const when = iso => { try { return new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) } catch { return '' } }
+const when = iso => fmtDate(iso, 'when')
 const inp = { fontSize: 12.5, border: '1px solid var(--border)', borderRadius: 5, padding: '5px 8px', fontFamily: 'var(--font)', boxSizing: 'border-box' }
 const sbtn = primary => ({ fontSize: 11.5, fontWeight: 700, padding: '4px 11px', borderRadius: 6, cursor: 'pointer', border: primary ? 'none' : '1px solid var(--border)', background: primary ? RED : 'var(--surface)', color: primary ? '#fff' : 'var(--text-mid)', whiteSpace: 'nowrap' })
 

@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { getLaborRates } from '../pages/Jobs.jsx'
 import NoteEdit from './NoteEdit.jsx'
+import { money } from '../api/format.js'
 
 // Posts a job's tracked (crew clock) time into its Labor Actual — the real
 // job cost, and on T&M jobs the hours that bill. Two steps every time:
@@ -12,7 +13,6 @@ import NoteEdit from './NoteEdit.jsx'
 // posted, can undo it, and can spot an entry edited after it was posted.
 
 function uid() { return Math.random().toString(36).slice(2, 10) }
-const money = n => '$' + (Number(n) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const fmtH = n => (Math.round((Number(n) || 0) * 100) / 100).toFixed(2)
 const costOf = (entries, rates) => entries.reduce((s, e) => s + (Number(e.hours) || 0) * (rates.find(r => r.id === e.rateId)?.rate || 0), 0)
 const isOtRate = r => /\b(ot|overtime|o\/t)\b/i.test(r.label || '')

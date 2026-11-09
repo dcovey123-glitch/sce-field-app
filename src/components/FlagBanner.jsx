@@ -1,4 +1,5 @@
 import React from 'react'
+import { fmtDate } from '../api/format.js'
 
 // ── Flags ──
 // A flag is a note pinned to a job or quote (from the Snapshot) that stays
@@ -24,7 +25,7 @@ export function resolveFlagPatch(record, flagId) {
   return { flags: ((record && record.flags) || []).map(f => f.id === flagId ? { ...f, doneAt: new Date().toISOString() } : f) }
 }
 
-const fmt = iso => { const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) }
+const fmt = iso => fmtDate(iso)
 
 export default function FlagBanner({ record, onUpdate, style }) {
   const flags = openFlags(record)

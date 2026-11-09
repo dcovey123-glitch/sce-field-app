@@ -1,6 +1,7 @@
 import React from 'react'
 import { useHubStore } from '../api/useHubStore.js'
 import { effectiveLifecycleStatus, DeficiencyRow, daysSince } from './Jobs.jsx'
+import { fmtDate } from '../api/format.js'
 
 function uid() {
   return Math.random().toString(36).slice(2, 10)
@@ -60,7 +61,7 @@ export default function DeficienciesWindow({ customerId }) {
               <div>
                 <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>{project.name || 'Untitled job'}</div>
                 <div style={{ fontSize: 11, color: '#9a6610' }}>
-                  {project.dateComplete ? `Completed ${new Date(project.dateComplete).toLocaleDateString()}` : ''}
+                  {project.dateComplete ? `Completed ${fmtDate(project.dateComplete, 'medium')}` : ''}
                 </div>
               </div>
               {openDefs.length > 0 && (

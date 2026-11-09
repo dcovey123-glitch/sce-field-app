@@ -11,12 +11,12 @@ import { tasksOf, isOverdue, isDueToday, today, fmtDay, uid } from '../api/tasks
 import { materialFindings } from '../api/materialsAudit.js'
 import { openLaborFlags } from '../api/jobHealth.js'
 import { adjustStockDraw } from '../api/stockDraw.js'
+import { moneyWholeOrBlank as money } from '../api/format.js'
 
 // "What needs me today": one list built from everything the app already
 // knows. Nothing here is typed in — each line goes away when the thing is
 // dealt with (or you say "Later" and it comes back tomorrow).
 
-const money = v => Number(v) ? '$' + Number(v).toLocaleString('en-CA', { maximumFractionDigits: 0 }) : ''
 const daysSince = iso => { const t = Date.parse(iso || ''); return isNaN(t) ? null : Math.floor((Date.now() - t) / 86400000) }
 
 export function useNeedsYou(navigate) {

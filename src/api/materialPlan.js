@@ -7,13 +7,14 @@
 // the order sheet, sent requests, matched quotes, POs and packing slips.
 import { slipKind, isQuoteDoc, lineJobsOf, sameItem, hasPoNumber } from './slips.js'
 import { REQUESTS_KEY } from './requests.js'
+import { fmtDate } from './format.js'
 
 export const ORDER_LIST_KEY = 'materials_order_list'
 export { REQUESTS_KEY }
 const n = v => Number(v) || 0
 const poShow = s => String(s || '').replace(/^po\s*#?\s*/i, '').trim()
 const short = s => String(s || '').split(/[\s(-]/)[0]
-const day = iso => { const d = new Date(String(iso || '').length === 10 ? iso + 'T00:00:00' : iso); return isNaN(d) ? '' : d.toLocaleDateString('en-CA', { month: 'short', day: 'numeric' }) }
+const day = iso => fmtDate(iso)
 const lineLike = l => ({ partNo: l.partNo, name: l.item || l.desc || l.name })
 
 // How much of a Stock item other open jobs have reserved

@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import { todayLocal } from '../api/albertaTime.js'
+import { fmtDate } from '../api/format.js'
 
 // Catalog changes sent from the phone (Materials → Catalog): a new count of
 // something on the shelf, or an item that isn't in the Catalog yet. They're
@@ -12,7 +13,7 @@ import { todayLocal } from '../api/albertaTime.js'
 export const CATALOG_PENDING_KEY = 'materials_catalog_pending'
 
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4)
-const when = iso => { try { return new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) } catch { return '' } }
+const when = iso => fmtDate(iso, 'when')
 const inp = { fontSize: 12, border: '1px solid var(--border)', borderRadius: 4, padding: '3px 6px', fontFamily: 'var(--font)' }
 const btn = primary => ({ fontSize: 11.5, fontWeight: 700, padding: '4px 11px', borderRadius: 6, cursor: 'pointer', border: primary ? 'none' : '1px solid var(--border)', background: primary ? 'var(--accent)' : 'var(--surface)', color: primary ? 'var(--navy)' : 'var(--text-mid)' })
 

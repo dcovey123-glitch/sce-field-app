@@ -1,10 +1,10 @@
 import React, { useState } from 'react'
 import { billingNoteText, isReviewed } from '../api/billingCheck.js'
+import { money } from '../api/format.js'
 
 // Shows the result of billingCheck(): a pill for the slip row, a short
 // summary for the slip review, and the full breakdown modal.
 
-const money = v => '$' + (Number(v) || 0).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const cell = { padding: '5px 6px', borderTop: '1px solid var(--border)', fontSize: 12, verticalAlign: 'top' }
 const pillStyle = (bg, fg) => ({ fontSize: 10, fontWeight: 700, background: bg, color: fg, borderRadius: 20, padding: '1px 8px', whiteSpace: 'nowrap', border: 'none', cursor: 'pointer' })
 

@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import { normalizeLine, isBundleUnit, proposeUnitFixes, PRICE_UNITS } from '../api/units.js'
+import { moneyUnit as money } from '../api/format.js'
 
 // One-time clean-up for prices that came in per KM / per 1000 ft / per 100.
 // Slip lines are fixed from their printed line totals (always right). Catalog,
@@ -7,7 +8,6 @@ import { normalizeLine, isBundleUnit, proposeUnitFixes, PRICE_UNITS } from '../a
 // so you can tick which ones to divide; anything unticked just gets the
 // right unit label (it was already priced per metre/foot/each).
 
-const money = v => '$' + (Number(v) || 0).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 4 })
 const num = v => Number(v) || 0
 const r4 = v => Math.round(v * 10000) / 10000
 const cleanU = u => String(u || '').trim().toUpperCase()

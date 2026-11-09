@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import { sameItem } from '../api/slips.js'
+import { money } from '../api/format.js'
 
 // Compares a wholesaler pricing quote (or slip) against one of Dustin's
 // customer quotes' material lists. Flags price differences, and offers to add
@@ -10,7 +11,6 @@ import { sameItem } from '../api/slips.js'
 // quote: a Quotes record — quote.scopes[].materials[] = { id, partNo, desc, uom, qty, rate }
 
 function uid() { return Math.random().toString(36).slice(2, 10) }
-const money = v => '$' + (Number(v) || 0).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const cell = { padding: '5px 6px', borderTop: '1px solid var(--border)', fontSize: 12, verticalAlign: 'top' }
 
 export function compareToQuote(lines, quote) {

@@ -30,14 +30,13 @@ import BillingCheckModal, { BillingSummary, isReviewed } from '../components/Bil
 import { hit } from '../api/search.js'
 import { buildPriceIndex, priceSourceFor } from '../api/priceSource.js'
 import { todayLocal } from '../api/albertaTime.js'
+import { money, moneyOrBlank, fmtDate } from '../api/format.js'
+import { aiPost, AI_MODEL, useApiKey } from '../api/ai.js'
 
 function uid() {
   return Math.random().toString(36).slice(2, 10)
 }
 
-function money(v) {
-  return `$${(Number(v) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-}
 
 // ── Shared row bits ──────────────────────────────────────────────
 const rowStyle = {
@@ -480,7 +479,7 @@ function AllocationHistoryHint({ log }) {
         <div style={{ marginTop: 3, display: 'flex', flexDirection: 'column', gap: 1 }}>
           {log.slice().reverse().map(l => (
             <div key={l.id} style={{ fontSize: 10.5, color: 'var(--text-light)' }}>
-              {new Date(l.date).toLocaleDateString()} — {l.qty} to {l.customerName} — {l.jobName}
+              {fmtDate(l.date, 'medium')} — {l.qty} to {l.customerName} — {l.jobName}
             </div>
           ))}
         </div>
@@ -1505,7 +1504,7 @@ function PartsTab({ catalog, setCatalog, stock, setStock, orders, categoryPaths,
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px 0', flexWrap: 'wrap' }}>
         <span style={{ flex: 1, minWidth: 220, fontSize: 11, color: 'var(--text-light)' }}>
           Every part and its reference price. Parts you have on the shelf show their Stock count — taking them on a job counts them down.
-          {' '}<b style={{ color: 'var(--text-mid)' }}>Stock value {'$' + stockValue.toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</b>{lastCount ? ` · last count ${new Date(lastCount.at).toLocaleDateString('en-CA', { month: 'short', day: 'numeric' })}` : ' · never counted'}
+          {' '}<b style={{ color: 'var(--text-mid)' }}>Stock value {money(stockValue)}</b>{lastCount ? ` · last count ${new Date(lastCount.at).toLocaleDateString('en-CA', { month: 'short', day: 'numeric' })}` : ' · never counted'}
         </span>
         <button onClick={() => setCounting(true)}
           style={{ fontSize: 12, fontWeight: 700, padding: '6px 14px', borderRadius: 20, cursor: 'pointer', border: 'none', background: countSession ? '#e0a716' : 'var(--navy)', color: countSession ? 'var(--navy)' : '#fff' }}>
@@ -1580,11 +1579,6 @@ function PartsTab({ catalog, setCatalog, stock, setStock, orders, categoryPaths,
 // ORDERED MATERIAL — upload a wholesaler slip, AI-parse it, review, commit to Stock
 // ══════════════════════════════════════════════════════════════════
 
-// Store the Anthropic key locally for direct client-side parsing when self-hosted.
-// (In the live chat artifact preview, this isn't needed — Claude's API is available directly.)
-function useApiKey() {
-  return useLocalStore('anthropic_api_key', '')
-}
 
 async function fileToBase64(file) {
   return new Promise((resolve, reject) => {
@@ -1606,16 +1600,8 @@ function extractJson(text) {
 
 export async function parseOrderPdf(base64, apiKey, mediaType = 'application/pdf') {
   const isImage = mediaType.startsWith('image/')
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true',
-    },
-    body: JSON.stringify({
-      model: 'claude-sonnet-5',
+  const res = await aiPost(apiKey, {
+      model: AI_MODEL,
       max_tokens: 8000,
       messages: [{
         role: 'user',
@@ -1629,8 +1615,7 @@ export async function parseOrderPdf(base64, apiKey, mediaType = 'application/pdf
           },
         ],
       }],
-    }),
-  })
+    })
   if (!res.ok) {
     let detail = `API error ${res.status}`
     try {
@@ -1808,7 +1793,6 @@ function stampFullyReceived(o, lineItems) {
   if (!full && o.receivedAt) { const { receivedAt, ...rest } = o; return { ...rest, lineItems } }
   return { ...o, lineItems }
 }
-const money2 = v => '$' + (Number(v) || 0).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
 function OrdersPoHint({ matches, poNumber, saving, slipSubtotal }) {
   if (!String(poNumber || '').trim()) return null
@@ -1829,8 +1813,8 @@ function OrdersPoHint({ matches, poNumber, saving, slipSubtotal }) {
         const over = diff > Math.max(1, quoted * 0.01)
         return (
           <div style={{ marginTop: 3, color: over ? 'var(--red-dark)' : 'var(--text-mid)', fontWeight: over ? 700 : 500 }}>
-            Quoted {money2(quoted)} before tax · this slip {money2(slip)}
-            {over ? ` — ${money2(diff)} over the quote, check pricing` : Math.abs(diff) >= 1 ? ` (${diff > 0 ? '+' : '−'}${money2(Math.abs(diff))})` : ' — matches'}
+            Quoted {money(quoted)} before tax · this slip {money(slip)}
+            {over ? ` — ${money(diff)} over the quote, check pricing` : Math.abs(diff) >= 1 ? ` (${diff > 0 ? '+' : '−'}${money(Math.abs(diff))})` : ' — matches'}
           </div>
         )
       })()}
@@ -2404,7 +2388,7 @@ function OrderDetailModal({ order, onClose, onUpdate, onReceiveItems, onPushPric
           <div style={{ marginTop: 8, marginBottom: 8 }}>
             {order.pricingPushedAt ? (
               <div style={{ fontSize: 11, color: '#1e7a34', display: 'flex', alignItems: 'center', gap: 6 }}>
-                ✓ Pricing pushed to Catalog — {new Date(order.pricingPushedAt).toLocaleDateString()}
+                ✓ Pricing pushed to Catalog — {fmtDate(order.pricingPushedAt, 'medium')}
                 <button onClick={onPushPricing} style={{ fontSize: 11, fontWeight: 700, color: 'var(--accent-dim)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
                   Push again
                 </button>
@@ -3544,7 +3528,6 @@ function OlderQuotes({ rows, quotes = [], jobRecords = [], q = '' }) {
     await setFeedPricingFor(r.id, o ? { ref: o.ref, refLabel: o.label } : {})
     setBusy('')
   }
-  const money = v => '$' + (Number(v) || 0).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
   return (
     <div style={{ margin: '12px 12px 16px', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden', background: 'var(--surface)' }}>
       <div onClick={() => setOpen(v => !v)} style={{ display: 'flex', alignItems: 'baseline', gap: 10, padding: '9px 14px', background: 'var(--surface-2)', cursor: 'pointer' }}>
@@ -3656,7 +3639,7 @@ function PurchasesOverview({ layout = 'overview', q, orders, feedRows, prevRows,
   const shown = all.filter(p => !q || hit(purchaseSearchText(p), q))
   const by = id => shown.filter(p => p.stage === id).sort((a, b) => String(b.date).localeCompare(String(a.date)))
   const attention = shown.filter(p => p.flags.length).sort((a, b) => STAGES.findIndex(s => s.id === a.stage) - STAGES.findIndex(s => s.id === b.stage))
-  const money = v => Number(v) ? '$' + Number(v).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : ''
+  const money = moneyOrBlank
   const setMark = (key, m) => setMarks(x => { const n = { ...(x || {}) }; if (m) n[key] = m; else delete n[key]; return n })
   const fix = (p, f) => {
     if (f.fix && f.fix.kind === 'applyPo') f.fix.ids.forEach(id => onUpdateOrder(id, { poNumber: f.fix.po }))

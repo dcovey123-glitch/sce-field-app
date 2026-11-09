@@ -8,6 +8,7 @@
 
 import { matchOrdersByPo, normPo, orderParts } from './orders.js'
 import { isQuoteDoc, sameOrder } from './slips.js'
+import { money } from './format.js'
 
 const num = v => Number(v) || 0
 const r2 = v => Math.round(v * 100) / 100
@@ -164,7 +165,6 @@ function finish(res) {
   else res.status = 'ok'
 }
 
-const money = v => '$' + (Number(v) || 0).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
 // Plain-text note to send the wholesaler (or Jonathan) about the differences
 export function billingNoteText(slip, res) {
@@ -235,7 +235,7 @@ export function poStatus(po, allSlips, feedRows) {
   } else if (slips.some(hasPrices)) {
     const quoted = first.ordered ? first.ordered.total : 0
     const billed = first.billed ? first.billed.poTotal : 0
-    if (quoted && billed < quoted - Math.max(1, quoted * 0.01)) out.reasons.push(`slips total $${billed.toFixed(2)} of $${quoted.toFixed(2)} quoted`)
+    if (quoted && billed < quoted - Math.max(1, quoted * 0.01)) out.reasons.push(`slips total ${money(billed)} of ${money(quoted)} quoted`)
   }
   out.balanced = out.reasons.length === 0
   return out

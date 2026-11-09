@@ -12,18 +12,9 @@
 // a list with no file yet is taken from internal storage, written to its file,
 // read back to check, and only then removed from internal storage.
 
-export const FILE_KEYS = [
-  'material_orders',
-  'material_catalog',
-  'material_stock',
-  'timesheets',
-  'trash_bin_items',
-  'materials_order_export_list',
-  'material_requests',
-  'general_notes',
-  'daily_notes',
-  'time_nonjob_log',
-]
+// Which lists have their own file: marked file: true in settings.js
+import { FILE_KEYS } from './settings.js'
+export { FILE_KEYS }
 const FILE_SET = new Set(FILE_KEYS)
 const PREFIX = 'fieldapp_'
 

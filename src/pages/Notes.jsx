@@ -5,6 +5,7 @@ import ConfirmDeleteButton from '../components/ConfirmDeleteButton.jsx'
 import { FlaggedList } from '../components/Flags.jsx'
 import { useFlags } from '../api/flags.js'
 import { moveMiscToDaily, removeEntryFromSection, searchDaily, generalToJobNote } from '../api/notes.js'
+import { fmtDate } from '../api/format.js'
 
 // The assistant used to file each day's emails as a General Note ("Oct 29th -
 // Misc Notes"). Move any of those onto their day in Daily Notes. App runs this.
@@ -415,7 +416,7 @@ function GeneralNotesList({ notes, onOpen, onAdd, onDelete, onMove, jobOptions }
             </div>
             {n.updatedAt && (
               <div style={{ fontSize: 11, color: 'var(--text-light)' }}>
-                Updated {new Date(n.updatedAt).toLocaleDateString()}
+                Updated {fmtDate(n.updatedAt, 'medium')}
               </div>
             )}
           </div>
