@@ -107,6 +107,7 @@ export function planLineStatus(line, job, { orders = [], requests = [], feedRows
   // The request this line went out on
   const req = (requests || []).filter(r => !r.removedAt).find(r => (r.items || []).some(i => (i.planRefs || []).some(p => p.jobId === job.id && p.lineId === line.id)))
   const row = req && req.matchedFeedId ? (feedRows || []).find(r => r.id === req.matchedFeedId) : null
+  const mslip = req && req.matchedSlipId ? orders.find(o => o.id === req.matchedSlipId) : null // matched by hand to a quote / slip in the app
   if (rec > 0) return { id: 'partial', tone: 'warn', label: `Received ${rec} of ${line.qty}`, detail: onPo[0] ? `PO ${poShow(onPo[0].poNumber)}` : '' }
   if (onPo.length || (row && row.poNumber)) {
     const po = onPo.length ? poShow(onPo[0].poNumber) : poShow(row.poNumber)
@@ -116,6 +117,9 @@ export function planLineStatus(line, job, { orders = [], requests = [], feedRows
     ? { id: 'onpo', tone: 'info', label: `🧾 On PO ${poShow(req.poNumber)}`, detail: 'Catalog quote — waiting to pick up' }
     : { id: 'quoted', tone: 'info', label: '📒 Quoted from our Catalog', detail: 'Needs a PO' }
   if (row) return { id: 'quoted', tone: 'info', label: `💬 Quoted — ${row.supplier} ${row.quoteNumber}`, detail: 'Needs a PO' }
+  if (mslip) return hasPoNumber(mslip)
+    ? { id: 'onpo', tone: 'info', label: `🧾 On PO ${poShow(mslip.poNumber)}`, detail: `${short(mslip.wholesaler)} ${mslip.invoiceNumber || ''}`.trim() }
+    : { id: 'quoted', tone: 'info', label: `💬 Quoted — ${short(mslip.wholesaler)} ${mslip.invoiceNumber || ''}`.trim(), detail: 'Needs a PO' }
   if (linkedQuote) return { id: 'quoted', tone: 'info', label: `💬 Quoted — ${short(linkedQuote.wholesaler)} ${linkedQuote.invoiceNumber || ''}`.trim(), detail: 'Needs a PO · linked by you' }
   if (req) return { id: 'sent', tone: 'info', label: `${req.phoned ? '📞 Phoned in' : '📨 Sent'} to ${req.wholesaler || 'supplier'} ${day(req.sentAt)}`, detail: 'Waiting for the quote' }
   if ((orderList || []).some(i => (i.planRefs || []).some(p => p.jobId === job.id && p.lineId === line.id))) return { id: 'queued', tone: 'muted', label: '📝 On the order sheet', detail: 'Not sent yet' }
@@ -168,8 +172,13 @@ export function tagSlipsFromRequests(orders, requests, feedRows) {
   let changed = false
   const next = (orders || []).map(o => {
     if (slipKind(o) !== 'order') return o
-    const reqs = (requests || []).filter(r => !r.removedAt && (r.matchedFeedId || (r.fromCatalog && hasPoNumber(r))) && (r.items || []).some(i => (i.planRefs || []).length)).filter(r => {
+    const reqs = (requests || []).filter(r => !r.removedAt && (r.matchedFeedId || r.matchedSlipId || (r.fromCatalog && hasPoNumber(r))) && (r.items || []).some(i => (i.planRefs || []).length)).filter(r => {
       if (r.fromCatalog) return hasPoNumber(o) && poNorm(o.poNumber) === poNorm(r.poNumber)
+      if (r.matchedSlipId) {
+        if (o.id === r.matchedSlipId) return true
+        const ms = (orders || []).find(x => x.id === r.matchedSlipId)
+        return !!ms && hasPoNumber(o) && hasPoNumber(ms) && poNorm(o.poNumber) === poNorm(ms.poNumber)
+      }
       const row = (feedRows || []).find(x => x.id === r.matchedFeedId)
       if (!row) return false
       if (o.feedKey && String(o.feedKey).startsWith(row.id)) return true

@@ -43,6 +43,40 @@ export function quoteCandidates(req, rows, takenIds = new Set()) {
     .sort((a, b) => b.score - a.score || String(b.r.date).localeCompare(String(a.r.date)))
 }
 
+// Everything a sent request can be matched to by hand: quotes from the email
+// run (incl. archived ones when you search) and quotes / slips read into the
+// app. No search: what came in since it was sent, best guess first. With a
+// search: anything whose supplier, number, PO, parts or wording has every word.
+// → [{ kind: 'feed'|'slip', id, supplier, number, date, desc, total, po, overlap, sameSup, score, r|o }]
+export function quoteChoices(req, { rows = [], previous = [], slips = [] } = {}, taken = {}, q = '') {
+  const sent = Date.parse(req.sentAt) - 2 * 86400000
+  const sup = distributorName(req.wholesaler || '')
+  const parts = new Set((req.items || []).map(i => pn(i.partNo)).filter(x => x.length >= 4))
+  const words = String(q || '').toLowerCase().split(/\s+/).filter(Boolean)
+  const takenFeed = taken.feed || new Set(), takenSlip = taken.slip || new Set()
+  const out = []
+  const add = (e, hay) => {
+    if (words.length ? !words.every(w => hay.toLowerCase().includes(w)) : (e.archived || Date.parse(e.date) < sent)) return
+    const sameSup = sup !== 'Unknown supplier' && distributorName(e.supplier) === sup
+    out.push({ ...e, sameSup, score: e.overlap * 3 + (sameSup ? 2 : 0) })
+  }
+  for (const r of [...rows, ...previous.map(x => ({ ...x, archived: true }))]) {
+    if (!r || takenFeed.has(r.id) || out.some(x => x.kind === 'feed' && x.id === r.id)) continue
+    const lines = Object.values(r.quoteLines || {}).flat()
+    const overlap = lines.filter(l => parts.has(pn(l.partNo))).length
+    add({ kind: 'feed', id: r.id, r, supplier: r.supplier || '', number: r.quoteNumber || '', date: r.date || '', desc: r.description || r.job || '', total: Number(r.quoteTotal) || 0, po: r.poNumber || '', overlap, archived: !!r.archived },
+      [r.supplier, r.quoteNumber, r.poNumber, r.description, r.job, ...lines.map(l => `${l.partNo || ''} ${l.desc || ''}`)].join(' '))
+  }
+  for (const o of slips) {
+    if (!o || takenSlip.has(o.id) || o.archivedNote) continue
+    const lines = (o.lineItems || []).filter(li => !li.movedTo)
+    const overlap = lines.filter(li => parts.has(pn(li.partNo))).length
+    add({ kind: 'slip', id: o.id, o, supplier: o.wholesaler || '', number: o.invoiceNumber || '', date: String(o.orderDate || o.receivedAt || '').slice(0, 10), desc: (o.jobs || []).map(j => j.name).join(', ') || (o.docType === 'quote' ? 'Quote PDF in the app' : 'Slip in the app'), total: lines.reduce((a, li) => a + (Number(li.totalPrice) || 0), 0), po: o.poNumber || '', overlap, isQuote: o.docType === 'quote', archived: false },
+      [o.wholesaler, o.invoiceNumber, o.poNumber, ...(o.jobs || []).map(j => j.name), ...lines.map(li => `${li.partNo || ''} ${li.name || ''}`)].join(' '))
+  }
+  return out.sort((a, b) => b.score - a.score || String(b.date).localeCompare(String(a.date))).slice(0, 30)
+}
+
 // Catalog (then Stock) price for an order line: part # (or an alternate), then nickname / name
 const lc = s => String(s || '').toLowerCase().trim()
 export function catalogPriceFor(item) {
@@ -68,7 +102,7 @@ export function autoMatchPricingRequests(requests, rows) {
   const taken = new Set(list.filter(r => r.matchedFeedId && !r.removedAt).map(r => r.matchedFeedId))
   let changed = false
   const next = list.map(r => {
-    if (!r.pricing || r.fromCatalog || r.removedAt || r.matchedFeedId) return r
+    if (!r.pricing || r.fromCatalog || r.removedAt || r.matchedFeedId || r.matchedSlipId) return r
     const no = new Set(r.rejectedFeedIds || [])
     const best = quoteCandidates(r, rows, taken).find(c => !no.has(c.r.id) && (c.overlap >= 2 || (c.overlap >= 1 && c.sameSup)))
     if (!best) return r

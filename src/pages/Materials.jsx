@@ -16,7 +16,7 @@ import MaterialUsedTab, { QuickAddRow, partsList } from '../components/MaterialU
 import OrdersList from './Orders.jsx'
 import { groupMonthDist } from '../api/monthDist.js'
 import { buildPurchases, purchaseSearchText, STAGES } from '../api/purchases.js'
-import { REQUESTS_KEY, quoteCandidates, catalogQuoteTotal, autoMatchPricingRequests } from '../api/requests.js'
+import { REQUESTS_KEY, quoteCandidates, quoteChoices, catalogQuoteTotal, autoMatchPricingRequests } from '../api/requests.js'
 import { addPlanLinesToOrderList, tagSlipsFromRequests } from '../api/materialPlan.js'
 import StockCount, { lastFullCount } from '../components/StockCount.jsx'
 import { EXPORT_EXTRA_KEY, exportWeekKey } from '../api/timesheetExport.js'
@@ -3619,11 +3619,22 @@ function PurchasesOverview({ layout = 'overview', q, orders, feedRows, prevRows,
   const reqList = Array.isArray(requests) ? requests : []
   const updReq = (id, patch) => setRequests(l => (Array.isArray(l) ? l : []).map(r => r.id === id ? { ...r, ...patch } : r))
   const takenFeed = new Set(reqList.filter(r => r.matchedFeedId && !r.removedAt).map(r => r.matchedFeedId))
+  const takenSlip = new Set(reqList.filter(r => r.matchedSlipId && !r.removedAt).map(r => r.matchedSlipId))
+  const [matchQ, setMatchQ] = useState('')
   const matchReq = async (req, row) => {
-    updReq(req.id, { matchedFeedId: row.id, matchedAt: new Date().toISOString() })
-    setMatching('')
+    updReq(req.id, { matchedFeedId: row.id, matchedSlipId: null, matchedAt: new Date().toISOString() })
+    setMatching(''); setMatchQ('')
     if (req.pricing) await fileForPricing(req, row)
   }
+  // Matched by hand to a quote or slip read into the app
+  const matchReqToSlip = (req, o) => {
+    updReq(req.id, { matchedSlipId: o.id, matchedFeedId: null, matchedAt: new Date().toISOString(), needsConfirm: false })
+    setMatching(''); setMatchQ('')
+    if (req.pricing && !hasPoNumber(o) && slipKind(o) === 'order') {
+      onUpdateOrder(o.id, { kind: 'pricing', recordOnly: true, pricingTarget: req.quote && req.quote.id ? { type: 'quote', quoteId: req.quote.id, quoteNumber: req.quote.number || '', title: req.quote.title || '' } : { type: 'catalog' } })
+    }
+  }
+  const pickChoice = (req, c) => (c.kind === 'slip' ? matchReqToSlip(req, c.o) : matchReq(req, c.r))
   // File the quote that came back as Pricing, under the quote it was asked for
   const fileForPricing = async (req, row) => {
     if (req.quote) await setFeedPricingFor(row.id, { ref: req.quote.number || req.quote.title || '', refLabel: [req.quote.number, req.quote.title].filter(Boolean).join(' — ') })
@@ -3718,7 +3729,7 @@ function PurchasesOverview({ layout = 'overview', q, orders, feedRows, prevRows,
             {finding[p.key] && finding[p.key] !== 'busy' && <div style={{ padding: '0 12px 6px', fontSize: 12, color: finding[p.key].startsWith('✓') ? '#1e7a34' : '#a12a1e' }}>{finding[p.key]}</div>}
             {p.notes.length > 0 && <div style={{ padding: '0 12px 6px', fontSize: 12, color: '#7a5a00' }}>📝 {p.notes.join(' · ')}</div>}
             {(p.requests || []).map(rq => {
-              const matched = rq.matchedFeedId && p.rows.some(r => r.id === rq.matchedFeedId)
+              const matched = (rq.matchedFeedId && p.rows.some(r => r.id === rq.matchedFeedId)) || (rq.matchedSlipId && p.slips.some(o => o.id === rq.matchedSlipId))
               const cands = matched ? [] : quoteCandidates(rq, feedRows || [], takenFeed)
               const best = cands.find(c => c.score > 0)
               const items = rq.items || []
@@ -3750,7 +3761,7 @@ function PurchasesOverview({ layout = 'overview', q, orders, feedRows, prevRows,
                       <button onClick={() => notThisQuote(rq)} title="Wrong quote — unmatch it and don't suggest it again" style={linkBtn}>Not this quote</button>
                       <button onClick={() => itsAnOrder(rq)} title="Material is being bought — move it to Orders" style={linkBtn}>→ It's an order</button>
                     </>}
-                    {matched && !rq.needsConfirm && <button onClick={() => updReq(rq.id, { matchedFeedId: null, matchedAt: null })} style={linkBtn}>Unmatch</button>}
+                    {matched && !rq.needsConfirm && <button onClick={() => updReq(rq.id, { matchedFeedId: null, matchedSlipId: null, matchedAt: null })} style={linkBtn}>Unmatch</button>}
                     {!matched && <button onClick={() => updReq(rq.id, { removedAt: new Date().toISOString() })} title="Not sent, or not needed any more" style={linkBtn}>Remove</button>}
                   </div>
                   {!matched && !rq.fromCatalog && best && matching !== rq.id && (
@@ -3759,19 +3770,31 @@ function PurchasesOverview({ layout = 'overview', q, orders, feedRows, prevRows,
                       <button onClick={() => matchReq(rq, best.r)} style={{ ...linkBtn, background: '#1a5fa0', color: '#fff', borderColor: '#1a5fa0' }}>Match it</button>
                     </div>
                   )}
-                  {matching === rq.id && (
-                    <div style={{ marginTop: 4, border: '1px solid var(--border)', borderRadius: 5, maxHeight: 220, overflow: 'auto', background: 'var(--surface)' }}>
-                      {cands.length ? cands.slice(0, 15).map(c => (
-                        <div key={c.r.id} onClick={() => matchReq(rq, c.r)} style={{ display: 'flex', gap: 8, padding: '5px 8px', cursor: 'pointer', borderBottom: '1px solid var(--border)' }}>
-                          <span style={{ width: 80, color: 'var(--text-light)' }}>{c.r.date}</span>
-                          <b style={{ width: 90 }}>{c.r.supplier}</b>
-                          <span style={{ flex: 1 }}>Quote {c.r.quoteNumber}{c.r.description ? ' — ' + c.r.description : ''}</span>
-                          {c.overlap > 0 && <span style={{ color: '#1e7a34', fontWeight: 700 }}>{c.overlap} part{c.overlap === 1 ? '' : 's'} match</span>}
-                          <span style={{ width: 80, textAlign: 'right' }}>{money(c.r.quoteTotal)}</span>
+                  {matching === rq.id && (() => {
+                    const choices = quoteChoices(rq, { rows: feedRows || [], previous: prevRows || [], slips: orders || [] }, { feed: takenFeed, slip: takenSlip }, matchQ)
+                    return (
+                      <div style={{ marginTop: 4, border: '1px solid #9fb8d6', borderRadius: 5, background: 'var(--surface)' }}>
+                        <input autoFocus value={matchQ} onChange={e => setMatchQ(e.target.value)} onKeyDown={e => { if (e.key === 'Escape') { setMatching(''); setMatchQ('') } if (e.key === 'Enter' && choices[0]) pickChoice(rq, choices[0]) }}
+                          placeholder="Search any quote — supplier, quote #, PO, part #, job… (archived and PDFs in the app too)"
+                          style={{ width: '100%', boxSizing: 'border-box', fontSize: 12, padding: '6px 8px', border: 'none', borderBottom: '1px solid var(--border)', outline: 'none' }} />
+                        <div style={{ maxHeight: 240, overflow: 'auto' }}>
+                          {choices.length ? choices.map(c => (
+                            <div key={c.kind + c.id} onClick={() => pickChoice(rq, c)} style={{ display: 'flex', gap: 8, padding: '5px 8px', cursor: 'pointer', borderBottom: '1px solid var(--border)', alignItems: 'baseline' }}>
+                              <span style={{ width: 80, color: 'var(--text-light)' }}>{c.date || '—'}</span>
+                              <b style={{ width: 90, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.supplier || '—'}</b>
+                              <span style={{ flex: 1, minWidth: 0 }}>
+                                {c.kind === 'slip' ? (c.isQuote ? 'Quote PDF ' : 'Slip ') : 'Quote '}{c.number}{c.desc ? <span style={{ color: 'var(--text-light)' }}> — {c.desc}</span> : null}
+                                {c.po ? <span style={{ color: 'var(--navy)', fontWeight: 700 }}> · PO {c.po}</span> : null}
+                                {c.archived ? <span style={{ color: 'var(--text-light)' }}> · archived</span> : null}
+                              </span>
+                              {c.overlap > 0 && <span style={{ color: '#1e7a34', fontWeight: 700, whiteSpace: 'nowrap' }}>{c.overlap} part{c.overlap === 1 ? '' : 's'} match</span>}
+                              <span style={{ width: 80, textAlign: 'right' }}>{money(c.total)}</span>
+                            </div>
+                          )) : <div style={{ padding: 8, color: 'var(--text-light)' }}>{matchQ ? `Nothing matches “${matchQ}”.` : 'Nothing has come in since this went out — search to pick an older quote, or one read into the app.'}</div>}
                         </div>
-                      )) : <div style={{ padding: 8, color: 'var(--text-light)' }}>No quotes from the email run since this went out. When it comes in (the morning run picks it up), match it here.</div>}
-                    </div>
-                  )}
+                      </div>
+                    )
+                  })()}
                   {items.length > 0 && <div style={{ marginTop: 3, color: 'var(--text-light)' }}>{items.slice(0, 6).map(i => `${i.qty || ''} ${i.uom || ''} ${i.partNo || i.desc}${rq.fromCatalog ? ' @ ' + (Number(i.price) ? money(Number(i.price)) : 'no price') : ''}`.trim()).join(' · ')}{items.length > 6 ? ` · +${items.length - 6} more` : ''}</div>}
                 </div>
               )

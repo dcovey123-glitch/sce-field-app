@@ -51,7 +51,8 @@ export function buildPurchases({ slips = [], feed = [], previous = [], marks = {
   // what you sent: with the quote it was matched to, or on its own until then
   for (const q of requests || []) {
     if (!q || q.removedAt) continue
-    const home = q.matchedFeedId && [...map.values()].find(g => g.rows.some(r => r.id === q.matchedFeedId))
+    const home = (q.matchedFeedId && [...map.values()].find(g => g.rows.some(r => r.id === q.matchedFeedId)))
+      || (q.matchedSlipId && [...map.values()].find(g => g.slips.some(o => o.id === q.matchedSlipId))) // matched by hand to a quote / slip read into the app
     if (home) home.requests.push(q)
     else if (q.fromCatalog && hasPoNumber(q)) get('po:' + poKey(q.poNumber)).requests.push(q)
     else get('req:' + q.id).requests.push(q)
