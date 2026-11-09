@@ -10,6 +10,8 @@ contextBridge.exposeInMainWorld('desktop', {
   openCustomerWindow: (customerId, projectId, opts) => ipcRenderer.invoke('window:openCustomer', customerId, projectId, opts),
   openMaterialsWindow: (view) => ipcRenderer.invoke('window:openMaterials', view),
   openTimeWindow: (view) => ipcRenderer.invoke('window:openTime', view),
+  openCalendarWindow: (date) => ipcRenderer.invoke('window:openCalendar', date),
+  calendarOutlookLoad: () => ipcRenderer.invoke('calendar:outlookLoad'),
   openManageCustomersWindow: () => ipcRenderer.invoke('window:openManageCustomers'),
   openFilesWindow: (customerId, kind) => ipcRenderer.invoke('window:openFiles', { customerId, kind }),
   openDeficienciesWindow: (customerId) => ipcRenderer.invoke('window:openDeficiencies', customerId),

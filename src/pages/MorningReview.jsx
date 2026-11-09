@@ -5,6 +5,7 @@ import { FlagButton, FlaggedList } from '../components/Flags.jsx'
 import { todayLocal } from '../api/albertaTime.js'
 import { fileAssistantNote } from '../api/notes.js'
 import { money, fmtDate as fmtDateShared } from '../api/format.js'
+import { CALENDAR_KEY, eventFromEmail, hm12 } from '../api/calendar.js'
 
 // ── Morning Review ──
 // Claude's morning email run reads your SCE inbox, picks out emails that
@@ -172,6 +173,28 @@ function ProjectPicker({ value, options, onChange, placeholder }) {
   )
 }
 
+// A date the morning run found in this email (site visit, meeting, shutdown,
+// delivery…): one click puts it on the Calendar — nothing goes on by itself.
+function EmailEventBar({ item, jobId }) {
+  const [events, setEvents] = useLocalStore(CALENDAR_KEY, [])
+  const ev = item.event
+  const added = (events || []).find(e => e.emailId === item.id)
+  const when = `${fmtDateShared(ev.date, 'weekday')}${ev.start ? ', ' + hm12(ev.start) : ''}${ev.end ? '–' + hm12(ev.end) : ''}`
+  return (
+    <div style={{ marginTop: 6, padding: '7px 10px', background: '#eef4fb', border: '1px solid #c9dbef', borderRadius: 'var(--rs)', fontSize: 12.5, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+      <span>📅 <b>{when}</b> — {ev.title || item.subject}{ev.place ? ` · ${ev.place}` : ''}</span>
+      <span style={{ flex: 1 }} />
+      {added
+        ? <><span style={{ color: '#1e7a34', fontWeight: 700 }}>✓ On the calendar</span>
+            <button style={{ ...btn(), padding: '3px 9px' }} onClick={() => setEvents(list => (list || []).filter(e => e.id !== added.id))}>Remove</button></>
+        : <button style={{ ...btn('primary'), padding: '4px 11px' }} onClick={() => {
+            const e = eventFromEmail(item, uid)
+            if (e) setEvents(list => [...(list || []), { ...e, jobId: jobId || '' }])
+          }}>+ Add to calendar</button>}
+    </div>
+  )
+}
+
 function NoteCard({ item, jobs, quotes, options, onApprove, onSkip, busy }) {
   const isNewJob = item.target && item.target.kind === 'newJob'
   // A "new job" suggestion whose job already exists (e.g. made by hand) just files into it.
@@ -228,6 +251,7 @@ function NoteCard({ item, jobs, quotes, options, onApprove, onSkip, busy }) {
       )}
       <textarea value={text} onChange={e => setText(e.target.value)} rows={Math.min(6, Math.max(2, Math.ceil((text || '').length / 110)))}
         style={{ width: '100%', boxSizing: 'border-box', padding: '8px 10px', fontSize: 13.5, lineHeight: 1.4, border: '1px solid var(--border)', borderRadius: 'var(--rs)', fontFamily: 'inherit', resize: 'vertical' }} />
+      {item.event && <EmailEventBar item={item} jobId={job ? job.id : ''} />}
       {isJobTarget && (fillable.length > 0 || item.workOrder) && (
         <div style={{ marginTop: 6, padding: '8px 10px', background: 'var(--surface-2)', borderRadius: 'var(--rs)', fontSize: 12.5 }}>
           <div style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: '.04em', textTransform: 'uppercase', color: 'var(--text-light)', marginBottom: 4 }}>

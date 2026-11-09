@@ -44,6 +44,8 @@ export const STORE = {
   timesheet_export_extra: { what: 'POs pushed onto a week\'s export by hand' },
   week_start_day: { what: 'Day the week starts (0 = Sunday)' },
   crew_roster: { what: 'Crew list and rates' },
+  // Calendar
+  calendar_events: { file: true, what: 'Calendar events you added, or OK\'d from email' },
   // Notes, tasks, flags
   general_notes: { file: true, what: 'General Notes' },
   daily_notes: { file: true, what: 'Daily Notes' },

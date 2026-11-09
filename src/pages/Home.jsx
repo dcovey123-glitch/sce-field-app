@@ -3,6 +3,7 @@ import { useHubStore } from '../api/useHubStore.js'
 import logoUrl from '../assets/logo_sce_new.jpg'
 import { effectiveLifecycleStatus } from './Jobs.jsx'
 import { TIME_VIEWS } from './TimeHub.jsx'
+import MiniCalendar from '../components/MiniCalendar.jsx'
 
 // ── Home: big logo in the middle, six launch bubbles around it ──
 const MATERIALS_VIEWS = [
@@ -173,7 +174,12 @@ export default function Home({ onOpenHub, agingDeficiencyCount = 0, ordersAttent
         </div>
       </div>
 
-      <div style={{ width: '100%', maxWidth: 1100, height: 'calc(100vh - 150px)', minWidth: 640, minHeight: 560, margin: '0 auto', position: 'relative' }}>
+      {/* Calendar — top-left: this month at a glance */}
+      <div style={{ position: 'absolute', top: 12, left: 16, zIndex: 30 }}>
+        <MiniCalendar />
+      </div>
+
+      <div style={{ width: 'min(1100px, calc(100% - 270px))', height: 'calc(100vh - 150px)', minWidth: 640, minHeight: 560, marginLeft: 'max(270px, calc((100% - 1100px) / 2))', position: 'relative' }}>
         {/* center logo */}
         <div style={{
           position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',

@@ -12,6 +12,7 @@ import Todo from './pages/Todo.jsx'
 import SlipGrabber from './components/SlipGrabber.jsx'
 import Backup from './pages/Backup.jsx'
 import Trash from './pages/Trash.jsx'
+import Calendar from './pages/Calendar.jsx'
 import Notes, { useMoveMiscNotesToDaily } from './pages/Notes.jsx'
 import Billing from './pages/Billing.jsx'
 import Photos from './pages/Photos.jsx'
@@ -40,6 +41,8 @@ function parseWindowRoute() {
   if (m) return { kind: 'materials', view: m[1] }
   m = window.location.hash.match(/^#\/time\/(.+)$/)
   if (m) return { kind: 'time', view: m[1] }
+  m = window.location.hash.match(/^#\/calendar\/(.+)$/)
+  if (m) return { kind: 'calendar', date: m[1] }
   m = window.location.hash.match(/^#\/deficiencies\/(.+)$/)
   if (m) return { kind: 'deficiencies', customerId: m[1] }
   return null
@@ -198,6 +201,13 @@ export default function App() {
     return (
       <div style={{ height: '100vh', overflowY: 'auto', background: 'var(--bg, #f6f8fb)' }}>
         <Materials screen={{ hub: 'materials', view: windowRoute.view }} navigate={() => {}} goBack={() => {}} />
+      </div>
+    )
+  }
+  if (windowRoute?.kind === 'calendar') {
+    return (
+      <div style={{ height: '100vh', overflowY: 'auto', background: 'var(--bg, #f6f8fb)' }}>
+        <Calendar date={windowRoute.date} onDate={d => { window.location.hash = '#/calendar/' + d }} />
       </div>
     )
   }

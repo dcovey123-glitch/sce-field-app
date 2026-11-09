@@ -295,6 +295,34 @@ ipcMain.handle('window:openTime', (e, view) => {
   createTimeWindow(view)
 })
 
+// The Calendar window, opened on a day ("YYYY-MM-DD") or today
+function createCalendarWindow(date) {
+  const win = new BrowserWindow({
+    width: 1180,
+    height: 840,
+    minWidth: 720,
+    backgroundColor: '#f6f8fb',
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  })
+  setupEditingSupport(win)
+  const day = /^\d{4}-\d{2}-\d{2}$/.test(String(date || '')) ? date : 'today'
+  const hash = `/calendar/${day}`
+  if (isDev) {
+    win.loadURL(`http://localhost:5173/#${hash}`)
+  } else {
+    win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'), { hash })
+  }
+  return win
+}
+ipcMain.handle('window:openCalendar', (e, date) => {
+  createCalendarWindow(date)
+})
+
 function createManageCustomersWindow() {
   const win = new BrowserWindow({
     width: 980,
@@ -1020,6 +1048,14 @@ const EMAIL_NOTES_APP_FILE = 'email-notes-app.json'
 // Extra suggestions added outside the morning run (e.g. from a chat with
 // Claude). Merged in by id, so anything already in the main feed wins.
 const EMAIL_NOTES_EXTRA_FILE = 'email-notes-extra.json'
+// Outlook appointments the morning email run copies into the Field App folder
+// (read-only; the app never writes this file)
+const CALENDAR_OUTLOOK_FILE = 'calendar-outlook.json'
+ipcMain.handle('calendar:outlookLoad', () => {
+  const folder = getOrdersFolder()
+  if (!folder) return null
+  return readJsonSafe(path.join(folder, CALENDAR_OUTLOOK_FILE), null)
+})
 ipcMain.handle('emailNotes:load', () => {
   const folder = getOrdersFolder()
   if (!folder) return { folder: null, feed: null, local: null, error: 'not-found' }
