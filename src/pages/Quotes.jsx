@@ -11,6 +11,7 @@ import WholesalerExportBar from '../components/WholesalerExportBar.jsx'
 import { hit } from '../api/search.js'
 import ProposalPill from '../components/ProposalPill.jsx'
 import EmailQuoteButton from '../components/EmailQuoteButton.jsx'
+import QuotePricingButton from '../components/QuotePricingButton.jsx'
 import { generateQuoteDocxBase64, quoteExportFileName } from '../api/exportQuote.js'
 import { todayLocal } from '../api/albertaTime.js'
 import {
@@ -2845,6 +2846,7 @@ export function QuoteDetailPage({ customer, quote: rawQuote, onUpdate, linkedJob
           <div style={{ display: 'flex', gap: 6 }}>
             <ProposalPill customerFolder={customer.folder} quote={rawQuote} size="big" />
             <EmailQuoteButton customerId={customer.id} customerFolder={customer.folder} quote={rawQuote} total={grandTotal} onUpdate={onUpdate} />
+            <QuotePricingButton quote={quote} onUpdate={onUpdate} />
           </div>
           <button
             onClick={handleExport}
