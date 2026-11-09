@@ -3303,12 +3303,12 @@ function OrderedTab({ onClearFromJobs = () => {}, onLinkFeedPart = async () => n
         <>
           {sectionTitle('Orders')}
           {/* same purchases as the Overview (slips, email-run quotes/POs, sent orders, Catalog quotes), filtered */}
-          <PurchasesOverview layout="orders" q={q} orders={orders} feedRows={feedRows} prevRows={prevRows}
+          <PurchasesOverview quotes={quotes} jobRecords={jobRecords} layout="orders" q={q} orders={orders} feedRows={feedRows} prevRows={prevRows}
             billingFlag={o => { const r = checkOf(o); return r.status === 'flag' && !isReviewed(o, r) }}
             renderSlip={o => orderRow(o, false)} onUpdateOrder={onUpdateOrder} onOpenParts={openPartDetails} partBusy={linking}
             openIn={(tab, text) => { if (tab === 'orders') setShowDetailed(true); setSubTab(tab); setSearch(String(text || '')) }} />
           {sectionTitle('Pricing')}
-          <PurchasesOverview layout="pricing" q={q} orders={orders} feedRows={feedRows} prevRows={prevRows}
+          <PurchasesOverview quotes={quotes} jobRecords={jobRecords} layout="pricing" q={q} orders={orders} feedRows={feedRows} prevRows={prevRows}
             renderSlip={o => orderRow(o, false)} onUpdateOrder={onUpdateOrder} onOpenParts={openPartDetails} partBusy={linking}
             openIn={(tab, text) => { if (tab === 'orders') setShowDetailed(true); setSubTab(tab); setSearch(String(text || '')) }} />
           {sectionTitle(`Pricing Quotes (${pricingSlips.filter(match).length + feedLive.filter(feedMatch).length})`)}
@@ -3326,7 +3326,7 @@ function OrderedTab({ onClearFromJobs = () => {}, onLinkFeedPart = async () => n
             <button onClick={() => setSubTab('pricing')} style={laborTabBtnStyleM(subTab === 'pricing')} title="Pricing requests sent from quotes and the quotes that came back — for the Catalog and quotes, never ordered">💲 Pricing{pricingConfirmCount ? ` (${pricingConfirmCount} to confirm)` : toCheckCount ? ` (${toCheckCount} to check)` : ''}</button>
           </div>
           {subTab === 'overview' && (
-            <PurchasesOverview q={q} orders={orders} feedRows={feedRows} prevRows={prevRows}
+            <PurchasesOverview quotes={quotes} jobRecords={jobRecords} q={q} orders={orders} feedRows={feedRows} prevRows={prevRows}
               billingFlag={o => { const r = checkOf(o); return r.status === 'flag' && !isReviewed(o, r) }}
               renderSlip={o => orderRow(o, false)} onUpdateOrder={onUpdateOrder} onOpenParts={openPartDetails} partBusy={linking}
               openIn={(tab, text) => { setSubTab(tab); setSearch(String(text || '')) }} />
@@ -3336,7 +3336,7 @@ function OrderedTab({ onClearFromJobs = () => {}, onLinkFeedPart = async () => n
             Pricing requests sent from quotes, and the prices that came back — for reference on the Catalog and quotes, never ordered. A quote that comes back for a request lands here and asks you to confirm once. <b>→ Order</b> moves one back to Orders.
           </div>}
           {subTab === 'orders' && (
-            <PurchasesOverview layout="orders" q={q} orders={orders} feedRows={feedRows} prevRows={prevRows}
+            <PurchasesOverview quotes={quotes} jobRecords={jobRecords} layout="orders" q={q} orders={orders} feedRows={feedRows} prevRows={prevRows}
               billingFlag={o => { const r = checkOf(o); return r.status === 'flag' && !isReviewed(o, r) }}
               renderSlip={o => orderRow(o, false)} onUpdateOrder={onUpdateOrder} onOpenParts={openPartDetails} partBusy={linking}
               openIn={(tab, text) => { if (tab === 'orders') setShowDetailed(true); setSubTab(tab); setSearch(String(text || '')) }} />
@@ -3378,7 +3378,7 @@ function OrderedTab({ onClearFromJobs = () => {}, onLinkFeedPart = async () => n
             )
           })()}
           {subTab === 'pricing' && (
-            <PurchasesOverview layout="pricing" orders={orders} feedRows={feedRows} prevRows={prevRows}
+            <PurchasesOverview quotes={quotes} jobRecords={jobRecords} layout="pricing" orders={orders} feedRows={feedRows} prevRows={prevRows}
               renderSlip={o => orderRow(o, false)} onUpdateOrder={onUpdateOrder} onOpenParts={openPartDetails} partBusy={linking}
               openIn={(tab, text) => { if (tab === 'orders') setShowDetailed(true); setSubTab(tab); setSearch(String(text || '')) }} />
           )}
@@ -3557,7 +3557,7 @@ function OlderQuotes({ rows, quotes = [], jobRecords = [], q = '' }) {
 
 // ── Overview: every purchase in one stage, what needs you on top ──
 const TONE = { bad: ['#fdecea', '#a12a1e'], warn: ['#fff3d6', '#8a5d00'], fix: ['#e8f2fc', '#1a5fa0'], info: ['#f0efec', '#555'] }
-function PurchasesOverview({ layout = 'overview', q, orders, feedRows, prevRows, billingFlag, renderSlip, onUpdateOrder, openIn, onOpenParts, partBusy = {} }) {
+function PurchasesOverview({ layout = 'overview', q, orders, feedRows, prevRows, billingFlag, renderSlip, onUpdateOrder, openIn, onOpenParts, partBusy = {}, quotes = [], jobRecords = [] }) {
   const [groupOpen, setGroupOpen] = useLocalStore('materials_orders_groups', {})
   // Push to this week's timesheet export (its slips, or the PO itself when it has none)
   const [exportExtra, setExportExtra] = useLocalStore(EXPORT_EXTRA_KEY, [])
@@ -3646,6 +3646,21 @@ function PurchasesOverview({ layout = 'overview', q, orders, feedRows, prevRows,
   }
   const chip = f => { const [bg, fg] = TONE[f.tone] || TONE.info; return <span key={f.id} style={{ fontSize: 10.5, fontWeight: 700, background: bg, color: fg, borderRadius: 10, padding: '2px 8px', whiteSpace: 'nowrap' }}>{f.text}</span> }
   const stageOf = id => STAGES.find(s => s.id === id)
+  // Waiting for PO but it was only ever for prices: file it as a Pricing quote
+  // (for one of our quotes / a project, or just for the Catalog)
+  const pricingOpts = [
+    ...quotes.filter(x => !x.trashedAt).map(x => ({ v: 'q:' + x.id, ref: x.quoteNumber || x.title || '', label: `Quote ${x.quoteNumber || ''} — ${x.title || ''}`.trim(), target: { type: 'quote', quoteId: x.id, quoteNumber: x.quoteNumber || '', title: x.title || '' } })),
+    ...jobRecords.filter(j => !j.trashedAt).map(j => ({ v: 'j:' + j.id, ref: j.name || '', label: `Project — ${j.name || ''}`, target: { type: 'catalog' } })),
+  ].sort((a, b) => a.label.localeCompare(b.label))
+  const [pricingBusy, setPricingBusy] = useState('')
+  const makePricing = async (p, v) => {
+    const o = pricingOpts.find(x => x.v === v)
+    setPricingBusy(p.key)
+    try {
+      for (const r of p.rows) if (!String(r.poNumber || '').trim()) await setFeedPricingFor(r.id, o ? { ref: o.ref, refLabel: o.label } : {})
+      for (const sl of p.liveSlips) if (!hasPoNumber(sl) && slipKind(sl) === 'order') onUpdateOrder(sl.id, { kind: 'pricing', recordOnly: true, pricingTarget: o ? o.target : { type: 'catalog' } })
+    } finally { setPricingBusy('') }
+  }
 
   const tile = (p, showStage) => {
     const open = openKey === p.key
@@ -3681,6 +3696,14 @@ function PurchasesOverview({ layout = 'overview', q, orders, feedRows, prevRows,
               {['received', 'sent', 'closed'].includes(p.stage) && !p.oldRecord && (onExport(p)
                 ? <button onClick={() => pushExport(p, false)} title="Take it back off this week's timesheet export" style={{ fontSize: 11.5, fontWeight: 700, padding: '3px 10px', borderRadius: 6, border: '1px solid #1e7a34', background: 'var(--surface)', color: '#1e7a34', cursor: 'pointer' }}>✓ On this week's export ✕</button>
                 : <button onClick={() => pushExport(p, true)} title="Put it on this week's timesheet (Received material) — editable there" style={{ fontSize: 11.5, fontWeight: 700, padding: '3px 10px', borderRadius: 6, border: 'none', background: 'var(--navy)', color: '#fff', cursor: 'pointer' }}>📤 Push to export</button>)}
+              {p.stage === 'waiting' && (
+                <select value="" disabled={pricingBusy === p.key} onChange={e => e.target.value && makePricing(p, e.target.value)}
+                  title="It was only for prices — move it to Pricing (never ordered)"
+                  style={{ fontSize: 11.5, padding: '3px 5px', border: '1px solid #1a5fa0', borderRadius: 6, color: '#1a5fa0', fontWeight: 700, maxWidth: 240, opacity: pricingBusy === p.key ? 0.5 : 1 }}>
+                  <option value="">{pricingBusy === p.key ? 'Moving…' : '💲 Make it a Pricing quote…'}</option>
+                  <option value="none">Just for prices (Catalog)</option>
+                  {pricingOpts.map(o => <option key={o.v} value={o.v}>{o.label}</option>)}
+                </select>)}
               {p.stage !== 'closed' && p.stage !== 'pricing' && (closing && closing.key === p.key
                 ? <span style={{ display: 'inline-flex', gap: 5, alignItems: 'center' }}>
                     <input autoFocus value={closing.reason} onChange={e => setClosing({ ...closing, reason: e.target.value })} placeholder="Why? e.g. picked up, no slip"
