@@ -20,6 +20,7 @@ import PostTimeToLabor, { unpostedCount } from '../components/PostTimeToLabor.js
 import { jobDeficiencies, openLaborFlags, LABOR_FLAG_KINDS } from '../api/jobHealth.js'
 import { closeBlockers, statusPatch } from '../api/jobClose.js'
 import SlipLinesForJob from '../components/SlipLinesForJob.jsx'
+import CloseoutChecklist from '../components/CloseoutChecklist.jsx'
 import { drawFromStock, adjustStockDraw, chargesFullStock, stockLinePrice } from '../api/stockDraw.js'
 import { normPo } from '../api/orders.js'
 import { partNosOf } from '../api/partAliases.js'
@@ -468,7 +469,7 @@ function CompletionModal({ project, onConfirm, onClose, onUpdate }) {
   const [orders] = useLocalStore('material_orders', [])
   // same rules as the status dropdown (api/jobClose.js)
   const { laborFlags, leftovers } = closeBlockers(project, orders)
-  const canConfirm = jobDone && !laborFlags.length && !leftovers.length
+  const blocked = !jobDone || laborFlags.length > 0 || leftovers.length > 0
 
   return (
     <ModalOverlay onClose={onClose}>
@@ -495,10 +496,8 @@ function CompletionModal({ project, onConfirm, onClose, onUpdate }) {
             <MaterialCloseout project={project} onUpdate={onUpdate} title="Before completing: close out this job's slip material" />
           </div>
         )}
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button style={modalBtnStyleJ(false)} onClick={onClose}>Cancel</button>
-          <button style={modalBtnStyleJ(true, !canConfirm)} disabled={!canConfirm} onClick={() => onConfirm(billed)}>Mark Complete</button>
-        </div>
+        <CloseoutChecklist project={project} value={billed} onUpdate={onUpdate} blocked={blocked} onCancel={onClose}
+          onDone={r => onConfirm(billed, r)} doneLabel={jobDone ? 'Mark Complete' : 'Tick "fully complete" first'} />
       </div>
     </ModalOverlay>
   )
@@ -2106,19 +2105,26 @@ export function LifecycleStatusDropdown({ project, onUpdate }) {
   const [matOrdersGate] = useLocalStore('material_orders', [])
   const [pendingClose, setPendingClose] = useState('') // status waiting on the material close-out
   const [flagBlock, setFlagBlock] = useState('') // close blocked by flagged labor
+  const [detailsGate, setDetailsGate] = useState('') // Complete waiting on the close-out check
+  const [skipped, setSkipped] = useState(null) // close-out items you completed anyway
   const laborFlags = openLaborFlags(project)
 
-  function handleChange(value) {
+  function handleChange(value, checked = false, skip = null) {
     // Closing a job: its slip material must be used on it or pushed to Stock first
     const closing = value === 'deficiencies' || value === 'unbilled' || value === 'billed'
     if (closing && openLaborFlags(project).length) { setFlagBlock(value); return }
     setFlagBlock('')
-    if (closing && current === 'onGoing' && leftoverLinesForJob(matOrdersGate || [], project).length) { setPendingClose(value); return }
+    // Complete (Unbilled / Billed): go through the job's details first
+    if ((value === 'unbilled' || value === 'billed') && value !== current && !checked) { setDetailsGate(value); setPendingClose(''); return }
+    setDetailsGate('')
+    if (closing && current === 'onGoing' && leftoverLinesForJob(matOrdersGate || [], project).length) { setSkipped(skip); setPendingClose(value); return }
     setPendingClose('')
-    doChange(value)
+    doChange(value, skip)
   }
-  function doChange(value) {
-    const patch = statusPatch(project, value)
+  function doChange(value, skip = skipped) {
+    const done = value === 'unbilled' || value === 'billed'
+    const patch = { ...statusPatch(project, value), ...(done ? { closeoutSkipped: skip && skip.items.length ? skip : null } : {}) }
+    setSkipped(null)
     onUpdate(patch)
     const label = LIFECYCLE_OPTIONS.find(o => o.value === value)?.label || value
     setConfirmedLabel(`✓ Moved to ${label} — go back to see it filed there`)
@@ -2152,6 +2158,12 @@ export function LifecycleStatusDropdown({ project, onUpdate }) {
           {laborFlags.map(e => <div key={e.id} style={{ marginTop: 3 }}>• {e.date || 'undated'} · {e.worker || '—'} · {e.hours || 0} h — <b>{e.flag.kind}</b>{e.flag.note ? ': ' + e.flag.note : ''}</div>)}
         </div>
       )}
+      {detailsGate && (
+        <CloseoutChecklist project={project} value={detailsGate} onUpdate={onUpdate}
+          onCancel={() => setDetailsGate('')}
+          doneLabel={leftoverLinesForJob(matOrdersGate || [], project).length && current === 'onGoing' ? 'Next: close out material' : 'Mark Complete'}
+          onDone={r => handleChange(detailsGate, true, r.skipped.length ? { at: r.at, items: r.skipped } : null)} />
+      )}
       {pendingClose && (
         leftoverLinesForJob(matOrdersGate || [], project).length
           ? <MaterialCloseout project={project} onUpdate={onUpdate} onAllDone={() => { const v = pendingClose; setPendingClose(''); doChange(v) }}
@@ -2162,6 +2174,12 @@ export function LifecycleStatusDropdown({ project, onUpdate }) {
             </div>
       )}
       {!pendingClose && current && current !== 'onGoing' && <MaterialCloseout project={project} onUpdate={onUpdate} title="Closed job with slip material not closed out" />}
+      {!detailsGate && (current === 'unbilled' || current === 'billed') && project.closeoutSkipped && (project.closeoutSkipped.items || []).length > 0 && (
+        <div title={'Completed without:\n• ' + project.closeoutSkipped.items.join('\n• ')} style={{ marginTop: 6, fontSize: 11, color: '#9a6610', cursor: 'help' }}>
+          ⚠ Completed {project.closeoutSkipped.at ? fmtDate(project.closeoutSkipped.at) + ' ' : ''}with {project.closeoutSkipped.items.length} thing{project.closeoutSkipped.items.length === 1 ? '' : 's'} not filled in — hover to see{' '}
+          <button onClick={() => setDetailsGate(current)} style={{ fontSize: 11, fontWeight: 700, color: '#1a5fa0', background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}>Re-check</button>
+        </div>
+      )}
       {openDeficiencies.length > 0 && (
         <div style={{ marginTop: 4, fontSize: 11, color: 'var(--text-light)' }}>
           {openDeficiencies.length} open deficienc{openDeficiencies.length === 1 ? 'y' : 'ies'} on this job — marking it Complete (Unbilled or Billed) closes {openDeficiencies.length === 1 ? 'it' : 'them'} off
@@ -4740,8 +4758,8 @@ export default function Jobs({ screen, navigate, goBack }) {
           project={projects.find(p => p.id === statusTarget.id) || statusTarget}
           onClose={() => setStatusTarget(null)}
           onUpdate={patch => updateProject(statusTarget.id, patch)}
-          onConfirm={value => {
-            updateProject(statusTarget.id, statusPatch(projects.find(p => p.id === statusTarget.id) || statusTarget, value))
+          onConfirm={(value, r) => {
+            updateProject(statusTarget.id, { ...statusPatch(projects.find(p => p.id === statusTarget.id) || statusTarget, value), ...(r && r.skipped.length ? { closeoutSkipped: { at: r.at, items: r.skipped } } : {}) })
             setStatusTarget(null)
           }}
         />

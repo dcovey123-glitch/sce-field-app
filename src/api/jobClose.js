@@ -8,6 +8,7 @@
 import { openLaborFlags } from './jobHealth.js'
 import { leftoverLinesForJob } from './slips.js'
 import { todayLocal } from './albertaTime.js'
+import { effectiveJobTotal, unbilledAmount } from './billing.js'
 
 export const CLOSED_STATUSES = ['deficiencies', 'unbilled', 'billed']
 export const isClosingStatus = value => CLOSED_STATUSES.includes(value)
@@ -37,3 +38,54 @@ export function statusPatch(project, value) {
   }
   return patch
 }
+
+// ── Close-out check ──
+// Everything a job should have filled in before it's marked Complete
+// (Unbilled or Billed). Each item says what's missing and, where it's a
+// simple field, which quick fix the checklist offers right there.
+//   → [{ id, text, fix? }]   fix: 'co' | 'dateStart' | 'dateApproved' | 'type'
+//        | 'quote' | 'coValue' | 'coAttach' | 'jobValue' | 'progress' | null
+// `more` = other job-health lines (materials, notes, tasks) to include.
+
+const num = v => Number(v) || 0
+const filled = v => v !== undefined && v !== null && String(v).trim() !== ''
+
+export function closeoutChecks(project, value, { more = [] } = {}) {
+  const p = project || {}
+  const out = []
+  const quoted = p.type === 'quoted'
+  const linkedIds = p.linkedQuoteIds || (p.linkedQuoteId ? [p.linkedQuoteId] : [])
+  const labor = (p.laborEntries || []).filter(e => num(e.hours) > 0)
+
+  // The basics
+  if (!p.type) out.push({ id: 'type', text: 'Job type not set (Quoted / T&M / Warranty)', fix: 'type' })
+  if (!filled(p.co)) out.push({ id: 'co', text: 'No CO / PO #', fix: 'co' })
+  if (!p.dateStart) out.push({ id: 'dateStart', text: 'No start date', fix: 'dateStart' })
+  if (quoted && !p.dateApproved) out.push({ id: 'dateApproved', text: 'No date approved', fix: 'dateApproved' })
+
+  // Quote / CO
+  if (quoted && !linkedIds.length && !p.noQuoteNeeded) out.push({ id: 'quote', text: 'No quote linked — link one, or tick "No quote for this job"', fix: 'quote' })
+  if (quoted && !p.noCoNeeded) {
+    if (!filled(p.coValue)) out.push({ id: 'coValue', text: 'No CO value', fix: 'coValue' })
+    if (!p.coAttachment) out.push({ id: 'coAttach', text: 'CO document not attached', fix: 'coAttach' })
+    const cos = p.linkedQuoteCOs || {}
+    if (linkedIds.length > 1 && !linkedIds.every(id => filled(cos[id]?.co) && filled(cos[id]?.coValue))) out.push({ id: 'quoteCOs', text: 'CO # / value missing on one or more linked quotes (Quote section)', fix: null })
+  }
+
+  // Money
+  if (quoted && !(effectiveJobTotal(p) > 0)) out.push({ id: 'jobValue', text: 'No job value', fix: 'jobValue' })
+  if (quoted && num(p.progress) < 100) out.push({ id: 'progress', text: `Progress is at ${num(p.progress)}%, not 100%`, fix: 'progress' })
+  if (value === 'billed' && p.type !== 'warranty' && unbilledAmount(p) > 0.5) {
+    out.push({ id: 'billing', text: `Marked Billed, but $${unbilledAmount(p).toFixed(2)} hasn't been billed yet (Billing on this job)`, fix: null })
+  }
+
+  // Work done
+  if (!labor.length) out.push({ id: 'labor', text: 'No labor hours on this job (Labor section)', fix: null })
+  else if (!labor.some(e => filled(e.workCompleted))) out.push({ id: 'work', text: 'No "work completed" written on any labor entry (Labor section)', fix: null })
+
+  for (const t of more) out.push({ id: 'more:' + t, text: t, fix: null })
+  return out
+}
+
+// Job-health lines that matter at close-out (status/plan lines don't)
+export const closeoutHealthLines = lines => (lines || []).filter(t => /^(Materials|Notes|Tasks|Labor: \d+ clocked)/.test(t))
