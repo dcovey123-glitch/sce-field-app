@@ -201,3 +201,24 @@ export function purchaseSearchText(p) {
     ...p.slips.flatMap(o => [o.wholesaler, o.note, o.invoiceNumber, o.poNumber, o.orderDate, ...(o.jobs || []).map(j => j.name), ...(o.lineItems || []).map(li => `${li.partNo || ''} ${li.name || ''} ${li.nickname || ''}`)])]
     .filter(Boolean).join(' ').toLowerCase()
 }
+
+// What needs you — the one list the Home badge, Needs You and Materials'
+// "⚠ Needs you" all count from (pricing ones never nag)
+export const needsYou = purchases => (purchases || []).filter(p => p.flags.length && p.stage !== 'pricing')
+  .sort((a, b) => String(a.date).localeCompare(String(b.date)))
+
+// How to clear each warning — shown under it when you jump to it
+export const FLAG_FIX = {
+  oldwait: 'Add the PO when it comes (Open in list → its PO box), make it a Pricing quote, or Close it if you\'re not buying it.',
+  oldorder: 'Tick its slip lines received when it\'s picked up — or Close it if it\'s done or was replaced.',
+  oldpo: 'Read its slips in, or Close it.',
+  nopo: 'Put the PO # on the slip (or Close it if there never was one).',
+  slipnopo: 'Use the Fix button to put the PO on the slip.',
+  psnotrec: 'Tick the packing slip lines received.',
+  unused: 'Put the lines on a job or Stock (Edit jobs on the slip below).',
+  billed: 'Open the slip below and check its billing against the quote.',
+  noslip: 'Push it to the export, or Close it.',
+  noquote: 'Match the quote when it comes back, or Remove the request if it wasn\'t sent.',
+  confirmpricing: 'Confirm below whether it\'s for pricing or an order.',
+  short: 'Nothing to do — the balance goes on the timesheet export.',
+}

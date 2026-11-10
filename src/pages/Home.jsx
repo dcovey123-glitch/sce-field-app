@@ -5,6 +5,8 @@ import { effectiveLifecycleStatus } from './Jobs.jsx'
 import { TIME_VIEWS } from './TimeHub.jsx'
 import MiniCalendar from '../components/MiniCalendar.jsx'
 import HitList from '../components/HitList.jsx'
+import { usePurchaseAttention } from '../api/usePurchaseAttention.js'
+import { setFlagJump } from '../api/flags.js'
 
 // ── Home: big logo in the middle, six launch bubbles around it ──
 const MATERIALS_VIEWS = [
@@ -52,7 +54,16 @@ function PopoutItem({ children, onClick }) {
   )
 }
 
-export default function Home({ onOpenHub, agingDeficiencyCount = 0, ordersAttentionCount = 0, reviewCount = 0 }) {
+export default function Home({ onOpenHub, agingDeficiencyCount = 0, reviewCount = 0 }) {
+  // Material warnings — the same list Materials → Orders & Slips shows under ⚠ Needs you
+  const matNeeds = usePurchaseAttention()
+  const ordersAttentionCount = matNeeds.length
+  const openMatNeeds = e => {
+    e.stopPropagation()
+    setFlagJump({ kind: 'purchase', refId: matNeeds.length === 1 ? matNeeds[0].key : '' })
+    if (window.desktop?.openMaterialsWindow) window.desktop.openMaterialsWindow('ordered')
+    else onOpenHub && onOpenHub('materials', 'ordered')
+  }
   const jobsHub = useHubStore({
     hub: 'jobs', recordFileName: 'project.json', getRecordFolderName: p => p.name,
     customersKey: 'job_customers', recordsKey: 'job_projects', reloadOnFocus: true,
@@ -228,8 +239,9 @@ export default function Home({ onOpenHub, agingDeficiencyCount = 0, ordersAttent
               {b.id === 'materials' && ordersAttentionCount > 0 && (
                 <span
                   className="navBadgeFlash"
-                  title={`${ordersAttentionCount} quote${ordersAttentionCount === 1 ? ' has' : 's have'} gone a week or more with no PO — Materials → Orders & Slips`}
-                  style={{
+                  onClick={openMatNeeds}
+                  title={`Click to go fix ${ordersAttentionCount === 1 ? 'it' : 'them'}:\n` + matNeeds.map(p => `• ${p.supplier}${p.po ? ' PO ' + p.po : ''}${p.forWhat ? ' — ' + p.forWhat : ''}: ${p.flags.map(f => f.text).join(', ')}`).join('\n')}
+                  style={{ cursor: 'pointer',
                     position: 'absolute', top: -6, right: -6, minWidth: 20, height: 20, borderRadius: 10, background: 'var(--red)', color: '#fff',
                     fontSize: 11, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 5px', boxShadow: '0 0 0 2px #fff',
                   }}

@@ -16,7 +16,7 @@ import UnitFixModal, { findUnitFixes } from '../components/UnitFix.jsx'
 import MaterialUsedTab, { QuickAddRow, partsList } from '../components/MaterialUsed.jsx'
 import OrdersList from './Orders.jsx'
 import { groupMonthDist } from '../api/monthDist.js'
-import { buildPurchases, purchaseSearchText, STAGES } from '../api/purchases.js'
+import { buildPurchases, purchaseSearchText, STAGES, needsYou, FLAG_FIX } from '../api/purchases.js'
 import { REQUESTS_KEY, quoteCandidates, quoteChoices, catalogQuoteTotal, autoMatchPricingRequests } from '../api/requests.js'
 import { addPlanLinesToOrderList, tagSlipsFromRequests } from '../api/materialPlan.js'
 import StockCount, { lastFullCount } from '../components/StockCount.jsx'
@@ -2563,11 +2563,13 @@ function baseOrderNumber(invoiceNumber) {
 
 function OrderedTab({ onClearFromJobs = () => {}, onLinkFeedPart = async () => null, orders, apiKey, onCommitOrder, onUpdateOrder, onDeleteOrder, onReceiveItems, onMarkReceivedNoStock, onPushPricing, onAddToExport, exportList, pendingSlips, onRemovePendingSlip, quotes = [], jobRecords = [], onMoveToStock, onWriteToJobs, feedChecked = {}, onCheckFeedPart, onCompareSlip, onCompareQuote = () => {} }) {
   const [subTab, setSubTab] = useState('overview') // overview | orders | pricing | received | archive
+  const [focusP, setFocusP] = useState(null) // { key, t } — a warning to jump to on the Overview
   const [showDetailed, setShowDetailed] = useLocalStore('materials_orders_detailed', false)
   // Opened from the ⚑ Flagged list: find and open that slip / PO
   useEffect(() => {
     const j = readFlagJump()
     if (!j) return
+    if (j.kind === 'purchase') { setSubTab('overview'); setFocusP({ key: j.refId || '', t: Date.now() }) }
     if (j.kind === 'slip') {
       const id = String(j.refId).replace(/^slip:/, '')
       const o = orders.find(x => x.id === id)
@@ -3327,7 +3329,7 @@ function OrderedTab({ onClearFromJobs = () => {}, onLinkFeedPart = async () => n
             <button onClick={() => setSubTab('pricing')} style={laborTabBtnStyleM(subTab === 'pricing')} title="Pricing requests sent from quotes and the quotes that came back — for the Catalog and quotes, never ordered">💲 Pricing{pricingConfirmCount ? ` (${pricingConfirmCount} to confirm)` : toCheckCount ? ` (${toCheckCount} to check)` : ''}</button>
           </div>
           {subTab === 'overview' && (
-            <PurchasesOverview onCompareQuote={onCompareQuote} quotes={quotes} jobRecords={jobRecords} q={q} orders={orders} feedRows={feedRows} prevRows={prevRows}
+            <PurchasesOverview focus={focusP} onCompareQuote={onCompareQuote} quotes={quotes} jobRecords={jobRecords} q={q} orders={orders} feedRows={feedRows} prevRows={prevRows}
               billingFlag={o => { const r = checkOf(o); return r.status === 'flag' && !isReviewed(o, r) }}
               renderSlip={o => orderRow(o, false)} onUpdateOrder={onUpdateOrder} onOpenParts={openPartDetails} partBusy={linking}
               openIn={(tab, text) => { setSubTab(tab); setSearch(String(text || '')) }} />
@@ -3558,7 +3560,7 @@ function OlderQuotes({ rows, quotes = [], jobRecords = [], q = '' }) {
 
 // ── Overview: every purchase in one stage, what needs you on top ──
 const TONE = { bad: ['#fdecea', '#a12a1e'], warn: ['#fff3d6', '#8a5d00'], fix: ['#e8f2fc', '#1a5fa0'], info: ['#f0efec', '#555'] }
-function PurchasesOverview({ layout = 'overview', q, orders, feedRows, prevRows, billingFlag, renderSlip, onUpdateOrder, openIn, onOpenParts, partBusy = {}, quotes = [], jobRecords = [], onCompareQuote = () => {} }) {
+function PurchasesOverview({ focus = null, layout = 'overview', q, orders, feedRows, prevRows, billingFlag, renderSlip, onUpdateOrder, openIn, onOpenParts, partBusy = {}, quotes = [], jobRecords = [], onCompareQuote = () => {} }) {
   const [groupOpen, setGroupOpen] = useLocalStore('materials_orders_groups', {})
   // Push to this week's timesheet export (its slips, or the PO itself when it has none)
   const [exportExtra, setExportExtra] = useLocalStore(EXPORT_EXTRA_KEY, [])
@@ -3615,6 +3617,19 @@ function PurchasesOverview({ layout = 'overview', q, orders, feedRows, prevRows,
   const [secOpen, setSecOpen] = useLocalStore('materials_overview_sections', { waiting: true, ordered: true, received: true, sent: true, pricing: false, closed: false })
   const [stageOnly, setStageOnly] = useState('')
   const [openKey, setOpenKey] = useState('')
+  // Jump to a warning: open it, scroll to it, highlight it for a few seconds
+  const [hi, setHi] = useState(() => new Set())
+  const jumpTo = keys => {
+    const ks = keys.filter(Boolean)
+    if (!ks.length) return
+    if (ks.length === 1) setOpenKey(ks[0])
+    setHi(new Set(ks))
+    setTimeout(() => {
+      const el = document.querySelector(`[data-pkey="${CSS.escape(ks[0])}"]`)
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }, 80)
+    setTimeout(() => setHi(new Set()), 6000)
+  }
   const [requests, setRequests] = useLocalStore(REQUESTS_KEY, [])
   const [matching, setMatching] = useState('')
   const reqList = Array.isArray(requests) ? requests : []
@@ -3663,6 +3678,14 @@ function PurchasesOverview({ layout = 'overview', q, orders, feedRows, prevRows,
   const shown = all.filter(p => !q || hit(purchaseSearchText(p), q))
   const by = id => shown.filter(p => p.stage === id).sort((a, b) => String(b.date).localeCompare(String(a.date)))
   const attention = shown.filter(p => p.flags.length).sort((a, b) => STAGES.findIndex(s => s.id === a.stage) - STAGES.findIndex(s => s.id === b.stage))
+  // Opened from a warning elsewhere (Home badge, Needs You): go to it
+  useEffect(() => {
+    if (!focus) return
+    const keys = focus.key ? [focus.key] : needsYou(shown).map(p => p.key)
+    if (focus.key && !shown.some(p => p.key === focus.key)) return
+    setStageOnly('')
+    jumpTo(keys)
+  }, [focus && focus.t, shown.length > 0]) // eslint-disable-line react-hooks/exhaustive-deps
   const money = moneyOrBlank
   const setMark = (key, m) => setMarks(x => { const n = { ...(x || {}) }; if (m) n[key] = m; else delete n[key]; return n })
   const fix = (p, f) => {
@@ -3689,8 +3712,9 @@ function PurchasesOverview({ layout = 'overview', q, orders, feedRows, prevRows,
 
   const tile = (p, showStage) => {
     const open = openKey === p.key
+    const lit = hi.has(p.key)
     return (
-      <div key={p.key} style={{ border: '1px solid ' + (open ? '#9fb8d6' : 'var(--border)'), borderRadius: 6, background: 'var(--surface)', overflow: 'hidden' }}>
+      <div key={p.key} data-pkey={p.key} style={{ border: lit ? '2px solid #e0a716' : '1px solid ' + (open ? '#9fb8d6' : 'var(--border)'), borderRadius: 6, background: 'var(--surface)', overflow: 'hidden', boxShadow: lit ? '0 0 0 4px rgba(224,167,22,.25)' : 'none', transition: 'box-shadow .3s, border-color .3s' }}>
         <div onClick={() => setOpenKey(open ? '' : p.key)} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 10px', cursor: 'pointer', background: open ? '#eef4fb' : 'var(--surface)', fontSize: 12.5, flexWrap: 'wrap' }}>
           <span style={{ fontSize: 10, color: 'var(--text-light)' }}>{open ? '▾' : '▸'}</span>
           {showStage && <span title={stageOf(p.stage).hint} style={{ fontSize: 10.5, fontWeight: 700, color: '#1a5fa0', width: 104 }}>{stageOf(p.stage).icon} {stageOf(p.stage).label}</span>}
@@ -3700,11 +3724,16 @@ function PurchasesOverview({ layout = 'overview', q, orders, feedRows, prevRows,
           <span style={{ flex: 1, minWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text)' }} title={p.forWhat}>
             {p.forWhat || (p.quotes[0] ? 'Quote ' + p.quotes.join(', ') : p.invoices.join(', ')) || '—'}
           </span>
-          {p.flags.map(chip)}
+          {p.flags.map(f => <span key={f.id} onClick={e => { e.stopPropagation(); setOpenKey(p.key); jumpTo([p.key]) }} title={FLAG_FIX[f.id] ? 'How to fix: ' + FLAG_FIX[f.id] : undefined} style={{ cursor: 'pointer' }}>{chip(f)}</span>)}
           <b style={{ width: 92, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{money(p.total)}</b>
         </div>
         {open && (
           <div style={{ borderTop: '1px solid var(--border)', background: '#fbfcfe' }}>
+            {p.flags.filter(f => FLAG_FIX[f.id] && p.stage !== 'closed').length > 0 && (
+              <div style={{ padding: '6px 12px', background: lit ? '#fff3d6' : '#fff8e6', borderBottom: '1px solid #f0e2b8', fontSize: 12, color: '#7a5a00' }}>
+                {p.flags.filter(f => FLAG_FIX[f.id]).map(f => <div key={f.id}><b>⚠ {f.text}</b> — {FLAG_FIX[f.id]}</div>)}
+              </div>
+            )}
             <div style={{ padding: '7px 12px', fontSize: 12, color: 'var(--text-mid)', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
               <span><b>Why it's {stageOf(p.stage).label}:</b> {p.why}</span>
               {p.invoices.length > 0 && <span style={{ color: 'var(--text-light)' }}>· Slip {p.liveSlips.filter(o => !isQuoteDoc(o) && o.invoiceNumber).map((o, i) => (
@@ -3887,7 +3916,9 @@ function PurchasesOverview({ layout = 'overview', q, orders, feedRows, prevRows,
                 <span style={{ fontSize: 11, color: 'var(--text-light)' }}>{open ? '▾' : '▸'}</span>
                 <span style={{ fontFamily: 'var(--font-d)', fontSize: 16, fontWeight: 800, flex: 1 }}>{g.title}</span>
                 <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--text-mid)' }}>{L.length} item{L.length === 1 ? '' : 's'}</span>
-                <span style={{ fontSize: 12.5, fontWeight: 800, minWidth: 130, textAlign: 'right', color: need ? '#a12a1e' : '#1e7a34' }}>{need ? `⚠ ${need} need${need === 1 ? 's' : ''} attention` : '✓ none need attention'}</span>
+                <span onClick={need ? e => { e.stopPropagation(); setGroupOpen(x => ({ ...(x || {}), [g.id]: true })); jumpTo(L.filter(p => p.flags.length).map(p => p.key)) } : undefined}
+                  title={need ? 'Show me' : undefined}
+                  style={{ fontSize: 12.5, fontWeight: 800, minWidth: 130, textAlign: 'right', color: need ? '#a12a1e' : '#1e7a34', cursor: need ? 'pointer' : 'default', textDecoration: need ? 'underline' : 'none' }}>{need ? `⚠ ${need} need${need === 1 ? 's' : ''} attention` : '✓ none need attention'}</span>
               </div>
               {open && <div style={{ padding: 6, borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 4 }}>
                 {L.length ? L.map(p => tile(p, g.id === 'ordered')) : <div style={{ padding: 6, fontSize: 12, color: 'var(--text-light)' }}>None.</div>}
@@ -3931,7 +3962,7 @@ function PurchasesOverview({ layout = 'overview', q, orders, feedRows, prevRows,
 
   // Pricing has its own tab — the overview is only what's being bought
   const OV_STAGES = STAGES.filter(s => s.id !== 'pricing')
-  const attentionOv = attention.filter(p => p.stage !== 'pricing')
+  const attentionOv = needsYou(attention)
   const flaggedIn = id => shown.filter(p => p.stage === id && p.flags.length).length
   const list = stageOnly ? by(stageOnly) : null
   return (
@@ -3946,7 +3977,7 @@ function PurchasesOverview({ layout = 'overview', q, orders, feedRows, prevRows,
               <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-mid)' }}>{s.icon} {s.label}</div>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
                 <span style={{ fontSize: 22, fontWeight: 800, color: 'var(--text)' }}>{n}</span>
-                {f > 0 && s.id !== 'closed' && <span style={{ fontSize: 11, fontWeight: 800, color: '#a12a1e' }}>⚠ {f}</span>}
+                {f > 0 && s.id !== 'closed' && <span onClick={e => { e.stopPropagation(); setStageOnly(''); jumpTo(attentionOv.filter(p => p.stage === s.id).map(p => p.key)) }} title="Show me" style={{ fontSize: 11, fontWeight: 800, color: '#a12a1e', textDecoration: 'underline', cursor: 'pointer' }}>⚠ {f}</span>}
               </div>
             </button>
           )

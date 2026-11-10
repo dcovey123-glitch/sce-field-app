@@ -2,7 +2,8 @@ import React from 'react'
 import { useHubStore } from '../api/useHubStore.js'
 import { useLocalStore } from '../api/useLocalStore.js'
 import { useOrdersFeed, useOrdersPrevious } from '../api/orders.js'
-import { buildPurchases } from '../api/purchases.js'
+import { buildPurchases, needsYou } from '../api/purchases.js'
+import { setFlagJump } from '../api/flags.js'
 import { REQUESTS_KEY } from '../api/requests.js'
 import { useFlags } from '../api/flags.js'
 import { effectiveLifecycleStatus } from '../pages/Jobs.jsx'
@@ -93,12 +94,11 @@ export function useNeedsYou(navigate) {
 
   // 3. Material: anything the Orders overview flags
   const purchases = buildPurchases({ slips: Array.isArray(orders) ? orders : [], feed: feed || [], previous: prev || [], marks: marks || {}, requests: Array.isArray(requests) ? requests : [] })
-  const matItems = purchases.filter(p => p.flags.length && p.stage !== 'closed' && p.stage !== 'pricing')
-    .sort((a, b) => String(a.date).localeCompare(String(b.date)))
+  const matItems = needsYou(purchases)
     .map(p => ({
       key: 'po:' + p.key, tone: p.flags.some(f => f.tone === 'bad') ? 'bad' : 'warn',
       text: `${p.supplier}${p.po ? ' · PO ' + p.po : ''}${p.forWhat ? ' · ' + p.forWhat : ''}`,
-      detail: p.flags.map(f => f.text).join(' · '), action: 'Orders', onGo: go({ hub: 'materials', view: 'ordered' }),
+      detail: p.flags.map(f => f.text).join(' · '), action: 'Fix it', onGo: () => { setFlagJump({ kind: 'purchase', refId: p.key }); go({ hub: 'materials', view: 'ordered' })() },
     }))
   const inbox = []
   if ((slipsPending || []).length) inbox.push({ key: 'slips', tone: 'info', text: `${slipsPending.length} slip${slipsPending.length === 1 ? '' : 's'} to read and file`, detail: 'From the phone or the slip grabber', action: 'Slips', onGo: go({ hub: 'materials', view: 'ordered' }) })

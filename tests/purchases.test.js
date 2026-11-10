@@ -132,3 +132,19 @@ describe('sent orders with no quote back', () => {
     expect(p.flags).toEqual([])
   })
 })
+
+import { needsYou, FLAG_FIX } from '../src/api/purchases.js'
+describe('needs you', () => {
+  it('counts flagged purchases, never pricing ones, oldest first', () => {
+    const P = [
+      { key: 'a', stage: 'waiting', date: '2026-11-01', flags: [{ id: 'oldwait' }] },
+      { key: 'b', stage: 'pricing', date: '2026-10-01', flags: [{ id: 'confirmpricing' }] },
+      { key: 'c', stage: 'ordered', date: '2026-09-23', flags: [{ id: 'oldorder' }] },
+      { key: 'd', stage: 'ordered', date: '2026-09-01', flags: [] },
+    ]
+    expect(needsYou(P).map(p => p.key)).toEqual(['c', 'a'])
+  })
+  it('every warning the app raises has a how-to-fix line', () => {
+    for (const id of ['oldwait', 'oldorder', 'oldpo', 'nopo', 'slipnopo', 'psnotrec', 'unused', 'billed', 'noslip', 'noquote', 'confirmpricing', 'short']) expect(FLAG_FIX[id]).toBeTruthy()
+  })
+})
