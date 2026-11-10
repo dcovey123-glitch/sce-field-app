@@ -6,6 +6,9 @@ import { useHubStore } from '../api/useHubStore.js'
 import ConfirmDeleteButton from '../components/ConfirmDeleteButton.jsx'
 import WholesalerExportBar from '../components/WholesalerExportBar.jsx'
 import QuoteCompare from '../components/QuoteCompare.jsx'
+import CatalogCompare from '../components/CatalogCompare.jsx'
+import CatalogPricingRequest from '../components/CatalogPricingRequest.jsx'
+import { openCatalogRequests, applyToCatalog } from '../api/catalogPricing.js'
 import { sourceFromSlip, sourcesFromFeedRow, sourceRef } from '../api/quoteCompare.js'
 import { hasPoNumber, noPoState, slipKind, isArchived, isStockOnlyLine, lineIsAllocated, jobEntriesFromSlip, leftoverLinesForJob, slipSearchText, mergeIntoStock, feedPartLines , slipLineKey, lineJobsOf, lineUse, initialUse, lineRemaining, jobsOnSlip, lineWithRestInStock, isQuoteDoc, packingSlipsForQuote, isReplacedQuote, sameOrder, orderBaseKey, orderBaseLabel, moveQuoteChargesToSlips, moveFeedChargesToSlips, takeFromStock, slipPreTax } from '../api/slips.js'
 import { orderParts, jobNamesOf, numKey } from '../api/orders.js'
@@ -1428,6 +1431,7 @@ function PartsTab({ catalog, setCatalog, stock, setStock, orders, categoryPaths,
   const [forced, setForced] = useState(!!initialStockOnly)
   const stockOnly = forced || stockOnlySaved
   const [bulkOpen, setBulkOpen] = useState(false)
+  const [pricingOpen, setPricingOpen] = useState(false)
   const rows = pairCatalogStock(catalog, stock)
   const feedForPrices = useOrdersFeed()
   const prevForPrices = useOrdersPrevious()
@@ -1507,6 +1511,10 @@ function PartsTab({ catalog, setCatalog, stock, setStock, orders, categoryPaths,
           Every part and its reference price. Parts you have on the shelf show their Stock count — taking them on a job counts them down.
           {' '}<b style={{ color: 'var(--text-mid)' }}>Stock value {money(stockValue)}</b>{lastCount ? ` · last count ${new Date(lastCount.at).toLocaleDateString('en-CA', { month: 'short', day: 'numeric' })}` : ' · never counted'}
         </span>
+        <button onClick={() => setPricingOpen(o => !o)} title="Send Catalog items to Nedco or Gescan at qty 1 for pricing — their part #, description and price come back onto the items"
+          style={{ fontSize: 12, fontWeight: 700, padding: '6px 14px', borderRadius: 20, cursor: 'pointer', border: '1px solid #1a5fa0', background: pricingOpen ? '#1a5fa0' : 'var(--surface)', color: pricingOpen ? '#fff' : '#1a5fa0' }}>
+          💲 Get pricing
+        </button>
         <button onClick={() => setCounting(true)}
           style={{ fontSize: 12, fontWeight: 700, padding: '6px 14px', borderRadius: 20, cursor: 'pointer', border: 'none', background: countSession ? '#e0a716' : 'var(--navy)', color: countSession ? 'var(--navy)' : '#fff' }}>
           🧮 {countSession ? `Count in progress (${Object.keys(countSession.counts || {}).length})` : 'Count stock'}
@@ -1517,6 +1525,7 @@ function PartsTab({ catalog, setCatalog, stock, setStock, orders, categoryPaths,
           📦 {stockOnly ? 'Showing stock items only' : 'Only display stock items'}
         </button>
       </div>
+      {pricingOpen && <CatalogPricingRequest catalog={catalog} onClose={() => setPricingOpen(false)} />}
       <CatalogApprovals pending={catPending} setPending={setCatPending} rows={rows} setCatalog={setCatalog} setStock={setStock} />
       {dups.length > 0 && (
         <div style={{ margin: '8px 16px 0', padding: '8px 10px', background: '#fff8e6', border: '1px solid #e0a716', borderRadius: 6, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -2561,7 +2570,7 @@ function baseOrderNumber(invoiceNumber) {
 
 
 
-function OrderedTab({ onClearFromJobs = () => {}, onLinkFeedPart = async () => null, orders, apiKey, onCommitOrder, onUpdateOrder, onDeleteOrder, onReceiveItems, onMarkReceivedNoStock, onPushPricing, onAddToExport, exportList, pendingSlips, onRemovePendingSlip, quotes = [], jobRecords = [], onMoveToStock, onWriteToJobs, feedChecked = {}, onCheckFeedPart, onCompareSlip, onCompareQuote = () => {} }) {
+function OrderedTab({ onClearFromJobs = () => {}, onLinkFeedPart = async () => null, orders, apiKey, onCommitOrder, onUpdateOrder, onDeleteOrder, onReceiveItems, onMarkReceivedNoStock, onPushPricing, onAddToExport, exportList, pendingSlips, onRemovePendingSlip, quotes = [], jobRecords = [], onMoveToStock, onWriteToJobs, feedChecked = {}, onCheckFeedPart, onCompareSlip, onCompareQuote = () => {}, onCompareCatalog = () => {} }) {
   const [subTab, setSubTab] = useState('overview') // overview | orders | pricing | received | archive
   const [focusP, setFocusP] = useState(null) // { key, t } — a warning to jump to on the Overview
   const [showDetailed, setShowDetailed] = useLocalStore('materials_orders_detailed', false)
@@ -3306,12 +3315,12 @@ function OrderedTab({ onClearFromJobs = () => {}, onLinkFeedPart = async () => n
         <>
           {sectionTitle('Orders')}
           {/* same purchases as the Overview (slips, email-run quotes/POs, sent orders, Catalog quotes), filtered */}
-          <PurchasesOverview onCompareQuote={onCompareQuote} quotes={quotes} jobRecords={jobRecords} layout="orders" q={q} orders={orders} feedRows={feedRows} prevRows={prevRows}
+          <PurchasesOverview onCompareCatalog={onCompareCatalog} onCompareQuote={onCompareQuote} quotes={quotes} jobRecords={jobRecords} layout="orders" q={q} orders={orders} feedRows={feedRows} prevRows={prevRows}
             billingFlag={o => { const r = checkOf(o); return r.status === 'flag' && !isReviewed(o, r) }}
             renderSlip={o => orderRow(o, false)} onUpdateOrder={onUpdateOrder} onOpenParts={openPartDetails} partBusy={linking}
             openIn={(tab, text) => { if (tab === 'orders') setShowDetailed(true); setSubTab(tab); setSearch(String(text || '')) }} />
           {sectionTitle('Pricing')}
-          <PurchasesOverview onCompareQuote={onCompareQuote} quotes={quotes} jobRecords={jobRecords} layout="pricing" q={q} orders={orders} feedRows={feedRows} prevRows={prevRows}
+          <PurchasesOverview onCompareCatalog={onCompareCatalog} onCompareQuote={onCompareQuote} quotes={quotes} jobRecords={jobRecords} layout="pricing" q={q} orders={orders} feedRows={feedRows} prevRows={prevRows}
             renderSlip={o => orderRow(o, false)} onUpdateOrder={onUpdateOrder} onOpenParts={openPartDetails} partBusy={linking}
             openIn={(tab, text) => { if (tab === 'orders') setShowDetailed(true); setSubTab(tab); setSearch(String(text || '')) }} />
           {sectionTitle(`Pricing Quotes (${pricingSlips.filter(match).length + feedLive.filter(feedMatch).length})`)}
@@ -3329,7 +3338,7 @@ function OrderedTab({ onClearFromJobs = () => {}, onLinkFeedPart = async () => n
             <button onClick={() => setSubTab('pricing')} style={laborTabBtnStyleM(subTab === 'pricing')} title="Pricing requests sent from quotes and the quotes that came back — for the Catalog and quotes, never ordered">💲 Pricing{pricingConfirmCount ? ` (${pricingConfirmCount} to confirm)` : toCheckCount ? ` (${toCheckCount} to check)` : ''}</button>
           </div>
           {subTab === 'overview' && (
-            <PurchasesOverview focus={focusP} onCompareQuote={onCompareQuote} quotes={quotes} jobRecords={jobRecords} q={q} orders={orders} feedRows={feedRows} prevRows={prevRows}
+            <PurchasesOverview focus={focusP} onCompareCatalog={onCompareCatalog} onCompareQuote={onCompareQuote} quotes={quotes} jobRecords={jobRecords} q={q} orders={orders} feedRows={feedRows} prevRows={prevRows}
               billingFlag={o => { const r = checkOf(o); return r.status === 'flag' && !isReviewed(o, r) }}
               renderSlip={o => orderRow(o, false)} onUpdateOrder={onUpdateOrder} onOpenParts={openPartDetails} partBusy={linking}
               openIn={(tab, text) => { setSubTab(tab); setSearch(String(text || '')) }} />
@@ -3339,7 +3348,7 @@ function OrderedTab({ onClearFromJobs = () => {}, onLinkFeedPart = async () => n
             Pricing requests sent from quotes, and the prices that came back — for reference on the Catalog and quotes, never ordered. A quote that comes back for a request lands here and asks you to confirm once. <b>→ Order</b> moves one back to Orders.
           </div>}
           {subTab === 'orders' && (
-            <PurchasesOverview onCompareQuote={onCompareQuote} quotes={quotes} jobRecords={jobRecords} layout="orders" q={q} orders={orders} feedRows={feedRows} prevRows={prevRows}
+            <PurchasesOverview onCompareCatalog={onCompareCatalog} onCompareQuote={onCompareQuote} quotes={quotes} jobRecords={jobRecords} layout="orders" q={q} orders={orders} feedRows={feedRows} prevRows={prevRows}
               billingFlag={o => { const r = checkOf(o); return r.status === 'flag' && !isReviewed(o, r) }}
               renderSlip={o => orderRow(o, false)} onUpdateOrder={onUpdateOrder} onOpenParts={openPartDetails} partBusy={linking}
               openIn={(tab, text) => { if (tab === 'orders') setShowDetailed(true); setSubTab(tab); setSearch(String(text || '')) }} />
@@ -3381,7 +3390,7 @@ function OrderedTab({ onClearFromJobs = () => {}, onLinkFeedPart = async () => n
             )
           })()}
           {subTab === 'pricing' && (
-            <PurchasesOverview onCompareQuote={onCompareQuote} quotes={quotes} jobRecords={jobRecords} layout="pricing" orders={orders} feedRows={feedRows} prevRows={prevRows}
+            <PurchasesOverview onCompareCatalog={onCompareCatalog} onCompareQuote={onCompareQuote} quotes={quotes} jobRecords={jobRecords} layout="pricing" orders={orders} feedRows={feedRows} prevRows={prevRows}
               renderSlip={o => orderRow(o, false)} onUpdateOrder={onUpdateOrder} onOpenParts={openPartDetails} partBusy={linking}
               openIn={(tab, text) => { if (tab === 'orders') setShowDetailed(true); setSubTab(tab); setSearch(String(text || '')) }} />
           )}
@@ -3560,7 +3569,7 @@ function OlderQuotes({ rows, quotes = [], jobRecords = [], q = '' }) {
 
 // ── Overview: every purchase in one stage, what needs you on top ──
 const TONE = { bad: ['#fdecea', '#a12a1e'], warn: ['#fff3d6', '#8a5d00'], fix: ['#e8f2fc', '#1a5fa0'], info: ['#f0efec', '#555'] }
-function PurchasesOverview({ focus = null, layout = 'overview', q, orders, feedRows, prevRows, billingFlag, renderSlip, onUpdateOrder, openIn, onOpenParts, partBusy = {}, quotes = [], jobRecords = [], onCompareQuote = () => {} }) {
+function PurchasesOverview({ focus = null, layout = 'overview', q, orders, feedRows, prevRows, billingFlag, renderSlip, onUpdateOrder, openIn, onOpenParts, partBusy = {}, quotes = [], jobRecords = [], onCompareQuote = () => {}, onCompareCatalog = () => {} }) {
   const [groupOpen, setGroupOpen] = useLocalStore('materials_orders_groups', {})
   // Push to this week's timesheet export (its slips, or the PO itself when it has none)
   const [exportExtra, setExportExtra] = useLocalStore(EXPORT_EXTRA_KEY, [])
@@ -3659,6 +3668,7 @@ function PurchasesOverview({ focus = null, layout = 'overview', q, orders, feedR
     }
     const src = sourceFromSlip(o)
     if (req.pricing && req.quote && req.quote.id && src.lines.length) onCompareQuote(req.quote.id, src)
+    if (req.catalogPricing && src.lines.length) onCompareCatalog(src, req)
   }
   const pickChoice = (req, c) => (c.kind === 'slip' ? matchReqToSlip(req, c.o) : matchReq(req, c.r))
   // File the quote that came back as Pricing, under the quote it was asked for
@@ -3667,6 +3677,7 @@ function PurchasesOverview({ focus = null, layout = 'overview', q, orders, feedR
     else if (feedPoState(row) !== 'pricing') await setFeedPricing(row.id, true)
     const src = sourcesFromFeedRow(row).find(x => x.lines.length)
     if (req.quote && req.quote.id && src) onCompareQuote(req.quote.id, src)
+    if (req.catalogPricing && src) onCompareCatalog(src, req)
   }
   const confirmPricing = async (req, row) => {
     updReq(req.id, { needsConfirm: false, confirmedAt: new Date().toISOString() })
@@ -3751,10 +3762,16 @@ function PurchasesOverview({ focus = null, layout = 'overview', q, orders, feedR
                 ? <button onClick={() => pushExport(p, false)} title="Take it back off this week's timesheet export" style={{ fontSize: 11.5, fontWeight: 700, padding: '3px 10px', borderRadius: 6, border: '1px solid #1e7a34', background: 'var(--surface)', color: '#1e7a34', cursor: 'pointer' }}>✓ On this week's export ✕</button>
                 : <button onClick={() => pushExport(p, true)} title="Put it on this week's timesheet (Received material) — editable there" style={{ fontSize: 11.5, fontWeight: 700, padding: '3px 10px', borderRadius: 6, border: 'none', background: 'var(--navy)', color: '#fff', cursor: 'pointer' }}>📤 Push to export</button>)}
               {p.stage === 'pricing' && (
-                <select value="" onChange={e => { const v = e.target.value; if (!v) return; setCompareMsg(m => ({ ...m, [p.key]: comparePurchase(p, v) ? '' : 'No priced lines on this one yet — read the quote PDF in (or wait for the email run) first.' })) }}
+                <select value="" onChange={e => {
+                  const v = e.target.value; if (!v) return
+                  let ok
+                  if (v === '__catalog') { const src = sourcesOf(p)[0]; ok = !!src; if (src) onCompareCatalog(src, (p.requests || []).find(r => r.catalogPricing) || openCatalogRequests(reqList, p.supplier)[0] || null) } else ok = comparePurchase(p, v)
+                  setCompareMsg(m => ({ ...m, [p.key]: ok ? '' : 'No priced lines on this one yet — read the quote PDF in (or wait for the email run) first.' }))
+                }}
                   title="Check these prices against one of your quotes — update its prices, add lines, or pair up lines that don't match"
                   style={{ fontSize: 11.5, padding: '3px 5px', border: '1px solid #1e7a34', borderRadius: 6, color: '#1e7a34', fontWeight: 700, maxWidth: 240 }}>
                   <option value="">⚖ Compare to a quote…</option>
+                  <option value="__catalog">📒 Put the prices in the Catalog…</option>
                   {pricingOpts.filter(o => o.target.type === 'quote').map(o => <option key={o.v} value={o.target.quoteId}>{o.label}</option>)}
                 </select>)}
               {compareMsg[p.key] && <span style={{ fontSize: 11, color: '#b45309' }}>{compareMsg[p.key]}</span>}
@@ -4452,8 +4469,12 @@ export default function Materials({ screen }) {
     setOrders(list => [...list, order])
     if (order.kind === 'order') writeSlipToJobs(order)
     if (order.kind === 'pricing') {
-      // Prices to the Catalog with a price check; then the quote comparison
-      pushOrderPricingToCatalog(order)
+      // Prices to the Catalog with a price check; then the quote comparison.
+      // The answer to a Catalog pricing request: pair it to those items first
+      // (so lines without our part # don't land as new Catalog items)
+      const catReq = order.pricingTarget?.type !== 'quote' ? openCatalogRequests(sentRequests, order.wholesaler)[0] : null
+      if (catReq) openCatalogCompare(sourceFromSlip(order), catReq)
+      else pushOrderPricingToCatalog(order)
       if (order.pricingTarget?.type === 'quote') {
         openCompare(order.pricingTarget.quoteId, sourceFromSlip(order))
       }
@@ -4826,10 +4847,28 @@ export default function Materials({ screen }) {
     if (q) setCompareFor({ quoteId: q.id, feedKey: part.key, label: `${part.order.supplier} quote ${part.number}`, lines, source: sourceRef(sourcesFromFeedRow(part.order).find(x => x.number === part.number)) })
   }
   const compareQuote = compareFor && quotesStore.records.find(q => q.id === compareFor.quoteId)
+  // A pricing quote → the Catalog (for a Catalog pricing request, or by hand)
+  const [compareCat, setCompareCat] = useState(null) // { lines, label, request, orderId?, feedId?, source }
+  const openCatalogCompare = (src, request = null) => setCompareCat({ lines: src.lines, label: src.label, request, orderId: src.kind === 'slip' ? src.id : undefined, feedId: src.kind === 'feed' ? String(src.id).split(':')[0] : undefined, source: src })
+  function applyCatalogCompare(picks) {
+    const c = compareCat
+    const sup = ((c.source && c.source.label) || '').split(' ')[0]
+    const r = applyToCatalog(catalogRef.current, picks, { source: sup || 'Quote', number: c.source && c.source.number, date: (c.source && c.source.date) || todayLocal() })
+    catalogRef.current = r.catalog
+    setCatalog(r.catalog)
+    if (r.flags.length) setDiscrepancies(d => [...d, ...r.flags.map(f => ({ id: uid(), ...f }))])
+    if (c.request) setSentRequests(l => (Array.isArray(l) ? l : []).map(x => x.id !== c.request.id ? x : { ...x, ...(c.orderId ? { matchedSlipId: c.orderId } : {}), ...(c.feedId ? { matchedFeedId: c.feedId } : {}), matchedAt: x.matchedAt || new Date().toISOString(), pricedIntoCatalogAt: new Date().toISOString(), needsConfirm: false }))
+    if (c.orderId) updateOrder(c.orderId, { catalogPricedAt: new Date().toISOString(), catalogPriced: { updated: r.updated, added: r.added } })
+    setCompareCat(null)
+  }
   const openCompare = (quoteId, src) => setCompareFor({ quoteId, label: src.label, lines: src.lines, orderId: src.kind === 'slip' ? src.id : undefined, source: sourceRef(src) })
 
   return (
     <div>
+      {compareCat && (
+        <CatalogCompare lines={compareCat.lines} catalog={catalog} request={compareCat.request} sourceLabel={compareCat.label}
+          onClose={() => setCompareCat(null)} onApply={applyCatalogCompare} />
+      )}
       {compareQuote && (
         <QuoteCompare
           lines={compareFor.lines.map(l => ({ partNo: l.partNo, name: l.name, uom: l.uom, qty: l.qty, cost: l.cost }))}
@@ -4922,7 +4961,7 @@ export default function Materials({ screen }) {
           quotes={quoteList} jobRecords={jobsStore.records} onMoveToStock={moveLinesToStock} onWriteToJobs={writeSlipToJobs} onClearFromJobs={clearSlipFromJobs} onLinkFeedPart={linkFeedPart}
           feedChecked={feedChecked} onCheckFeedPart={checkFeedPart}
           onCompareSlip={o => o.pricingTarget?.type === 'quote' && openCompare(o.pricingTarget.quoteId, sourceFromSlip(o))}
-          onCompareQuote={openCompare}
+          onCompareQuote={openCompare} onCompareCatalog={openCatalogCompare}
         />
       )}
       {tab === 'settings' && (

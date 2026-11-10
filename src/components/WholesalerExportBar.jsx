@@ -10,7 +10,9 @@ import { saveSentRequest, catalogPriceFor } from '../api/requests.js'
 // quote        — sent from a quote: the request is a pricing request attached to it
 // confirmToSend — the order list: exporting doesn't log anything; "✓ Confirm sent"
 //                 logs it as 📨 Sent and onSent() clears the list
-export default function WholesalerExportBar({ items, wholesaler, date, subjectPrefix, saveFolder, emptyMessage, jobs = [], quote = null, confirmToSend = false, onSent }) {
+// catalogPricing — sent from the Catalog for pricing only (qty 1 each): the
+//                 request remembers which Catalog item each line is
+export default function WholesalerExportBar({ items, wholesaler, date, subjectPrefix, saveFolder, emptyMessage, jobs = [], quote = null, confirmToSend = false, onSent, catalogPricing = false, rfqRef = '', emailNote = '' }) {
   const [lastExport, setLastExport] = useState(null) // { to, file, pricing } — waiting for "Confirm sent"
   const [phoneTo, setPhoneTo] = useState('')
   const [catFrom, setCatFrom] = useState('')
@@ -21,10 +23,10 @@ export default function WholesalerExportBar({ items, wholesaler, date, subjectPr
   // Keep what was sent, so the quote can be matched to it when it comes back
   function record(to, file, pricing, phoned, fromCatalog) {
     saveSentRequest({
-      wholesaler: to, subject: subjectPrefix || '', file, pricing: !!pricing || !!quote, phoned: !!phoned, ...(fromCatalog ? { fromCatalog: true } : {}),
+      wholesaler: to, subject: subjectPrefix || '', file, pricing: !!pricing || !!quote || catalogPricing, phoned: !!phoned, ...(fromCatalog ? { fromCatalog: true } : {}), ...(catalogPricing ? { catalogPricing: true } : {}),
       ...(quote ? { quote: { id: quote.id || '', number: quote.number || '', title: quote.title || '' } } : {}),
       items: (items || []).map(i => ({ qty: i.qty ?? '', uom: i.uom || '', partNo: i.partNo || '', desc: i.desc || i.nickname || '',
-        ...(fromCatalog ? { price: catalogPriceFor(i) } : {}), ...(i.planRefs ? { planRefs: i.planRefs } : {}) })),
+        ...(fromCatalog ? { price: catalogPriceFor(i) } : {}), ...(i.planRefs ? { planRefs: i.planRefs } : {}), ...(i.catalogId ? { catalogId: i.catalogId } : {}) })),
       jobs: (jobs || []).filter(j => j && j.name).map(j => ({ id: j.id || '', name: j.name })),
     })
   }
@@ -41,7 +43,7 @@ export default function WholesalerExportBar({ items, wholesaler, date, subjectPr
       const { buildOrderFormPdfBytes, orderFormFileName, WHOLESALERS } = await import('../api/exportOrderForm.js')
       const targetName = wholesalerKey ? WHOLESALERS[wholesalerKey].name : (wholesaler || '')
       // From a quote: a Request for Quote with our quote number on it
-      const rfq = quote ? { number: quote.number || '', title: quote.title || '' } : null
+      const rfq = quote ? { number: quote.number || '', title: quote.title || '' } : catalogPricing ? { number: '', title: '', label: rfqRef || 'Catalog pricing — quantities are 1 each, for pricing only' } : null
       const bytes = await buildOrderFormPdfBytes({ wholesaler: targetName, date, items, rfq })
       let binary = ''
       for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i])
@@ -62,6 +64,7 @@ export default function WholesalerExportBar({ items, wholesaler, date, subjectPr
               : pricing
               ? `Could you please price the attached list (${n} item${n === 1 ? '' : 's'}) and send me a quote? Please note any lead times or substitutions.`
               : `Please see the attached material order (${n} item${n === 1 ? '' : 's'}). Let me know on availability, and when it's ready for pick-up.`,
+            ...(emailNote ? ['', emailNote] : []),
           ].join('\n') // no sign-off — Outlook adds the signature
           const result = await window.desktop.draftEmail({ to: ws.email, subject: subjectPrefix, text, attachments: [savedPath] })
           if (!result.ok) setError(result.error)
@@ -154,7 +157,7 @@ export default function WholesalerExportBar({ items, wholesaler, date, subjectPr
           📞 Log phoned-in order
         </button>
       </div>
-      <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 6, flexWrap: 'wrap' }}>
+      {!catalogPricing && <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 6, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 11.5, color: 'var(--text-light)' }}>📒 Quoted it yourself from our Catalog?</span>
         <select value={catFrom} onChange={e => setCatFrom(e.target.value)} title="Who it'll be bought from (if you know)" style={{ fontSize: 12, padding: '4px 6px', border: '1px solid var(--border)', borderRadius: 6 }}>
           <option value="">Buying from… (optional)</option>
@@ -169,7 +172,7 @@ export default function WholesalerExportBar({ items, wholesaler, date, subjectPr
           style={{ fontSize: 12, fontWeight: 700, padding: '5px 12px', borderRadius: 6, border: '1px solid #1e7a34', background: 'var(--surface)', color: '#1e7a34', cursor: (items || []).length ? 'pointer' : 'default', opacity: (items || []).length ? 1 : 0.5 }}>
           📒 Log Catalog quote
         </button>
-      </div>
+      </div>}
       {error && <div style={{ fontSize: 11, color: 'var(--red)', marginTop: 6 }}>{error}</div>}
       {note && <div style={{ fontSize: 11, color: '#1a5fa0', marginTop: 6 }}>{note}</div>}
     </div>

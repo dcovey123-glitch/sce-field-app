@@ -79,7 +79,7 @@ export function orderFormHeading(rfq) {
   const ref = [rfq.number, rfq.title].filter(Boolean).join(' — ')
   return {
     title: 'Request for Quote',
-    ref: ref ? `Our quote: ${ref}` : '',
+    ref: ref ? `Our quote: ${ref}` : rfq.label || '',
     ask: `Please quote pricing and availability for the items below${rfq.number ? ` and reference our quote ${rfq.number} on your quote` : ''}. This is not an order.`,
   }
 }
