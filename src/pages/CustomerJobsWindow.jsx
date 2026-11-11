@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import ProposalPill from '../components/ProposalPill.jsx'
 import { linkedQuotesCustomer, sharedKey, useSharedCustomerLinks } from '../api/sharedCustomer.js'
 import { useHubStore } from '../api/useHubStore.js'
-import { SectionPage, ProjectBlock, ProjectColumnHeader, effectiveLifecycleStatus } from './Jobs.jsx'
+import { SectionPage, ProjectBlock, ProjectColumnHeader, effectiveLifecycleStatus, topLevelJobs } from './Jobs.jsx'
 import { quoteGrandTotal, QuoteAddRow, nextQuoteNumber, sortByQuoteNumber, EditableField, QuoteDetailPage, ApprovalDot, ApprovalModal, SimpleApprovalConfirm, InvalidateQuoteModal } from './Quotes.jsx'
 import { generateQuoteDocxBase64, quoteExportFileName } from '../api/exportQuote.js'
 import { todayLocal } from '../api/albertaTime.js'
@@ -168,7 +168,7 @@ function ProjectListSection({ projects, sortKey, customer, updateProject, delete
     const el = document.querySelector(`[data-job-row="${id}"]`)
     if (el) el.scrollIntoView({ block: 'start' })
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
-  const sorted = sortByDateDesc(projects, sortKey)
+  const sorted = sortByDateDesc(topLevelJobs(projects), sortKey)
   if (sorted.length === 0) {
     return <div style={{ padding: '14px 18px', color: 'var(--text-light)', fontSize: 13 }}>{emptyText}</div>
   }
@@ -184,6 +184,7 @@ function ProjectListSection({ projects, sortKey, customer, updateProject, delete
           onUpdate={patch => updateProject(p.id, patch)}
           onDelete={() => deleteProject(p.id)}
           onOpenSection={sectionId => navigate({ view: 'section', projectId: p.id, section: sectionId })}
+          onOpenJobSection={(jobId, sectionId) => navigate({ view: 'section', projectId: jobId, section: sectionId })}
           onRequestStatusClick={() => {}}
         />
         </div>
@@ -367,11 +368,13 @@ export default function CustomerJobsWindow({ customerId, initialProjectId = null
   }
 
   const allProjects = jobsHub.records.filter(p => p.customerId === customerId && !p.trashedAt)
-  const active = allProjects.filter(p => effectiveLifecycleStatus(p) === 'onGoing')
-  const deficient = allProjects.filter(p => effectiveLifecycleStatus(p) === 'deficiencies')
-  const unbilled = allProjects.filter(p => effectiveLifecycleStatus(p) === 'unbilled')
-  const billed = allProjects.filter(p => effectiveLifecycleStatus(p) === 'billed')
-  const needsReview = allProjects.filter(p => effectiveLifecycleStatus(p) === null)
+  // Lists and counts: combined sub-jobs ride inside their main job's row
+  const listed = topLevelJobs(allProjects)
+  const active = listed.filter(p => effectiveLifecycleStatus(p) === 'onGoing')
+  const deficient = listed.filter(p => effectiveLifecycleStatus(p) === 'deficiencies')
+  const unbilled = listed.filter(p => effectiveLifecycleStatus(p) === 'unbilled')
+  const billed = listed.filter(p => effectiveLifecycleStatus(p) === 'billed')
+  const needsReview = listed.filter(p => effectiveLifecycleStatus(p) === null)
 
   // Jobs and Quotes keep separate customer records, tied together by a shared id
   // (name match only as a fallback for records not stamped yet).

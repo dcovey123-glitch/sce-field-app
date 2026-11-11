@@ -40,6 +40,7 @@ export function whyCantCombine(job, parent) {
   if (!parent) return 'Pick the main job first.'
   if (job.type === 'warranty' || parent.type === 'warranty') return 'Warranty jobs aren\'t billed, so there\'s no total to combine.'
   if ((job.type || '') !== (parent.type || '')) return `Only jobs of the same type combine — this is ${TYPE_NAME[job.type] || 'untyped'}, ${parent.name || 'that job'} is ${TYPE_NAME[parent.type] || 'untyped'}.`
+  if (job.customerId && parent.customerId && job.customerId !== parent.customerId) return 'It\'s under a different customer — move it to the same customer first to combine.'
   if ((job.billingHistory || []).length) return 'This job has already been billed on its own, so it keeps its own CO.'
   return null
 }

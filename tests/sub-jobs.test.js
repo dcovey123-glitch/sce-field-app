@@ -78,5 +78,11 @@ describe('one CO, one total', () => {
     expect(whyCantCombine({ type: 'tm' }, main)).toMatch(/same type/)
     expect(whyCantCombine({ type: 'quoted', billingHistory: [{ amount: 5 }] }, main)).toMatch(/already been billed/)
     expect(whyCantCombine({ type: 'warranty' }, { type: 'warranty' })).toMatch(/Warranty/)
+    expect(whyCantCombine({ type: 'quoted', customerId: 'c2' }, { ...main, customerId: 'c1' })).toMatch(/different customer/)
+  })
+  it('the jobs list shows a combined sub-job only inside its main job', async () => {
+    const { topLevelJobs } = await import('../src/pages/Jobs.jsx')
+    setJobsSource(() => all)
+    try { expect(topLevelJobs(all).map(j => j.id)).toEqual(['m', 'o']) } finally { setJobsSource(() => []) }
   })
 })

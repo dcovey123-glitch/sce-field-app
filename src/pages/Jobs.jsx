@@ -36,6 +36,9 @@ function uid() {
   return Math.random().toString(36).slice(2, 10)
 }
 
+// The jobs to show as rows: combined sub-jobs ride inside their main job's row
+export const topLevelJobs = list => (list || []).filter(p => !combinedParent(p))
+
 export const SECTIONS = [
   { id: 'general',   label: 'General Information' },
   { id: 'tasks',     label: 'Tasks' },
@@ -410,6 +413,18 @@ export function ProjectColumnHeader({ indent }) {
 }
 
 // ── Section row (leaf — clicking one navigates to a new page) ───────
+const sectionLabel = (job, s) => s.id === 'tasks' && (job.tasks || []).length
+  ? `Tasks — ${(job.tasks || []).filter(t => !t.done).length} to do, ${(job.tasks || []).filter(t => t.done).length} done` : s.label
+
+function ScopeHeading({ title, detail, indent }) {
+  return (
+    <div style={{ padding: `8px 16px 4px ${16 + indent + 18}px`, background: '#eef4fb', borderTop: '1px solid #c8d8ea', display: 'flex', gap: 8, alignItems: 'baseline' }}>
+      <span style={{ fontSize: 12.5, fontWeight: 800, color: '#1a5fa0' }}>{title}</span>
+      <span style={{ fontSize: 11, color: 'var(--text-mid)' }}>{detail}</span>
+    </div>
+  )
+}
+
 function SectionRow({ label, onOpen, indent }) {
   return (
     <div style={{ ...nestedRowStyle, paddingLeft: 16 + indent, background: 'var(--surface)' }} onClick={onOpen}>
@@ -543,7 +558,12 @@ function JobHealthMark({ project }) {
   )
 }
 
-export function ProjectBlock({ project, customer, expanded, onToggle, onUpdate, onDelete, onOpenSection, onRequestStatusClick, indent, onClose }) {
+// A job with combined sub-jobs shows as ONE row (their own rows are left out
+// of the list — see topLevelJobs). Opening it lists this job's sections, then
+// each combined sub-job's, under its own heading. onOpenJobSection(jobId,
+// sectionId) opens a section on any of them.
+export function ProjectBlock({ project, customer, expanded, onToggle, onUpdate, onDelete, onOpenSection, onOpenJobSection, onRequestStatusClick, indent, onClose }) {
+  const combinedKids = combinedChildren(project)
   const visibleSections = SECTIONS
   const status = project.status || 'red'
   const [notesExpanded, setNotesExpanded] = useState(false)
@@ -596,6 +616,12 @@ export function ProjectBlock({ project, customer, expanded, onToggle, onUpdate, 
           placeholder="Project name"
           onSave={v => onUpdate({ name: v })}
           onToggle={onToggle}
+          suffix={combinedKids.length > 0 && (
+            <span title={`Combined: ${combinedKids.map(k => k.name || 'Sub-job').join(', ')}`}
+              style={{ fontSize: 10, fontWeight: 700, color: '#1a5fa0', background: '#e8f2fc', borderRadius: 20, padding: '2px 7px', whiteSpace: 'nowrap', flexShrink: 0 }}>
+              +{combinedKids.length} combined
+            </span>
+          )}
         />
         <span onClick={e => e.stopPropagation()}>
           <WorkCompletedToggle
@@ -657,9 +683,24 @@ export function ProjectBlock({ project, customer, expanded, onToggle, onUpdate, 
               </button>
             )}
           </div>
+          {combinedKids.length > 0 && <ScopeHeading indent={indent} title={project.name || 'This job'} detail={`main scope${project.co ? ' · CO ' + project.co : ''} · ${money(ownJobTotal(project))}`} />}
           {visibleSections.map(s => (
-            <SectionRow key={s.id} label={s.id === 'tasks' && (project.tasks || []).length ? `Tasks — ${(project.tasks || []).filter(t => !t.done).length} to do, ${(project.tasks || []).filter(t => t.done).length} done` : s.label} indent={indent + 18} onOpen={() => onOpenSection(s.id)} />
+            <SectionRow key={s.id} label={sectionLabel(project, s)} indent={indent + 18} onOpen={() => onOpenSection(s.id)} />
           ))}
+          {combinedKids.map(k => (
+            <React.Fragment key={k.id}>
+              <ScopeHeading indent={indent} title={`↳ ${k.name || 'Sub-job'}`} detail={`combined scope · ${money(ownJobTotal(k))}`} />
+              {visibleSections.map(s => (
+                <SectionRow key={s.id} label={sectionLabel(k, s)} indent={indent + 18}
+                  onOpen={() => onOpenJobSection ? onOpenJobSection(k.id, s.id) : onOpenSection(s.id)} />
+              ))}
+            </React.Fragment>
+          ))}
+          {combinedKids.length > 0 && (
+            <div style={{ padding: `6px 16px 8px ${16 + indent + 18}px`, fontSize: 12, fontWeight: 800, display: 'flex', justifyContent: 'space-between', background: 'var(--surface-2)' }}>
+              <span>Total — one CO{project.co ? ' (' + project.co + ')' : ''}</span><span>{money(effectiveJobTotal(project))}</span>
+            </div>
+          )}
           {showAiReport && customer && (
             <CustomerSummaryModal project={project} customer={customer} onClose={() => setShowAiReport(false)} />
           )}
@@ -704,7 +745,7 @@ function CustomerBlock({ customer, projects, expanded, onToggle, onRename, onEdi
               No projects yet — add one below.
             </div>
           )}
-          {projects.map(p => (
+          {topLevelJobs(projects).map(p => (
             <ProjectBlock
               key={p.id}
               project={p}
@@ -715,6 +756,7 @@ function CustomerBlock({ customer, projects, expanded, onToggle, onRename, onEdi
               onUpdate={patch => onUpdateProject(p.id, patch)}
               onDelete={() => onDeleteProject(p.id)}
               onOpenSection={sectionId => onOpenSection(p.id, sectionId)}
+              onOpenJobSection={(jobId, sectionId) => onOpenSection(jobId, sectionId)}
               onRequestStatusClick={onRequestStatusClick}
             />
           ))}
