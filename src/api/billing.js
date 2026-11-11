@@ -86,10 +86,34 @@ export function effectiveJobTotal(project, jobs = liveJobs()) {
   return round2(ownJobTotal(project) + combinedChildren(project, jobs).reduce((a, k) => a + ownJobTotal(k), 0))
 }
 
+// Quoted job: the dollars actually sent for billing — each entry's amount.
+// (An entry saved with no amount, from before a value was set, counts as its
+// % step of today's value.) Dollars, not %, so a job whose value goes up after
+// part of it was billed — a bigger CO, a sub-job combined in — still bills
+// out to exactly its value.
+export function quotedBilledAmount(project, value = effectiveJobTotal(project)) {
+  const hist = billingEntries(project)
+  if (!hist.length) return round2(value * (Number(project.billedProgress) || 0) / 100)
+  let prev = 0, sum = 0
+  for (const e of hist) {
+    const pct = Number(e.percent) || 0
+    const a = Number(e.amount)
+    sum += a > 0 ? a : Math.max(0, pct - prev) / 100 * value
+    prev = Math.max(prev, pct)
+  }
+  return round2(sum)
+}
+
 export function unbilledAmount(project, jobs = liveJobs()) {
   if (project.type === 'warranty') return 0
   if (project.type === 'tm') return Math.max(0, round2(tmTotal(project, jobs) - tmBilledAmount(project)))
-  return effectiveJobTotal(project, jobs) * (1 - (Number(project.billedProgress) || 0) / 100)
+  const total = effectiveJobTotal(project, jobs)
+  return Math.max(0, round2(total - quotedBilledAmount(project, total)))
+}
+
+// Quoted job: what to send to bring billing up to toPercent of the value
+export function amountToBill(project, toPercent, value = effectiveJobTotal(project)) {
+  return Math.max(0, round2(value * (Number(toPercent) || 0) / 100 - quotedBilledAmount(project, value)))
 }
 
 // When an amount is recorded late (it really went out in an earlier month),
@@ -123,7 +147,8 @@ function totalsFrom(project, history) {
 export function progressBillPatch(project, toPercent, amount, monthKey) {
   if (project.type === 'tm' || project.type === 'warranty') return null
   const from = Number(project.billedProgress) || 0
-  if (!(toPercent > from)) return null
+  // Same % again is allowed only when there's money owed at it (the value went up)
+  if (!(toPercent > from) && !(toPercent === from && Number(amount) > 0.005)) return null
   const when = billingWhen(monthKey)
   const entry = { id: uid(), date: when.day, monthKey: when.monthKey, percent: toPercent, amount: round2(amount), recordedAt: new Date().toISOString() }
   return totalsFrom(project, [...(project.billingHistory || []), entry])

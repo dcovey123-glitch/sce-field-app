@@ -115,3 +115,34 @@ describe('billing dates', () => {
     expect(e.map(x => [x.id, x.fromPercent, x.percent])).toEqual([['a', 0, 70], ['b', 70, 100]])
   })
 })
+
+describe('billed = the dollars actually sent', () => {
+  it('value goes up after part was billed (combined sub-job, bigger CO): nothing is lost', async () => {
+    const { quotedBilledAmount, amountToBill } = await import('../src/api/billing.js')
+    let job = { type: 'quoted', jobValue: 50000 }
+    job = apply(job, progressBillPatch(job, 40, 20000))
+    // Arena Materials ($20,000) combined in → $70,000
+    const all = [job, { id: 's', type: 'quoted', coValue: 20000, relatedJobId: job.id || 'm', foldIntoParent: true }]
+    job.id = 'm'; all[0] = job
+    expect(effectiveJobTotal(job, all)).toBe(70000)
+    expect(quotedBilledAmount(job, 70000)).toBe(20000)
+    expect(unbilledAmount(job, all)).toBe(50000)
+    // the same 40% now owes the $8,000 difference; to 100% sends the rest
+    expect(amountToBill(job, 40, 70000)).toBe(8000)
+    expect(amountToBill(job, 100, 70000)).toBe(50000)
+    const again = progressBillPatch(job, 40, 8000)
+    expect(again).not.toBeNull()
+    job = apply(job, again)
+    job = apply(job, progressBillPatch(job, 100, amountToBill(job, 100, 70000)))
+    expect(unbilledAmount(job, all)).toBe(0)
+    expect(job.billingHistory.reduce((s, h) => s + h.amount, 0)).toBe(70000)
+  })
+  it('an old entry saved with no amount counts as its % of today\'s value', async () => {
+    const { quotedBilledAmount } = await import('../src/api/billing.js')
+    const job = { type: 'quoted', jobValue: 1000, billingHistory: [{ id: 'a', date: '2026-01-01', percent: 30, amount: 0 }, { id: 'b', date: '2026-02-01', percent: 50, amount: 200 }] }
+    expect(quotedBilledAmount(job, 1000)).toBe(500)
+  })
+  it('no history but a billed % (very old jobs) still works off the %', () => {
+    expect(unbilledAmount({ type: 'quoted', jobValue: 1000, billedProgress: 80 }, [])).toBe(200)
+  })
+})

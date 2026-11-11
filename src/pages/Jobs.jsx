@@ -1,6 +1,6 @@
 import {
   TM_MATERIAL_MARKUP, billingWhen, billingEntries, tmTotal, tmBilledAmount, unbilledAmount, effectiveJobTotal,
-  progressBillPatch, tmBillPatch, undoLastBillingPatch, ownJobTotal, ownTmTotal, combinedParent, combinedChildren,
+  progressBillPatch, tmBillPatch, undoLastBillingPatch, quotedBilledAmount, ownJobTotal, ownTmTotal, combinedParent, combinedChildren,
 } from '../api/billing.js'
 export { TM_MATERIAL_MARKUP, billingWhen, billingEntries, tmTotal, tmBilledAmount, unbilledAmount, effectiveJobTotal }
 import React, { useState, useEffect, useRef } from 'react'
@@ -1049,15 +1049,19 @@ function BillTM({ project, onBill, onUndoLast }) {
   )
 }
 
-function BillToProgress({ progress, jobValue, billedProgress, entries, onBill, onUndoLast, dateComplete }) {
+// Amounts are in dollars actually sent: bringing billing up to a % sends that
+// % of today's value less what's already gone out — so if the value went up
+// after some was billed, the difference is picked up, nothing's lost.
+function BillToProgress({ progress, jobValue, billedProgress, billedAmount = 0, entries, onBill, onUndoLast, dateComplete }) {
   const current = progress || 0
   const billed = billedProgress || 0
   const delta = Math.max(0, current - billed)
-  const canBill = delta > 0
   const value = Number(jobValue) || 0
-  const amount = value * (delta / 100)
-  const unbilled = value * (1 - billed / 100)
-  const isFullyBilled = value > 0 && billed >= 100
+  const sent = Number(billedAmount) || 0
+  const amount = value > 0 ? Math.max(0, Math.round((value * current / 100 - sent) * 100) / 100) : 0
+  const canBill = value > 0 ? (current >= billed && current > 0 && amount > 0.005) : delta > 0
+  const unbilled = Math.max(0, value - sent)
+  const isFullyBilled = value > 0 && billed >= 100 && unbilled < 0.005
   const hasHistory = entries.length > 0
 
   return (
@@ -1072,7 +1076,7 @@ function BillToProgress({ progress, jobValue, billedProgress, entries, onBill, o
       )}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
         <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-mid)' }}>
-          Billed to date: <strong style={{ color: 'var(--text)' }}>{billed}%</strong>
+          Billed to date: <strong style={{ color: 'var(--text)' }}>{billed}%</strong>{value > 0 && sent > 0 ? ` · ${money(sent)}` : ''}
           {progress > billed && (
             <span style={{ color: 'var(--text-light)', fontWeight: 500 }}> · progress at {current}%</span>
           )}
@@ -2603,6 +2607,7 @@ function GeneralInfoSection({ project, customer, onUpdate, navigate }) {
           progress={project.progress}
           jobValue={effectiveJobTotal(project)}
           billedProgress={project.billedProgress}
+          billedAmount={quotedBilledAmount(project, effectiveJobTotal(project))}
           entries={billingEntries(project)}
           onBill={billToProgress}
           onUndoLast={undoLastBilling}

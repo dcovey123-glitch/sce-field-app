@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react'
 import { useHubStore } from '../api/useHubStore.js'
 import { useLocalStore } from '../api/useLocalStore.js'
 import { effectiveLifecycleStatus, effectiveJobTotal, unbilledAmount, tmBilledAmount } from './Jobs.jsx'
+import { ownJobTotal, combinedParent, combinedChildren, quotedBilledAmount } from '../api/billing.js'
 import { quoteGrandTotal } from '../api/quoteMath.js'
 import { linkedJobsCustomer } from '../api/sharedCustomer.js'
 import { openFlags, addFlagPatch } from '../components/FlagBanner.jsx'
@@ -32,7 +33,7 @@ function snapshotReportHtml(snap, takenAt, opts, logo) {
     ['Quoted, not sent yet', money0(snap.unsentTotal), `${snap.unsentCount} quotes`],
   ].map(([l, v, n]) => `<div class="tile"><div class="tl">${esc(l)}</div><div class="tv">${esc(v)}</div><div class="tn">${esc(n)}</div></div>`).join('')
   const jobs = snap.onBooks.map(r => `<tr>
-    <td><b>${esc(r.p.name)}</b>${opts.jobNotes && r.p.notes ? `<div class="sub">${esc(String(r.p.notes).trim().slice(0, 160))}</div>` : ''}</td>
+    <td><b>${esc(r.p.name)}</b>${r.kids && r.kids.length ? `<div class="sub">+ ${esc(r.kids.map(k => k.name).join(', '))} (combined)</div>` : ''}${opts.jobNotes && r.p.notes ? `<div class="sub">${esc(String(r.p.notes).trim().slice(0, 160))}</div>` : ''}</td>
     <td>${esc(r.customer?.name)}</td><td>${esc(r.status)}</td><td>${esc(r.p.co || '')}</td>
     <td class="n">${r.value ? money(r.value) : '—'}${r.fromQuote ? '<div class="sub">from quote</div>' : ''}</td>
     <td class="n">${money(r.billed)}</td><td class="n"><b>${money(r.left)}</b></td>
@@ -184,19 +185,33 @@ export default function Snapshot() {
     quotes.filter(q => q.approved && !q.invalidated && q.linkedJobId).forEach(q => { (quotesByJob[q.linkedJobId] ||= []).push(q) })
     const quotedFor = id => (quotesByJob[id] || []).reduce((s, q) => s + quoteGrandTotal(q), 0)
 
-    // Jobs on the books: anything not marked Complete (Billed).
-    const onBooks = jobs.filter(p => effectiveLifecycleStatus(p) !== 'billed').map(p => {
+    // Jobs on the books: anything not marked Complete (Billed). A sub-job
+    // combined into its main job ("one CO, one total") isn't a line of its
+    // own — its value is counted in the main job's line, once.
+    // A quoted job (or combined sub-job) with no value typed uses its
+    // approved quote(s).
+    const ownValue = p => {
+      const v = ownJobTotal(p)
+      if (v > 0 || p.type === 'tm' || p.type === 'warranty') return { v, fromQuote: false }
+      const q = quotedFor(p.id)
+      return { v: q, fromQuote: q > 0 }
+    }
+    const onBooks = jobs.filter(p => effectiveLifecycleStatus(p) !== 'billed' && !combinedParent(p, jobs)).map(p => {
       const st = effectiveLifecycleStatus(p)
-      let value = effectiveJobTotal(p)
-      let left = unbilledAmount(p)
-      let fromQuote = false
-      // No value typed on a quoted job: use its approved quote(s).
-      if (!value && p.type !== 'tm' && p.type !== 'warranty' && quotedFor(p.id) > 0) {
-        value = quotedFor(p.id); fromQuote = true
-        left = value * (1 - (Number(p.billedProgress) || 0) / 100)
+      const kids = combinedChildren(p, jobs)
+      let value, left, fromQuote = false
+      if (p.type === 'tm' || p.type === 'warranty') {
+        value = effectiveJobTotal(p, jobs); left = unbilledAmount(p, jobs)
+      } else {
+        const parts = [p, ...kids].map(ownValue)
+        value = Math.round(parts.reduce((s, x) => s + x.v, 0) * 100) / 100
+        fromQuote = parts.some(x => x.fromQuote)
       }
-      const billed = p.type === 'tm' ? tmBilledAmount(p) : value * (Number(p.billedProgress) || 0) / 100
-      return { p, customer: jc[p.customerId], status: st ? STATUS_LABEL[st] : 'Needs review', value, billed, left, fromQuote }
+      // Billed = the dollars actually sent (not today's value × %), so a value
+      // that went up after billing doesn't make billed look bigger than it was
+      const billed = p.type === 'tm' ? tmBilledAmount(p) : quotedBilledAmount(p, value)
+      if (p.type !== 'tm' && p.type !== 'warranty') left = Math.max(0, Math.round((value - billed) * 100) / 100)
+      return { p, customer: jc[p.customerId], status: st ? STATUS_LABEL[st] : 'Needs review', value, billed, left, fromQuote, kids }
     }).sort((a, b) => (a.status === b.status ? b.left - a.left : ['Active', 'Deficiencies', 'Complete (unbilled)', 'Needs review'].indexOf(a.status) - ['Active', 'Deficiencies', 'Complete (unbilled)', 'Needs review'].indexOf(b.status)))
 
     // Open quotes: not approved, not voided.
@@ -243,7 +258,7 @@ export default function Snapshot() {
       }
       upcoming.push({ key, date: ymd(d), what, details: det ? [det] : [], sources: [source], job })
     }
-    onBooks.forEach(({ p, customer }) => {
+    onBooks.flatMap(r => [r, ...(r.kids || []).map(k => ({ p: k, customer: r.customer }))]).forEach(({ p, customer }) => {
       add(parseDay(p.dateStart), p.name, 'Scheduled start', 'Job dates', { p, customer })
       add(parseDay(p.dateComplete), p.name, 'To be completed by', 'Job dates', { p, customer })
       const notes = [{ text: p.notes, at: p.updatedAt }, ...(p.notesLog || []).map(n => ({ text: n.text, at: n.timestamp }))]
@@ -277,8 +292,9 @@ export default function Snapshot() {
       .forEach(r => checks.push({ what: r.p.name, issue: 'No job value entered, so nothing shows to bill.', amount: 0, p: r.p, customer: r.customer, focus: 'value', fix: 'Enter the job value' }))
     onBooks.filter(r => r.status === 'Needs review')
       .forEach(r => checks.push({ what: r.p.name, issue: 'Old status from before Billed/Unbilled existed. Mark it Billed or Unbilled.', amount: 0, p: r.p, customer: r.customer, focus: 'status', fix: 'Set the status' }))
-    onBooks.filter(r => r.fromQuote)
-      .forEach(r => checks.push({ what: r.p.name, issue: `No job value entered. Using the approved quote total, ${money(r.value)}.`, amount: r.value, p: r.p, customer: r.customer, focus: 'value', fix: 'Enter the job value' }))
+    onBooks.filter(r => r.fromQuote).flatMap(r => [r.p, ...(r.kids || [])].map(j => ({ j, r, ov: ownValue(j) })))
+      .filter(x => x.ov.fromQuote)
+      .forEach(({ j, r, ov }) => checks.push({ what: j.name, issue: `No job value entered. Using the approved quote total, ${money(ov.v)}.`, amount: ov.v, p: j, customer: r.customer, focus: 'value', fix: 'Enter the job value' }))
     onBooks.filter(r => r.p.type === 'quoted' && Number(r.p.jobValue) > 0 && quotedFor(r.p.id) > 0).forEach(r => {
       const qt = quotedFor(r.p.id)
       if (Math.abs(qt - Number(r.p.jobValue)) > 1) checks.push({ what: r.p.name, issue: `Job value is ${money(r.p.jobValue)}; approved quote${(quotesByJob[r.p.id] || []).length > 1 ? 's add' : ' is'} up to ${money(qt)}.`, amount: Math.abs(qt - Number(r.p.jobValue)), p: r.p, customer: r.customer, focus: 'value', fix: 'Check the job value' })
@@ -492,7 +508,7 @@ export default function Snapshot() {
               {snap.onBooks.length === 0 && <tr><td style={td} colSpan={10}>Nothing on the books.</td></tr>}
               {snap.onBooks.map(r => (
                 <tr key={r.p.id} onClick={() => openJob(r.p, r.customer)} style={clickable}>
-                  <td style={{ ...td, fontWeight: 700, color: 'var(--text)' }}>{r.p.name}{flagChip(liveJob(r.p.id) || r.p)}{r.p.notes && <div style={{ fontWeight: 400, color: 'var(--text-light)', fontSize: 11.5, whiteSpace: 'pre-wrap' }}>{String(r.p.notes).trim().slice(0, 140)}</div>}</td>
+                  <td style={{ ...td, fontWeight: 700, color: 'var(--text)' }}>{r.p.name}{r.kids && r.kids.length > 0 && <div style={{ fontWeight: 600, color: '#1a5fa0', fontSize: 11 }}>+ {r.kids.map(k => k.name).join(', ')} (combined)</div>}{flagChip(liveJob(r.p.id) || r.p)}{r.p.notes && <div style={{ fontWeight: 400, color: 'var(--text-light)', fontSize: 11.5, whiteSpace: 'pre-wrap' }}>{String(r.p.notes).trim().slice(0, 140)}</div>}</td>
                   <td style={td}>{r.customer?.name}</td>
                   <td style={td}>{statusChip(r.status)}</td>
                   <td style={td}>{r.p.co || ''}</td>
