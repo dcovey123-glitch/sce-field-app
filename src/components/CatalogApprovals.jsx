@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { todayLocal } from '../api/albertaTime.js'
 import { fmtDate } from '../api/format.js'
+import { groupCounts, entryForRow, rollUpLabel } from '../api/countEntries.js'
 
 // Catalog changes sent from the phone (Materials → Catalog): a new count of
 // something on the shelf, or an item that isn't in the Catalog yet. They're
@@ -8,7 +9,9 @@ import { fmtDate } from '../api/format.js'
 // into the Catalog.
 //
 // pending item: { id, kind: 'count'|'newpart', catalogId, stockId, item, name,
-//   partNo, uom, qty, prevQty, note, by, at }
+//   partNo, uom, qty, prevQty, note, by, at, add? }
+// add: true = "found another N" — adds to the count before it (or to what's
+// on hand). One item's counts and adds show as ONE line with the total.
 
 export const CATALOG_PENDING_KEY = 'materials_catalog_pending'
 
@@ -17,8 +20,10 @@ const when = iso => fmtDate(iso, 'when')
 const inp = { fontSize: 12, border: '1px solid var(--border)', borderRadius: 4, padding: '3px 6px', fontFamily: 'var(--font)' }
 const btn = primary => ({ fontSize: 11.5, fontWeight: 700, padding: '4px 11px', borderRadius: 6, cursor: 'pointer', border: primary ? 'none' : '1px solid var(--border)', background: primary ? 'var(--accent)' : 'var(--surface)', color: primary ? 'var(--navy)' : 'var(--text-mid)' })
 
-function CountRow({ it, row, onApprove, onDecline }) {
-  const [qty, setQty] = useState(String(it.qty ?? ''))
+function CountRow({ it, total, history, people, row, onApprove, onDecline }) {
+  const [qty, setQty] = useState(String(total ?? ''))
+  const [seen, setSeen] = useState(total)
+  if (seen !== total) { setSeen(total); setQty(String(total ?? '')) } // another add came in
   const now = row ? row.onHand : 0
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', borderTop: '1px solid #f0e2b8', flexWrap: 'wrap', fontSize: 12 }}>
@@ -27,7 +32,7 @@ function CountRow({ it, row, onApprove, onDecline }) {
         <b>{it.item || it.name}</b>{it.partNo ? <span style={{ color: 'var(--text-light)' }}> · {it.partNo}</span> : null}
         <span style={{ color: 'var(--text-mid)' }}> — on hand {now} {it.uom || ''} → counted</span>
         {!row && <span style={{ color: '#a12a1e' }}> (not in the Catalog any more)</span>}
-        <div style={{ fontSize: 11, color: 'var(--text-light)' }}>{[it.by, when(it.at), it.note].filter(Boolean).join(' · ')}</div>
+        <div style={{ fontSize: 11, color: 'var(--text-light)' }}>{[history, people, when(it.at), it.note].filter(Boolean).join(' · ')}</div>
       </span>
       <input type="number" value={qty} onChange={e => setQty(e.target.value)} style={{ ...inp, width: 70, textAlign: 'right' }} /> <span>{it.uom || ''}</span>
       <button style={btn(true)} disabled={!row} onClick={() => onApprove({ ...it, qty: Number(qty) || 0 })}>Approve</button>
@@ -67,10 +72,14 @@ function NewPartRow({ it, onApprove, onDecline }) {
 // rows: the Catalog & Stock rows ({ cat, stk, lots, onHand, refCost, … })
 export default function CatalogApprovals({ pending, setPending, rows, setCatalog, setStock }) {
   if (!pending || !pending.length) return null
-  const rowFor = it => rows.find(r => (it.catalogId && r.cat && r.cat.id === it.catalogId) || (it.stockId && (r.lots || []).some(l => l.id === it.stockId)))
+  const rowFor = it => rows.find(r => entryForRow(it, r))
   const drop = id => setPending(list => list.filter(x => x.id !== id))
+  const dropAll = ids => setPending(list => list.filter(x => !ids.includes(x.id)))
+  const counts = groupCounts(pending, it => (rowFor(it) || {}).onHand || 0)
+  const newParts = pending.filter(x => x.kind === 'newpart')
+  const lines = counts.length + newParts.length
 
-  function approveCount(it) {
+  function approveCount(it, ids) {
     const row = rowFor(it)
     if (!row) return
     const diff = (Number(it.qty) || 0) - (row.onHand || 0)
@@ -80,13 +89,13 @@ export default function CatalogApprovals({ pending, setPending, rows, setCatalog
       setStock(list => list.map(s => s.id !== lot.id ? s : {
         ...s, qty: Math.max(0, (Number(s.qty) || 0) + diff),
         paidForQty: diff > 0 ? (Number(s.paidForQty) || 0) + diff : Math.min(Number(s.paidForQty) || 0, Math.max(0, (Number(s.qty) || 0) + diff)),
-        countLog: [...(s.countLog || []), { at: new Date().toISOString(), from: row.onHand, to: Number(it.qty) || 0, by: it.by || 'phone', note: it.note || '' }],
+        countLog: [...(s.countLog || []), { at: new Date().toISOString(), from: row.onHand, to: Number(it.qty) || 0, by: it.by || 'phone', note: [it.history, it.note].filter(Boolean).join(' — ') }],
       }))
     } else if (Number(it.qty) > 0 && row.cat) {
       const c = row.cat
       setStock(list => [...list, { id: uid(), catalogId: c.id, name: c.name, partNo: c.partNo || '', nickname: c.nickname || '', uom: c.uom || '', category: c.category || '', qty: Number(it.qty), cost: Number(c.refCost) || 0, paidForQty: Number(it.qty), countLog: [{ at: new Date().toISOString(), from: 0, to: Number(it.qty), by: it.by || 'phone', note: it.note || '' }] }])
     }
-    drop(it.id)
+    dropAll(ids)
   }
   function approveNew(it, f) {
     const id = uid()
@@ -101,11 +110,17 @@ export default function CatalogApprovals({ pending, setPending, rows, setCatalog
   return (
     <div style={{ margin: '8px 16px 0', padding: '8px 12px', background: '#fffaf0', border: '1px solid #e0a716', borderRadius: 6 }}>
       <div style={{ fontSize: 12, fontWeight: 800, color: '#8a5d00', marginBottom: 2 }}>
-        ⏳ {pending.length} Catalog change{pending.length === 1 ? '' : 's'} to approve (counts and new items from the phone or here) — tentative until you do
+        ⏳ {lines} Catalog change{lines === 1 ? '' : 's'} to approve (counts and new items from the phone or here) — tentative until you do
       </div>
-      {pending.map(it => it.kind === 'newpart'
-        ? <NewPartRow key={it.id} it={it} onApprove={f => approveNew(it, f)} onDecline={() => drop(it.id)} />
-        : <CountRow key={it.id} it={it} row={rowFor(it)} onApprove={x => approveCount(x)} onDecline={() => drop(it.id)} />)}
+      {counts.map(g => {
+        const r = g.rollup, last = r.last
+        const ids = g.entries.map(x => x.id)
+        const people = [...new Set(g.entries.map(x => x.by).filter(Boolean))].join(', ')
+        const history = g.entries.length > 1 || r.adds.length ? rollUpLabel(r) : ''
+        return <CountRow key={g.key} it={last} total={r.total} history={history} people={people} row={rowFor(last)}
+          onApprove={x => approveCount({ ...x, history }, ids)} onDecline={() => dropAll(ids)} />
+      })}
+      {newParts.map(it => <NewPartRow key={it.id} it={it} onApprove={f => approveNew(it, f)} onDecline={() => drop(it.id)} />)}
     </div>
   )
 }

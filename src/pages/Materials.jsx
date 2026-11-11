@@ -22,7 +22,7 @@ import { groupMonthDist } from '../api/monthDist.js'
 import { buildPurchases, purchaseSearchText, STAGES, needsYou, FLAG_FIX } from '../api/purchases.js'
 import { REQUESTS_KEY, quoteCandidates, quoteChoices, catalogQuoteTotal, autoMatchPricingRequests, unmatchPatch, requestQuoteRef, quotePickList } from '../api/requests.js'
 import { addPlanLinesToOrderList, tagSlipsFromRequests } from '../api/materialPlan.js'
-import StockCount, { lastFullCount } from '../components/StockCount.jsx'
+import { rollUp, rollUpLabel, entryForRow, approvalLineCount } from '../api/countEntries.js'
 import { EXPORT_EXTRA_KEY, exportWeekKey } from '../api/timesheetExport.js'
 import { startOfWeek } from '../api/weekStart.js'
 import { FlagButton, FlagNote } from '../components/Flags.jsx'
@@ -1264,29 +1264,48 @@ function PartRow({ item, order, onUpdate, onUpdateStock, onAddStock, onDelete, t
           </div>
           <div style={{ textAlign: 'right', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4 }}>
             {tentative
-              ? <span title={`Count waiting for approval (${tentative.by || 'phone'}) — was ${onHand}`} style={{ fontSize: 11, fontWeight: 800, color: '#9a6610', background: '#fff3d6', borderRadius: 10, padding: '1px 6px', whiteSpace: 'nowrap' }}>⏳ {tentative.qty}</span>
+              ? <span title={`Waiting for approval (${tentative.label}) — on hand ${onHand}`} style={{ fontSize: 11, fontWeight: 800, color: '#9a6610', background: '#fff3d6', borderRadius: 10, padding: '1px 6px', whiteSpace: 'nowrap' }}>⏳ {tentative.total}</span>
               : s && onHand > 0
               ? <span style={{ fontSize: 12.5, fontWeight: 800, color: '#1e7a34' }}>{onHand}</span>
               : <button onClick={() => setAdding(a => !a)} title="Put some of this into Stock" style={{ ...pill(false), padding: '2px 8px' }}>{s ? '0 · +' : '+ Stock'}</button>}
-            {onCount && <button onClick={() => setCounting(c => c ? null : { qty: '', note: '' })} title="Send a new count for approval (tentative until approved)" style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, color: 'var(--text-light)', padding: 0 }}>✎</button>}
+            {onCount && <button onClick={() => setCounting(c => c ? null : { qty: '', note: '' })} title="Count it, or add more you've found — goes for approval" style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, color: 'var(--text-light)', padding: 0 }}>✎</button>}
           </div>
         </div>
         <ConfirmDeleteButton onConfirm={onDelete} style={delBtnStyle} ariaLabel="Delete part"
           confirmText={s && onHand > 0 ? `Delete this part? It also removes the ${onHand} in Stock.` : 'Delete this part?'} />
       </div>
 
-      {counting && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 16px 8px 34px', flexWrap: 'wrap', fontSize: 11.5, background: '#fffaf0' }}>
-          <span style={{ fontWeight: 700, color: '#8a5d00' }}>Count (on hand now {onHand} {item.uom || ''}):</span>
-          <input autoFocus type="number" value={counting.qty} onChange={e => setCounting(c => ({ ...c, qty: e.target.value }))} placeholder="Counted"
-            onKeyDown={e => { if (e.key === 'Enter' && counting.qty !== '') { onCount(counting.qty, counting.note); setCounting(null) } if (e.key === 'Escape') setCounting(null) }}
-            style={{ width: 70, fontSize: 12, border: '1px solid var(--border)', borderRadius: 4, padding: '3px 5px' }} />
-          <input value={counting.note} onChange={e => setCounting(c => ({ ...c, note: e.target.value }))} placeholder="Note (optional)"
-            style={{ width: 180, fontSize: 12, border: '1px solid var(--border)', borderRadius: 4, padding: '3px 5px' }} />
-          <button disabled={counting.qty === ''} onClick={() => { onCount(counting.qty, counting.note); setCounting(null) }} style={{ fontSize: 11.5, fontWeight: 700, padding: '4px 12px', border: 'none', borderRadius: 6, background: 'var(--accent)', color: 'var(--navy)', cursor: 'pointer' }}>Send for approval</button>
-          <button onClick={() => setCounting(null)} style={{ fontSize: 11.5, padding: '4px 10px', border: '1px solid var(--border)', borderRadius: 6, background: '#fff', cursor: 'pointer' }}>Cancel</button>
-        </div>
-      )}
+      {counting && (() => {
+        // Set the count, or add what you just found on top of it — as many
+        // times as you like; it all rolls into one tentative total.
+        const q = counting.qty === '' ? null : Number(counting.qty)
+        const ok = q != null && q >= 0
+        const sendSet = () => { if (!ok) return; onCount(q, counting.note, false); setCounting(c => ({ qty: '', note: '', last: `Set to ${q}` })) }
+        const sendAdd = () => { if (!ok || q <= 0) return; onCount(q, counting.note, true); setCounting(c => ({ qty: '', note: '', last: `Added ${q}` })) }
+        const now = tentative ? tentative.total : onHand
+        return (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 16px 8px 34px', flexWrap: 'wrap', fontSize: 11.5, background: '#fffaf0' }}>
+            <span style={{ fontWeight: 700, color: '#8a5d00' }}>
+              {tentative ? `⏳ ${now} ${item.uom || ''} waiting (${tentative.label})` : `On hand now ${onHand} ${item.uom || ''}`}:
+            </span>
+            <input autoFocus type="number" min="0" value={counting.qty} onChange={e => setCounting(c => ({ ...c, qty: e.target.value }))} placeholder="Qty"
+              onKeyDown={e => { if (e.key === 'Enter') (tentative ? sendAdd : sendSet)(); if (e.key === 'Escape') setCounting(null) }}
+              style={{ width: 70, fontSize: 12, border: '1px solid var(--border)', borderRadius: 4, padding: '3px 5px' }} />
+            <input value={counting.note} onChange={e => setCounting(c => ({ ...c, note: e.target.value }))} placeholder="Note (optional) — e.g. back shelf"
+              style={{ width: 190, fontSize: 12, border: '1px solid var(--border)', borderRadius: 4, padding: '3px 5px' }} />
+            <button disabled={!ok || !(q > 0)} onClick={sendAdd} title={`Found more — adds to ${now}`}
+              style={{ fontSize: 11.5, fontWeight: 700, padding: '4px 12px', border: 'none', borderRadius: 6, background: tentative ? 'var(--accent)' : '#e8f2fc', color: tentative ? 'var(--navy)' : '#1a5fa0', cursor: 'pointer', opacity: ok && q > 0 ? 1 : 0.5 }}>
+              ＋ Add found{ok && q > 0 ? ` → ${Math.round((now + q) * 1000) / 1000}` : ''}
+            </button>
+            <button disabled={!ok} onClick={sendSet} title="This is the whole count — replaces what's there"
+              style={{ fontSize: 11.5, fontWeight: 700, padding: '4px 12px', border: 'none', borderRadius: 6, background: tentative ? '#e8f2fc' : 'var(--accent)', color: tentative ? '#1a5fa0' : 'var(--navy)', cursor: 'pointer', opacity: ok ? 1 : 0.5 }}>
+              Set count{ok ? ` = ${q}` : ''}
+            </button>
+            <button onClick={() => setCounting(null)} style={{ fontSize: 11.5, padding: '4px 10px', border: '1px solid var(--border)', borderRadius: 6, background: '#fff', cursor: 'pointer' }}>Done</button>
+            {counting.last && <span style={{ color: '#1e7a34', fontWeight: 700 }}>✓ {counting.last} — goes to approval</span>}
+          </div>
+        )
+      })()}
 
       {item.cat && isMerged(item.cat) && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 16px 6px 34px', flexWrap: 'wrap', fontSize: 11, color: 'var(--text-mid)' }}>
@@ -1438,11 +1457,17 @@ function PartsTab({ catalog, setCatalog, stock, setStock, orders, categoryPaths,
   const priceIdx = useMemo(() => buildPriceIndex(orders, [...(feedForPrices || []), ...(prevForPrices || [])]), [orders, feedForPrices, prevForPrices])
   const [catPending, setCatPending] = useLocalStore(CATALOG_PENDING_KEY, [])
   // Counts / new items from here go through the same approval as the phone's
-  const tentativeFor = row => { const t = (catPending || []).filter(x => x.kind === 'count' && ((row.cat && x.catalogId === row.cat.id) || (row.stk && x.stockId === row.stk.id))); return t.length ? t[t.length - 1] : null }
+  // The tentative total for a row: its counts and "found more" adds rolled up
+  const tentativeFor = row => {
+    const t = (catPending || []).filter(x => x.kind === 'count' && entryForRow(x, row))
+    if (!t.length) return null
+    const r = rollUp(t, row.onHand || 0)
+    return { ...r, label: rollUpLabel(r), by: r.last && r.last.by }
+  }
   const pendId = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4)
-  function sendCount(row, qty, note) {
+  function sendCount(row, qty, note, add = false) {
     const c = row.cat || {}
-    setCatPending(list => [...list, { id: pendId(), kind: 'count', catalogId: row.cat ? row.cat.id : null, stockId: row.stk ? row.stk.id : null, item: row.nickname || row.name, name: row.name, nickname: row.nickname || '', partNo: row.partNo || c.partNo || '', uom: row.uom || '', prevQty: row.onHand || 0, qty: Number(qty) || 0, note: note || '', by: 'Desktop', at: new Date().toISOString(), source: 'desktop' }])
+    setCatPending(list => [...list, { id: pendId(), kind: 'count', catalogId: row.cat ? row.cat.id : null, stockId: row.stk ? row.stk.id : null, item: row.nickname || row.name, name: row.name, nickname: row.nickname || '', partNo: row.partNo || c.partNo || '', uom: row.uom || '', prevQty: row.onHand || 0, qty: Number(qty) || 0, ...(add ? { add: true } : {}), note: note || '', by: 'Desktop', at: new Date().toISOString(), source: 'desktop' }])
   }
   const [newOpen, setNewOpen] = useState(false)
   const dups = findDuplicateParts(catalog, stock)
@@ -1498,26 +1523,17 @@ function PartsTab({ catalog, setCatalog, stock, setStock, orders, categoryPaths,
   const filtered = q ? base.filter(i => hit([i.name, i.nickname, i.category, i.uom, ...(i.cat ? partNosOf(i.cat) : [i.partNo]), ...(i.lots || []).map(l => l.partNo)], q)) : base
   const uncategorizedCount = rows.filter(i => !i.category).length
   const stockValue = inStock.reduce((a, r) => a + (r.stockValue || 0), 0)
-  const [counting, setCounting] = useState(false)
-  const [countSession] = useLocalStore('stock_count', null)
-  const lastCount = lastFullCount()
-
-  if (counting) return <StockCount rows={rows} setStock={setStock} setCatalog={setCatalog} catPending={catPending} setCatPending={setCatPending} onClose={() => setCounting(false)} />
 
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px 0', flexWrap: 'wrap' }}>
         <span style={{ flex: 1, minWidth: 220, fontSize: 11, color: 'var(--text-light)' }}>
           Every part and its reference price. Parts you have on the shelf show their Stock count — taking them on a job counts them down.
-          {' '}<b style={{ color: 'var(--text-mid)' }}>Stock value {money(stockValue)}</b>{lastCount ? ` · last count ${new Date(lastCount.at).toLocaleDateString('en-CA', { month: 'short', day: 'numeric' })}` : ' · never counted'}
+          {' '}<b style={{ color: 'var(--text-mid)' }}>Stock value {money(stockValue)}</b> · ✎ on a row to count it or add more you've found
         </span>
         <button onClick={() => setPricingOpen(o => !o)} title="Send Catalog items to Nedco or Gescan at qty 1 for pricing — their part #, description and price come back onto the items"
           style={{ fontSize: 12, fontWeight: 700, padding: '6px 14px', borderRadius: 20, cursor: 'pointer', border: '1px solid #1a5fa0', background: pricingOpen ? '#1a5fa0' : 'var(--surface)', color: pricingOpen ? '#fff' : '#1a5fa0' }}>
           💲 Get pricing
-        </button>
-        <button onClick={() => setCounting(true)}
-          style={{ fontSize: 12, fontWeight: 700, padding: '6px 14px', borderRadius: 20, cursor: 'pointer', border: 'none', background: countSession ? '#e0a716' : 'var(--navy)', color: countSession ? 'var(--navy)' : '#fff' }}>
-          🧮 {countSession ? `Count in progress (${Object.keys(countSession.counts || {}).length})` : 'Count stock'}
         </button>
         <button onClick={() => { if (forced) { setForced(false); setStockOnly(false) } else setStockOnly(!stockOnlySaved) }}
           style={{ fontSize: 12, fontWeight: 700, padding: '6px 14px', borderRadius: 20, cursor: 'pointer',
@@ -1569,7 +1585,7 @@ function PartsTab({ catalog, setCatalog, stock, setStock, orders, categoryPaths,
           onUpdate: patch => updateRow(row, patch), onDelete: () => deleteRow(row),
           onUpdateStock: (patch, lotId) => updateStock(row, patch, lotId), onAddStock: data => addStock(row, data),
           order: row.stk ? orders.find(o => o.id === row.stk.orderId) : null,
-          tentative: tentativeFor(row), onCount: (qty, note) => sendCount(row, qty, note),
+          tentative: tentativeFor(row), onCount: (qty, note, add) => sendCount(row, qty, note, add),
           priceFrom: priceSourceFor(priceIdx, row),
         })}
         ColumnHeader={PartColumnHeader}
@@ -4944,7 +4960,7 @@ export default function Materials({ screen }) {
       <div style={{ display: 'flex', alignItems: 'center', background: 'var(--surface)', borderBottom: '1px solid var(--border)' }}>
         <button style={tabBtnStyle(tab === 'used')} onClick={() => setTab('used')}>Material Used{pendingUsed.length ? ` (${pendingUsed.length})` : ''}</button>
         <button style={tabBtnStyle(tab === 'ordered')} onClick={() => setTab('ordered')}>Orders &amp; Slips{pendingSlips.length ? ` (${pendingSlips.length})` : ''}</button>
-        <button style={tabBtnStyle(tab === 'catalog')} onClick={() => setTab('catalog')}>Catalog &amp; Stock{catPendingTab.length ? ` (${catPendingTab.length})` : ''}</button>
+        <button style={tabBtnStyle(tab === 'catalog')} onClick={() => setTab('catalog')}>Catalog &amp; Stock{approvalLineCount(catPendingTab) ? ` (${approvalLineCount(catPendingTab)})` : ''}</button>
         <button style={tabBtnStyle(tab === 'orderform')} onClick={() => setTab('orderform')}>Material Order{planWaiting ? ` (${planWaiting} waiting)` : ''}</button>
         <button
           onClick={() => setTab('settings')}

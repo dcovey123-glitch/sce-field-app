@@ -153,7 +153,7 @@ export default function CloudSync({ background = false }) {
     const catalogPayload = {
       updatedAt: new Date().toISOString(),
       // still waiting for approval, so every phone shows them as tentative
-      pend: [...(catPending || []), ...extraPend.filter(x => !(catPending || []).some(y => y.id === x.id))].map(x => ({ id: x.id, kind: x.kind, catalogId: x.catalogId || null, stockId: x.stockId || null, name: x.name || x.item, item: x.item, partNo: x.partNo || '', uom: x.uom || '', qty: x.qty, by: x.by || '', at: x.at })),
+      pend: [...(catPending || []), ...extraPend.filter(x => !(catPending || []).some(y => y.id === x.id))].map(x => ({ id: x.id, kind: x.kind, catalogId: x.catalogId || null, stockId: x.stockId || null, name: x.name || x.item, item: x.item, partNo: x.partNo || '', uom: x.uom || '', qty: x.qty, ...(x.add ? { add: true } : {}), by: x.by || '', at: x.at })),
       items: partsList(catalog, stock).map(p => ({ k: p.key, c: p.catalogId, s: p.stockId, n: p.name, nn: p.nickname, pn: p.partNo, pa: p.alts || '', u: p.uom, p: Math.round((Number(p.price) || 0) * 10000) / 10000, oh: p.onHand, cat: p.category || '' })),
     }
     await wfetch(`${cleanUrl}/putjson`, {

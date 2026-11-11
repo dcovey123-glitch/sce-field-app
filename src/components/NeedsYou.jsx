@@ -8,6 +8,7 @@ import { REQUESTS_KEY } from '../api/requests.js'
 import { useFlags } from '../api/flags.js'
 import { effectiveLifecycleStatus } from '../pages/Jobs.jsx'
 import { isCombinedChild } from '../api/billing.js'
+import { approvalLineCount } from '../api/countEntries.js'
 import { unpostedCount } from './PostTimeToLabor.jsx'
 import { tasksOf, isOverdue, isDueToday, today, fmtDay, uid } from '../api/tasks.js'
 import { materialFindings } from '../api/materialsAudit.js'
@@ -104,7 +105,8 @@ export function useNeedsYou(navigate) {
   const inbox = []
   if ((slipsPending || []).length) inbox.push({ key: 'slips', tone: 'info', text: `${slipsPending.length} slip${slipsPending.length === 1 ? '' : 's'} to read and file`, detail: 'From the phone or the slip grabber', action: 'Slips', onGo: go({ hub: 'materials', view: 'ordered' }) })
   if ((usedPending || []).length) inbox.push({ key: 'used', tone: 'info', text: `${usedPending.length} material-used entr${usedPending.length === 1 ? 'y' : 'ies'} to approve`, detail: 'Sent from the phone', action: 'Approve', onGo: go({ hub: 'materials', view: 'used' }) })
-  if ((catPending || []).length) inbox.push({ key: 'catalog', tone: 'info', text: `${catPending.length} catalog count${catPending.length === 1 ? '' : 's'} / new part${catPending.length === 1 ? '' : 's'} to approve`, detail: 'Sent from the phone', action: 'Catalog', onGo: go({ hub: 'materials', view: 'catalog' }) })
+  const catLines = approvalLineCount(catPending)
+  if (catLines) inbox.push({ key: 'catalog', tone: 'info', text: `${catLines} catalog count${catLines === 1 ? '' : 's'} / new part${catLines === 1 ? '' : 's'} to approve`, detail: 'Sent from the phone', action: 'Catalog', onGo: go({ hub: 'materials', view: 'catalog' }) })
   // Job plans: lines to order that haven't gone out, Stock lines short / unpicked
   const [orderSheet] = useLocalStore('materials_order_list', [])
   const outRefs = new Set([...(Array.isArray(orderSheet) ? orderSheet : []).flatMap(i => (i.planRefs || []).map(p => p.jobId + ':' + p.lineId)),

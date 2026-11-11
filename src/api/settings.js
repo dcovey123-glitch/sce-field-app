@@ -21,8 +21,6 @@ export const STORE = {
   materials_po_split_v1: { what: 'One-time fix marker for split POs' },
   purchase_marks: { what: 'Purchases you closed or marked by hand' },
   quote_price_references: { what: 'Pricing quotes used as Catalog price references' },
-  stock_count: { what: 'The stock count in progress' },
-  stock_count_history: { what: 'Past stock counts' },
   // Materials screen layout
   materials_order_sections: { what: 'Which Orders sections are open', view: true },
   materials_orders_detailed: { what: 'Orders detail view on/off', view: true },

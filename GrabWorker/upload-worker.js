@@ -1620,11 +1620,23 @@ function matTentative() {
   (cat.pend || []).forEach(function (x) { if (!all.some(function (y) { return y.id === x.id; })) all.push(x); });
   return all;
 }
-function matSendCatalog(it) {
+// One item's tentative total: its last count (or what's on hand) plus every
+// "found more" add sent after it — same rule as the desktop.
+function matRollUp(tent, p) {
+  const list = tent.filter(function (x) { return x.kind === 'count' && ((p.c && x.catalogId === p.c) || (p.s && x.stockId === p.s)); })
+    .sort(function (a, b) { return String(a.at || '').localeCompare(String(b.at || '')); });
+  if (!list.length) return null;
+  let base = Number(p.oh) || 0, from = 'on hand', adds = [];
+  list.forEach(function (x) { if (x.add) adds.push(Number(x.qty) || 0); else { base = Number(x.qty) || 0; from = 'count'; adds = []; } });
+  const total = Math.round((base + adds.reduce(function (a, b) { return a + b; }, 0)) * 1000) / 1000;
+  return { qty: total, label: [from + ' ' + base].concat(adds.map(function (a) { return '+' + a; })).join(' · ') };
+}
+function matSendCatalog(it, keepOpen) {
   const by = matBy();
   it.id = matUid(); it.at = new Date().toISOString(); it.by = by;
   const box = matList(MAT_OUTBOX); box.push(it); matSave(MAT_OUTBOX, box);
-  state.mat.catEdit = null; state.mat.catNew = null;
+  if (!keepOpen) state.mat.catEdit = null;
+  state.mat.catNew = null;
   render();
   flushMatOutbox();
 }
@@ -1633,19 +1645,26 @@ function matByInput() {
   by.oninput = function () { try { localStorage.setItem('sce_mat_by', by.value.trim()); } catch (e) {} };
   return by;
 }
+// Tap an item: set its count, or add more you've found (as many times as you
+// like) — it all rolls into one tentative total until approved on the desktop.
 function matCountForm(p, tent) {
   const wrap = h('div', { class: 'mchosen', style: 'flex-direction:column; align-items:stretch; gap:6px' });
-  wrap.appendChild(h('div', { class: 'meta' }, ['On hand now: ' + (p.oh || 0) + ' ' + (p.u || '') + (tent ? ' · tentative ' + tent.qty : '')]));
-  const qty = h('input', { type: 'number', inputmode: 'decimal', min: '0', step: 'any', class: 'minput', placeholder: 'Counted qty' + (p.u ? ' (' + p.u + ')' : '') });
+  const now = tent ? tent.qty : (Number(p.oh) || 0);
+  wrap.appendChild(h('div', { class: 'meta' }, [tent ? '⏳ ' + now + ' ' + (p.u || '') + ' waiting (' + tent.label + ')' : 'On hand now: ' + now + ' ' + (p.u || '')]));
+  const qty = h('input', { type: 'number', inputmode: 'decimal', min: '0', step: 'any', class: 'minput', placeholder: 'Qty' + (p.u ? ' (' + p.u + ')' : '') });
   const note = h('input', { class: 'minput', placeholder: 'Note (optional) — e.g. back corner' });
   wrap.appendChild(qty); wrap.appendChild(note); wrap.appendChild(matByInput());
-  const row = h('div', { style: 'display:flex; gap:8px' });
-  row.appendChild(h('button', { class: 'mbtn', style: 'flex:1', onclick: function () {
+  const send = function (add) {
     const q = Number(qty.value);
-    if (qty.value === '' || !(q >= 0)) { alert('Enter the qty you counted.'); return; }
-    matSendCatalog({ kind: 'count', catalogId: p.c || null, stockId: p.s || null, item: p.nn || p.n, name: p.n, nickname: p.nn || '', partNo: p.pn || '', uom: p.u || '', prevQty: Number(p.oh) || 0, qty: q, note: note.value.trim() });
-  } }, ['Send count for approval']));
-  row.appendChild(h('button', { class: 'mbtn', style: 'flex:0 0 auto; background:#fff; color:var(--navy); border:1px solid var(--border)', onclick: function () { state.mat.catEdit = null; render(); } }, ['Cancel']));
+    if (qty.value === '' || !(q >= 0) || (add && !(q > 0))) { alert(add ? 'Enter how many more you found.' : 'Enter the qty you counted.'); return; }
+    const it = { kind: 'count', catalogId: p.c || null, stockId: p.s || null, item: p.nn || p.n, name: p.n, nickname: p.nn || '', partNo: p.pn || '', uom: p.u || '', prevQty: Number(p.oh) || 0, qty: q, note: note.value.trim() };
+    if (add) it.add = true;
+    matSendCatalog(it, true);
+  };
+  const row = h('div', { style: 'display:flex; gap:8px; flex-wrap:wrap' });
+  row.appendChild(h('button', { class: 'mbtn', style: 'flex:1', onclick: function () { send(true); } }, ['＋ Add found (to ' + now + ')']));
+  row.appendChild(h('button', { class: 'mbtn', style: 'flex:1; background:#fff; color:var(--navy); border:1px solid var(--border)', onclick: function () { send(false); } }, ['Set count']));
+  row.appendChild(h('button', { class: 'mbtn', style: 'flex:0 0 auto; background:#fff; color:var(--navy); border:1px solid var(--border)', onclick: function () { state.mat.catEdit = null; render(); } }, ['Done']));
   wrap.appendChild(row);
   setTimeout(function () { qty.focus(); }, 30);
   return wrap;
@@ -1681,7 +1700,7 @@ function matCatalog() {
   const input = h('input', { type: 'search', class: 'minput', placeholder: 'Search the catalog…', value: m.catQ, autocomplete: 'off' });
   const list = h('div', {});
   const tent = matTentative();
-  const tentFor = function (p) { const t = tent.filter(function (x) { return x.kind === 'count' && ((p.c && x.catalogId === p.c) || (p.s && x.stockId === p.s)); }); return t.length ? t[t.length - 1] : null; };
+  const tentFor = function (p) { return matRollUp(tent, p); };
   function rowFor(p) {
     const t = tentFor(p);
     const box = h('div', {});
@@ -1727,103 +1746,17 @@ function matCatalog() {
   return wrap;
 }
 
-// 🧮 Count: go category by category (Catalog order). Type what's there for
-// each item, then send the counts — they go into the count open on
-// the desktop (or to approval if no count is open).
-function matCountView() {
-  const m = state.mat;
-  const wrap = h('div', {});
-  const items = matParts().filter(function (p) { return p.oh > 0 || (m.countAll && p.cat); });
-  const tent = matTentative();
-  const sentFor = function (p) { const t = tent.filter(function (x) { return x.kind === 'count' && ((p.c && x.catalogId === p.c) || (p.s && x.stockId === p.s)); }); return t.length ? t[t.length - 1] : null; };
-  // Same order as the Catalog list on the computer: top categories A-Z; inside,
-  // sub-categories A-Z (nested), then items filed right in it; Uncategorized last
-  const shelves = {};
-  const segsOf = function (p) { return String(p.cat || '').split('/').map(function (x) { return x.trim(); }).filter(Boolean); };
-  items.forEach(function (p) { const sg = segsOf(p); const k = sg.length ? sg[0] : 'Uncategorized'; (shelves[k] = shelves[k] || []).push(p); });
-  const names = Object.keys(shelves).filter(function (k) { return k !== 'Uncategorized'; }).sort(function (a, b) { return a.localeCompare(b); });
-  if (shelves['Uncategorized']) names.push('Uncategorized');
-  const sectionsOf = function (list) {
-    const root = { kids: {}, items: [] };
-    list.forEach(function (p) { let node = root; segsOf(p).slice(1).forEach(function (sg) { node = node.kids[sg] = node.kids[sg] || { kids: {}, items: [] }; }); node.items.push(p); });
-    const out = [];
-    const walk = function (node, path) {
-      Object.keys(node.kids).sort(function (a, b) { return a.localeCompare(b); }).forEach(function (k) { walk(node.kids[k], path.concat([k])); });
-      if (node.items.length) out.push({ path: path.join(' / '), depth: path.length, items: node.items });
-    };
-    walk(root, []);
-    return out;
-  };
-  if (!m.shelf) {
-    wrap.appendChild(h('div', { class: 'note', style: 'margin:0 2px 8px' }, ['Pick a category, type what is there for each item, then Send. Same order as the Catalog list. Counts go into the count open on the computer.']));
-    if (!names.length) { wrap.appendChild(h('div', { class: 'empty' }, [state.catalog ? 'No stock items yet.' : 'Catalog not synced yet — open the desktop app once.'])); return wrap; }
-    names.forEach(function (k) {
-      const list = shelves[k];
-      const done = list.filter(sentFor).length;
-      wrap.appendChild(h('div', { class: 'mrow', style: 'background:#fff; border:1px solid var(--border, #dde2ea); border-radius:10px; margin-bottom:6px', onclick: function () { m.shelf = k; render(); } }, [
-        h('div', { style: 'flex:1; font-weight:700' }, [k]),
-        h('span', { class: 'mstock', style: done === list.length ? 'background:#e6f4ea; color:#1e7a34' : '' }, [(done === list.length ? '✓ ' : '') + done + ' / ' + list.length]),
-      ]));
-    });
-    const all = h('div', { class: 'mtoggle' + (m.countAll ? ' on' : ''), style: 'margin-top:8px; display:inline-block', onclick: function () { m.countAll = !m.countAll; render(); } }, ['Include items with none in stock']);
-    wrap.appendChild(all);
-    return wrap;
-  }
-  const sections = sectionsOf(shelves[m.shelf] || []);
-  wrap.appendChild(h('div', { class: 'row', style: 'margin-bottom:8px' }, [
-    h('button', { class: 'mbtn', style: 'flex:0 0 auto; background:#fff; color:var(--navy); border:1px solid var(--border)', onclick: function () { m.shelf = null; render(); } }, ['‹ Categories']),
-    h('div', { style: 'flex:1; font-weight:800; font-size:16px; padding-left:8px' }, [m.shelf]),
-  ]));
-  const inputs = [];
-  const card = h('div', { class: 'card' });
-  sections.forEach(function (sec) {
-  if (sec.path) card.appendChild(h('div', { style: 'padding:6px 4px 4px ' + (4 + (sec.depth - 1) * 12) + 'px; font-size:13px; font-weight:800; color:#56607a; border-top:1px solid #dde2ea; background:#f4f6fa' }, [sec.path]));
-  sec.items.forEach(function (p) {
-    const t = sentFor(p);
-    const box = h('input', { type: 'number', inputmode: 'decimal', min: '0', step: 'any', class: 'minput', placeholder: t ? String(t.qty) : 'count', style: 'width:90px; margin:0; text-align:right; font-weight:700' });
-    box.onkeydown = function (e) { if (e.key === 'Enter') { const i = inputs.indexOf(box); if (inputs[i + 1]) inputs[i + 1].focus(); else box.blur(); } };
-    inputs.push(box);
-    box._p = p;
-    card.appendChild(h('div', { class: 'prow' }, [
-      h('div', { class: 'tl' }, [
-        h('div', { style: 'font-weight:700' }, [p.nn || p.n]),
-        h('div', { class: 'meta', style: 'margin:0' }, ['app: ' + (p.oh || 0) + ' ' + (p.u || '') + (t ? ' · sent ' + t.qty : '') + (p.pn ? ' · ' + p.pn : '')]),
-      ]),
-      box,
-    ]));
-  });
-  });
-  wrap.appendChild(card);
-  wrap.appendChild(matByInput());
-  wrap.appendChild(h('button', { class: 'bigbtn', style: 'width:100%; margin-top:10px', onclick: function () {
-    const filled = inputs.filter(function (b) { return b.value !== '' && Number(b.value) >= 0; });
-    if (!filled.length) { alert('Type at least one count.'); return; }
-    const by = matBy();
-    const box = matList(MAT_OUTBOX);
-    filled.forEach(function (b) {
-      const p = b._p;
-      box.push({ id: matUid(), at: new Date().toISOString(), by: by, kind: 'count', catalogId: p.c || null, stockId: p.s || null, item: p.nn || p.n, name: p.n, nickname: p.nn || '', partNo: p.pn || '', uom: p.u || '', prevQty: Number(p.oh) || 0, qty: Number(b.value), note: 'Stock count · ' + m.shelf });
-    });
-    matSave(MAT_OUTBOX, box);
-    m.shelf = null;
-    render();
-    flushMatOutbox();
-  } }, ['Send these counts']));
-  return wrap;
-}
-
 function renderMaterials() {
   const m = state.mat;
   const wrap = h('div', {});
   const sub = h('div', { class: 'msub' });
-  [['used', 'Used'], ['slip', 'Slip'], ['catalog', 'Catalog'], ['count', '🧮 Count'], ['order', 'Order']].forEach(function (v) {
+  [['used', 'Used'], ['slip', 'Slip'], ['catalog', 'Catalog'], ['order', 'Order']].forEach(function (v) {
     sub.appendChild(h('div', { class: 'msubtab' + (m.view === v[0] ? ' on' : ''), onclick: function () { if (m.view !== v[0]) { m.view = v[0]; m.item = null; m.qty = ''; m.catEdit = null; m.catNew = null; if (v[0] === 'used' && m.job && m.job.id === '__stock__') m.job = null; render(); } } }, [v[1]]));
   });
   wrap.appendChild(sub);
   if (m.view === 'used') { wrap.appendChild(matEntryForm('used')); const r = matSentList('used'); if (r) wrap.appendChild(r); }
   else if (m.view === 'order') { wrap.appendChild(matEntryForm('order')); const r = matSentList('order'); if (r) wrap.appendChild(r); }
   else if (m.view === 'slip') wrap.appendChild(matSlip());
-  else if (m.view === 'count') wrap.appendChild(matCountView());
   else wrap.appendChild(matCatalog());
   return wrap;
 }
