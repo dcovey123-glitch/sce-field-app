@@ -57,6 +57,15 @@ export default function Billing() {
     setSelected(s => { const n = new Set(s); n.delete(row.id); return n })
   }
 
+  // "Sent to Jonathan" — kept on the billing entry itself (sentAt), so it
+  // travels with the job. Click again to take it back off.
+  function toggleSent(row) {
+    const at = row.sentAt ? null : new Date().toISOString()
+    jobsHub.updateRecord(row.projectId, cur => ({
+      billingHistory: (cur.billingHistory || []).map(h => h.id !== row.id ? h : (at ? { ...h, sentAt: at } : (({ sentAt, ...rest }) => rest)(h))),
+    }))
+  }
+
   function toggleSelected(id) {
     setSelected(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
   }
@@ -152,6 +161,7 @@ export default function Billing() {
       {sortedMonths.map(monthKey => {
         const entries = groups.get(monthKey)
         const totalBilled = entries.reduce((s, e) => s + (Number(e.amount) || 0), 0)
+        const sentCount = entries.filter(e => e.sentAt).length
         const allChecked = entries.every(e => selected.has(e.id))
         const isOpen = openMonths.has(monthKey)
         const toggleOpen = () => setOpenMonths(set => { const n = new Set(set); n.has(monthKey) ? n.delete(monthKey) : n.add(monthKey); return n })
@@ -163,7 +173,12 @@ export default function Billing() {
                 <input type="checkbox" checked={allChecked} onClick={e => e.stopPropagation()} onChange={e => toggleAllInMonth(monthKey, e.target.checked)} style={{ width: 15, height: 15, cursor: 'pointer' }} />
                 <div>
                   <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>{monthLabel(monthKey)}</div>
-                  <div style={{ fontSize: 11, color: 'var(--text-light)' }}>{entries.length} entr{entries.length === 1 ? 'y' : 'ies'} · {money(totalBilled)} total</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-light)' }}>
+                    {entries.length} entr{entries.length === 1 ? 'y' : 'ies'} · {money(totalBilled)} total ·{' '}
+                    {sentCount === entries.length
+                      ? <span style={{ color: '#1e7a34', fontWeight: 700 }}>✓ all sent to Jonathan</span>
+                      : <span style={{ color: '#9a6610', fontWeight: 700 }}>{entries.length - sentCount} not sent to Jonathan</span>}
+                  </div>
                 </div>
               </div>
               <button
@@ -188,6 +203,14 @@ export default function Billing() {
                   </div>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+                  <button
+                    onClick={() => toggleSent(e)}
+                    title={e.sentAt ? `Sent to Jonathan ${fmtDate(e.sentAt, 'medium')} — click to undo` : 'Mark this as sent to Jonathan'}
+                    style={{ fontSize: 11, fontWeight: 700, borderRadius: 20, padding: '4px 10px', cursor: 'pointer', whiteSpace: 'nowrap',
+                      border: e.sentAt ? '1px solid #1e7a34' : '1px solid var(--border)', background: e.sentAt ? '#e6f4ea' : 'var(--surface)', color: e.sentAt ? '#1e7a34' : 'var(--text-light)' }}
+                  >
+                    {e.sentAt ? `✓ Sent to Jonathan · ${fmtDate(e.sentAt, 'short')}` : 'Sent to Jonathan'}
+                  </button>
                   <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--blue)', whiteSpace: 'nowrap' }}>{money(e.amount)}</span>
                   <ConfirmDeleteButton
                     onConfirm={() => undoEntry(e)} triggerLabel="Undo" ariaLabel="Undo this billing entry"

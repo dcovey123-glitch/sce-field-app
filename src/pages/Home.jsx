@@ -42,12 +42,12 @@ function Popout({ bubble, children }) {
   return <div style={style} onClick={e => e.stopPropagation()}>{children}</div>
 }
 
-function PopoutItem({ children, onClick }) {
+function PopoutItem({ children, onClick, faded, title }) {
   const [hover, setHover] = useState(false)
   return (
     <div
-      onClick={onClick} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
-      style={{ padding: '10px 14px', fontSize: 13.5, fontWeight: 600, color: 'var(--text)', cursor: 'pointer', borderBottom: '1px solid var(--border)', background: hover ? 'var(--surface-2)' : 'var(--surface)' }}
+      onClick={onClick} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)} title={title}
+      style={{ padding: '10px 14px', fontSize: 13.5, fontWeight: faded ? 500 : 600, color: 'var(--text)', cursor: 'pointer', borderBottom: '1px solid var(--border)', background: hover ? 'var(--surface-2)' : 'var(--surface)', opacity: faded && !hover ? 0.45 : 1 }}
     >
       {children}
     </div>
@@ -74,7 +74,13 @@ export default function Home({ onOpenHub, agingDeficiencyCount = 0, reviewCount 
   const customers = jobsHub.loading ? [] : jobsHub.customers
     .filter(c => !c.trashedAt)
     .sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' }))
-  const shownCustomers = customers.filter(c => !custSearch.trim() || (c.name || '').toLowerCase().includes(custSearch.trim().toLowerCase()))
+  // Customers with an active job first; the rest go to the bottom, faded
+  // (still clickable) — nothing on the go for them right now.
+  const hasActive = new Set(jobsHub.loading ? [] : jobsHub.records.filter(p => !p.trashedAt && effectiveLifecycleStatus(p) === 'onGoing').map(p => p.customerId))
+  const matchesSearch = c => !custSearch.trim() || (c.name || '').toLowerCase().includes(custSearch.trim().toLowerCase())
+  const shownCustomers = customers.filter(matchesSearch)
+  const busyCustomers = shownCustomers.filter(c => hasActive.has(c.id))
+  const quietCustomers = shownCustomers.filter(c => !hasActive.has(c.id))
 
   // Active Jobs dropdown: every on-going job across all customers (buckets),
   // grouped by customer in the same order as the Customers list.
@@ -281,7 +287,11 @@ export default function Home({ onOpenHub, agingDeficiencyCount = 0, reviewCount 
                   <div style={{ overflowY: 'auto' }}>
                     {jobsHub.loading && <div style={{ padding: 14, fontSize: 12, color: 'var(--text-light)' }}>Loading…</div>}
                     {!jobsHub.loading && shownCustomers.length === 0 && <div style={{ padding: 14, fontSize: 12, color: 'var(--text-light)' }}>{customers.length === 0 ? 'No customers yet.' : 'No matches.'}</div>}
-                    {shownCustomers.map(c => <PopoutItem key={c.id} onClick={() => openCustomer(c)}>{c.name}</PopoutItem>)}
+                    {busyCustomers.map(c => <PopoutItem key={c.id} onClick={() => openCustomer(c)}>{c.name}</PopoutItem>)}
+                    {quietCustomers.length > 0 && busyCustomers.length > 0 && (
+                      <div style={{ padding: '6px 14px 4px', fontSize: 10.5, fontWeight: 700, color: 'var(--text-light)', textTransform: 'uppercase', letterSpacing: '.04em', background: 'var(--surface-2)', borderBottom: '1px solid var(--border)' }}>No active jobs</div>
+                    )}
+                    {quietCustomers.map(c => <PopoutItem key={c.id} faded title="No active jobs right now" onClick={() => openCustomer(c)}>{c.name}</PopoutItem>)}
                   </div>
                 </Popout>
               )}
