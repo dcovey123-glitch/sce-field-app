@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useLocalStore } from './useLocalStore.js'
 import { restoreLocalDataIfEmpty } from './localSnapshot.js'
+import { setJobsSource } from './billing.js'
+import { readValue } from './fileStore.js'
 
 const isDesktop = typeof window !== 'undefined' && !!window.desktop
 
@@ -40,6 +42,10 @@ function hubData(hub) {
   if (!shared.hubs[hub]) shared.hubs[hub] = { customers: [], records: [] }
   return shared.hubs[hub]
 }
+
+// Billing totals need the whole jobs list (combined sub-jobs count toward
+// their main job) — point them at the shared copy.
+setJobsSource(() => isDesktop ? hubData('jobs').records : (readValue('job_projects', []) || []))
 
 function notify() {
   shared.listeners.forEach(fn => fn())

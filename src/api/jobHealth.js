@@ -4,6 +4,7 @@
 import { missingSlipCharges, slipDuplicateOf } from './materialsAudit.js'
 import { slipKind, isReplacedQuote, lineJobsOf, sameItem } from './slips.js'
 import { tasksOf, isOverdue } from './tasks.js'
+import { isCombinedChild } from './billing.js'
 
 const n = v => Number(v) || 0
 
@@ -20,7 +21,7 @@ export function jobDeficiencies(job, { orders = [], requests = [], orderSheet = 
 
   // Status
   if (status == null) out.push('Status not set (Ongoing / Unbilled / Billed)')
-  if (status === 'unbilled') out.push('Complete — not billed yet')
+  if (status === 'unbilled' && !isCombinedChild(job)) out.push('Complete — not billed yet')
 
   // Labor
   if (!billed && unposted > 0) out.push(`Labor: ${unposted} clocked ${s(unposted, 'entry', 'entries')} not posted to the job`)

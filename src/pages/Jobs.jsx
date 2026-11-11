@@ -1,6 +1,6 @@
 import {
   TM_MATERIAL_MARKUP, billingWhen, billingEntries, tmTotal, tmBilledAmount, unbilledAmount, effectiveJobTotal,
-  progressBillPatch, tmBillPatch, undoLastBillingPatch,
+  progressBillPatch, tmBillPatch, undoLastBillingPatch, ownJobTotal, ownTmTotal, combinedParent, combinedChildren,
 } from '../api/billing.js'
 export { TM_MATERIAL_MARKUP, billingWhen, billingEntries, tmTotal, tmBilledAmount, unbilledAmount, effectiveJobTotal }
 import React, { useState, useEffect, useRef } from 'react'
@@ -30,7 +30,7 @@ import { todayLocal, monthLocal } from '../api/albertaTime.js'
 import NoteGroups from '../components/NoteGroups.jsx'
 import { money, fmtDate } from '../api/format.js'
 import { aiPost, AI_MODEL, useApiKey } from '../api/ai.js'
-import { parentCandidates, makeSubJobUpdates, quoteIdsOf } from '../api/subJobs.js'
+import { parentCandidates, makeSubJobUpdates, quoteIdsOf, whyCantCombine } from '../api/subJobs.js'
 
 function uid() {
   return Math.random().toString(36).slice(2, 10)
@@ -554,7 +554,8 @@ export function ProjectBlock({ project, customer, expanded, onToggle, onUpdate, 
   const multiQuote = linkedIds.length > 1
   const quoteCOs = project.linkedQuoteCOs || {}
   const allPerQuoteCOsFilled = linkedIds.every(id => quoteCOs[id]?.co && quoteCOs[id]?.coValue !== undefined && quoteCOs[id]?.coValue !== null && quoteCOs[id]?.coValue !== '')
-  const missingBits = [
+  const combinedInto = combinedParent(project)
+  const missingBits = combinedInto ? [!project.dateStart && 'Start date'].filter(Boolean) : [
     !project.co && 'CO/PO #',
     !project.dateStart && 'Start date',
     project.type === 'quoted' && !showValue && !project.noCoNeeded && 'CO Value',
@@ -584,11 +585,11 @@ export function ProjectBlock({ project, customer, expanded, onToggle, onUpdate, 
           <JobHealthMark project={project} />
         </span>
         <TypeBadge value={project.type} onChange={v => onUpdate({ type: v })} />
-        <span title={project.co || ''} style={{ minWidth: 0, overflow: 'hidden' }}>
-          <EditableField
+        <span title={combinedInto ? `Combined into ${combinedInto.name || 'the main job'} — billed under its CO` : (project.co || '')} style={{ minWidth: 0, overflow: 'hidden' }}>
+          {combinedInto ? <span style={{ ...truncatedTextStyle, fontSize: 13, color: 'var(--text-mid)' }}>↳ {combinedInto.co || 'main job'}</span> : <EditableField
             value={project.co} placeholder="CO/PO #" onSave={v => onUpdate({ co: v })}
             textStyleOverride={{ ...truncatedTextStyle, fontSize: 13 }} placeholderStyleOverride={truncatedPlaceholderStyle}
-          />
+          />}
         </span>
         <NameCell
           value={project.name}
@@ -615,7 +616,11 @@ export function ProjectBlock({ project, customer, expanded, onToggle, onUpdate, 
         }}>
           {Number(project.progress) || 0}%
         </span>
-        {effectiveJobTotal(project) > 0 ? (
+        {combinedInto ? (
+          <span title={`Its ${money(ownJobTotal(project))} is in ${combinedInto.name || 'the main job'}'s total`} style={{ fontSize: 9.5, color: 'var(--text-light)', textAlign: 'right', lineHeight: 1.2 }}>
+            in {combinedInto.name || 'main job'}
+          </span>
+        ) : effectiveJobTotal(project) > 0 ? (
           <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 0 }}>
             <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--blue)', whiteSpace: 'nowrap' }}>
               {money(unbilledAmount(project))}
@@ -1325,12 +1330,14 @@ function RelatedJobBanner({ project, navigate }) {
   if (project.relatedJobId) {
     const parent = jobsHub.records.find(p => p.id === project.relatedJobId && !p.trashedAt)
     if (!parent) return null
+    const combined = !!combinedParent(project, jobsHub.records.filter(p => !p.trashedAt))
     return (
-      <div style={{ margin: '12px 16px 0', padding: '8px 12px', background: '#e8f2fc', borderRadius: 'var(--rs)', fontSize: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span style={{ color: '#1a5fa0' }}>Related to job:</span>
+      <div style={{ margin: '12px 16px 0', padding: '8px 12px', background: '#e8f2fc', borderRadius: 'var(--rs)', fontSize: 12, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <span style={{ color: '#1a5fa0' }}>{combined ? 'Combined into job:' : 'Sub-job of:'}</span>
         <button onClick={() => goTo(parent.id)} style={{ fontWeight: 700, color: '#1a5fa0', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
-          {parent.name} →
+          {parent.name}{parent.co ? ` (CO ${parent.co})` : ''} →
         </button>
+        <span style={{ color: 'var(--text-mid)' }}>{combined ? '· one CO, one total — billed through the main job' : '· its own CO and billing'}</span>
       </div>
     )
   }
@@ -1343,7 +1350,7 @@ function RelatedJobBanner({ project, navigate }) {
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 4 }}>
         {subJobs.map(sj => (
           <button key={sj.id} onClick={() => goTo(sj.id)} style={{ fontWeight: 700, color: '#1a5fa0', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
-            {sj.name} →
+            {sj.name}{combinedParent(sj, jobsHub.records.filter(p => !p.trashedAt)) ? ' (combined)' : sj.co ? ` (CO ${sj.co})` : ''} →
           </button>
         ))}
       </div>
@@ -1352,10 +1359,12 @@ function RelatedJobBanner({ project, navigate }) {
 }
 
 // Two jobs approved separately that turned out to be one: make this one a
-// sub-job of the other after the fact. It keeps its own record (labour,
-// materials, CO, quotes) and just points at the parent — the same as a
-// sub-job made at approval. Its quotes show as sub-job quotes. Undo with
-// "Make it its own job again".
+// sub-job of the other after the fact. Two ways:
+//   - Own CO: it stays its own job (own CO, own billing), linked to the main job.
+//   - Combined: one CO, one total — it keeps its own labour, materials and
+//     notes, but its value counts toward the main job and it's billed only
+//     through the main job.
+// Either can be switched later, or undone with "Make it its own job again".
 function SubJobButton({ project }) {
   const jobsHub = useHubStore({
     hub: 'jobs', recordFileName: 'project.json', getRecordFolderName: p => p.name,
@@ -1368,7 +1377,8 @@ function SubJobButton({ project }) {
   })
   const [picking, setPicking] = useState(false)
   const [query, setQuery] = useState('')
-  const [confirming, setConfirming] = useState(null)
+  const [confirming, setConfirming] = useState(null) // parent job, or 'detach'
+  const [combine, setCombine] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
@@ -1385,60 +1395,62 @@ function SubJobButton({ project }) {
     }
   }
 
-  async function confirmSubJob(parent) {
+  async function run(fn) {
     setBusy(true); setError('')
-    try {
-      for (const u of makeSubJobUpdates(jobsHub.records, project, parent.id)) await jobsHub.updateRecord(u.id, u.patch)
-      await setQuoteType('subjob')
-      setPicking(false); setConfirming(null); setQuery('')
-    } catch (err) {
-      setError(err.message || 'Something went wrong making it a sub-job.')
-    } finally {
-      setBusy(false)
-    }
+    try { await fn() } catch (err) { setError(err.message || 'Something went wrong.') } finally { setBusy(false) }
   }
 
-  async function detach() {
-    setBusy(true); setError('')
-    try {
-      await jobsHub.updateRecord(project.id, { relatedJobId: null })
-      await setQuoteType('primary')
-      setConfirming(null)
-    } catch (err) {
-      setError(err.message || 'Something went wrong.')
-    } finally {
-      setBusy(false)
-    }
-  }
+  const confirmSubJob = parent => run(async () => {
+    const asCombined = combine && !whyCantCombine(project, parent)
+    for (const u of makeSubJobUpdates(jobsHub.records, project, parent.id, asCombined)) await jobsHub.updateRecord(u.id, u.patch)
+    await setQuoteType('subjob')
+    setPicking(false); setConfirming(null); setQuery('')
+  })
+  const detach = () => run(async () => {
+    await jobsHub.updateRecord(project.id, { relatedJobId: null, foldIntoParent: false })
+    await setQuoteType('primary')
+    setConfirming(null)
+  })
+  const switchMode = toCombined => run(() => jobsHub.updateRecord(project.id, { foldIntoParent: toCombined }))
 
   const pill = { fontSize: 12, fontWeight: 700, color: 'var(--text-mid)', background: 'var(--surface-2)', border: 'none', borderRadius: 20, padding: '6px 12px', cursor: 'pointer' }
-  const box = { marginTop: 10, padding: 12, background: '#e8f2fc', border: '1px solid #1a5fa0', borderRadius: 'var(--rs)', maxWidth: 360 }
+  const box = { marginTop: 10, padding: 12, background: '#e8f2fc', border: '1px solid #1a5fa0', borderRadius: 'var(--rs)', maxWidth: 400 }
   const btn = primary => ({ flex: 1, padding: 7, background: primary ? '#1a5fa0' : 'var(--surface)', border: primary ? 'none' : '1px solid var(--border)', borderRadius: 'var(--rs)', color: primary ? '#fff' : undefined, fontWeight: primary ? 700 : 600, fontSize: 12, cursor: 'pointer' })
+  const choice = (on, disabled) => ({ display: 'flex', gap: 8, alignItems: 'flex-start', padding: '7px 9px', borderRadius: 6, cursor: disabled ? 'not-allowed' : 'pointer', opacity: disabled ? 0.55 : 1,
+    border: '1px solid ' + (on ? '#1a5fa0' : 'var(--border)'), background: on ? '#fff' : 'transparent', fontSize: 12, color: 'var(--text)' })
 
   if (project.relatedJobId) {
     const parent = jobsHub.records.find(p => p.id === project.relatedJobId)
+    const combinedNow = !!project.foldIntoParent && !!parent && parent.type === project.type
+    const cant = whyCantCombine(project, parent)
     return (
-      <div style={{ margin: '8px 16px 0' }}>
+      <div style={{ margin: '8px 16px 0', display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+        {combinedNow
+          ? <button onClick={() => switchMode(false)} disabled={busy} style={pill} title="Give it its own CO and billing again, still as a sub-job">Give it its own CO</button>
+          : <button onClick={() => !cant && switchMode(true)} disabled={busy || !!cant} style={{ ...pill, opacity: cant ? 0.55 : 1 }} title={cant || `One CO, one total — billed through ${parent?.name || 'the main job'}`}>Combine into {parent?.name || 'main job'}'s total</button>}
         {confirming !== 'detach'
           ? <button onClick={() => setConfirming('detach')} style={pill}>Make it its own job again</button>
-          : <div style={box}>
-              <div style={{ fontSize: 12, color: '#1a5fa0', marginBottom: 8 }}>Take "{project.name}" out from under <strong>{parent?.name || 'its parent job'}</strong>? Nothing on it changes — it just stops being a sub-job.</div>
+          : <div style={{ ...box, width: '100%' }}>
+              <div style={{ fontSize: 12, color: '#1a5fa0', marginBottom: 8 }}>Take "{project.name}" out from under <strong>{parent?.name || 'its parent job'}</strong>? Its own labour, materials and CO are untouched — it just stops being a sub-job{combinedNow ? ' and its value comes off the main job\'s total' : ''}.</div>
               <div style={{ display: 'flex', gap: 8 }}>
                 <button onClick={() => setConfirming(null)} disabled={busy} style={btn(false)}>Cancel</button>
                 <button onClick={detach} disabled={busy} style={btn(true)}>{busy ? 'Saving…' : 'Make it its own job'}</button>
               </div>
             </div>}
-        {error && <div style={{ fontSize: 11, color: 'var(--red)', marginTop: 6 }}>{error}</div>}
+        {error && <div style={{ fontSize: 11, color: 'var(--red)', width: '100%' }}>{error}</div>}
       </div>
     )
   }
+
+  const cant = confirming && confirming !== 'detach' ? whyCantCombine(project, confirming) : null
+  const willCombine = combine && !cant
 
   return (
     <div style={{ margin: '8px 16px 0' }}>
       {!picking ? (
         <button onClick={() => setPicking(true)} style={pill}>Make this a sub-job of…</button>
       ) : (
-        <div style={{ position: 'relative', maxWidth: 360 }}>
+        <div style={{ position: 'relative', maxWidth: 400 }}>
           <input
             autoFocus value={query} onChange={e => setQuery(e.target.value)}
             onKeyDown={e => { if (e.key === 'Escape') { setPicking(false); setQuery('') } }}
@@ -1453,7 +1465,7 @@ function SubJobButton({ project }) {
               maxHeight: 220, overflowY: 'auto', boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
             }}>
               {matches.map(p => (
-                <div key={p.id} onMouseDown={() => setConfirming(p)} style={{ padding: '8px 10px', fontSize: 13, cursor: 'pointer', borderBottom: '1px solid var(--border)' }}>
+                <div key={p.id} onMouseDown={() => { setConfirming(p); setCombine(!whyCantCombine(project, p)) }} style={{ padding: '8px 10px', fontSize: 13, cursor: 'pointer', borderBottom: '1px solid var(--border)' }}>
                   <span style={{ fontWeight: 600 }}>{p.name}</span>
                   {p.co ? <span style={{ color: 'var(--text-light)' }}> · CO {p.co}</span> : null}
                   {p.customerId !== project.customerId && p.customerName ? <span style={{ color: 'var(--text-light)' }}> · {p.customerName}</span> : null}
@@ -1467,9 +1479,22 @@ function SubJobButton({ project }) {
       {confirming && confirming !== 'detach' && (
         <div style={box}>
           <div style={{ fontSize: 12, color: '#1a5fa0', marginBottom: 8 }}>
-            Make "{project.name}" a sub-job of <strong>{confirming.name}</strong>? It keeps its own labour, materials, CO and quotes.
-            {kids.length > 0 && <> Its {kids.length} sub-job{kids.length === 1 ? '' : 's'} ({kids.map(k => k.name).join(', ')}) move{kids.length === 1 ? 's' : ''} under {confirming.name} too.</>}
-            {confirming.customerId !== project.customerId && <> It stays under its own customer.</>}
+            Make "{project.name}" a sub-job of <strong>{confirming.name}</strong>{confirming.co ? ` (CO ${confirming.co})` : ''}:
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
+            <label style={choice(willCombine, !!cant)} title={cant || undefined}>
+              <input type="radio" checked={willCombine} disabled={!!cant} onChange={() => setCombine(true)} style={{ marginTop: 2 }} />
+              <span><b>One CO, one total</b><br /><span style={{ color: 'var(--text-mid)' }}>{cant || `Its value adds to ${confirming.name}'s total and it's billed only through ${confirming.name}. Its own labour, materials and notes stay on it.`}</span></span>
+            </label>
+            <label style={choice(!willCombine, false)}>
+              <input type="radio" checked={!willCombine} onChange={() => setCombine(false)} style={{ marginTop: 2 }} />
+              <span><b>Its own CO</b><br /><span style={{ color: 'var(--text-mid)' }}>An addition to {confirming.name} — keeps its own CO, value and billing, just linked.</span></span>
+            </label>
+          </div>
+          <div style={{ fontSize: 11.5, color: 'var(--text-mid)', marginBottom: 8 }}>
+            {kids.length > 0 && <>Its {kids.length} sub-job{kids.length === 1 ? '' : 's'} ({kids.map(k => k.name).join(', ')}) move{kids.length === 1 ? 's' : ''} under {confirming.name} too. </>}
+            {confirming.customerId !== project.customerId && <>It stays under its own customer. </>}
+            You can switch between these later.
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
             <button onClick={() => { setConfirming(null); setPicking(false); setQuery('') }} disabled={busy} style={btn(false)}>Cancel</button>
@@ -2376,6 +2401,8 @@ function WorkOrderBlock({ wo, project, customer }) {
 }
 
 function GeneralInfoSection({ project, customer, onUpdate, navigate }) {
+  const combinedInto = combinedParent(project)
+  const combinedKids = combinedChildren(project)
   const actualMaterials = project.actualMaterials || 0
   const actualLabor = project.actualLabor || 0
   const isQuoted = project.type === 'quoted'
@@ -2453,8 +2480,8 @@ function GeneralInfoSection({ project, customer, onUpdate, navigate }) {
         </>
       ) : project.type === 'tm' ? (
         <>
-          <FieldRow label="T&M total to date">
-            <span style={{ fontSize: 14, fontWeight: 800, color: 'var(--text)' }}>{money(tmTotal(project))}</span>
+          <FieldRow label={combinedKids.length ? 'T&M total to date (this job)' : 'T&M total to date'}>
+            <span style={{ fontSize: 14, fontWeight: 800, color: 'var(--text)' }}>{money(ownTmTotal(project))}</span>
           </FieldRow>
           <div style={{ padding: '0 16px 10px', fontSize: 11, color: 'var(--text-light)', marginTop: -6 }}>
             Worked out from the hours and materials you enter — labor at your charge-out rates, materials plus {Math.round(TM_MATERIAL_MARKUP * 100)}%. It updates as you add entries.
@@ -2466,20 +2493,37 @@ function GeneralInfoSection({ project, customer, onUpdate, navigate }) {
       ) : (
         <div data-fix="value">
           <FieldRow label="Job value">
-            <EditableCurrency value={project.jobValue || (effectiveJobTotal(project) > 0 ? effectiveJobTotal(project) : '')} onSave={v => onUpdate({ jobValue: v })} color="var(--text)" />
+            <EditableCurrency value={project.jobValue || (ownJobTotal(project) > 0 ? ownJobTotal(project) : '')} onSave={v => onUpdate({ jobValue: v })} color="var(--text)" />
           </FieldRow>
-          {!project.jobValue && effectiveJobTotal(project) > 0 && (
+          {!project.jobValue && ownJobTotal(project) > 0 && (
             <div style={{ padding: '0 16px 10px', fontSize: 11, color: 'var(--text-light)', marginTop: -6 }}>
               Using CO Value since no job value has been set directly — edit above to override.
             </div>
           )}
         </div>
       )}
+      {combinedKids.length > 0 && (
+        <div style={{ margin: '0 16px 10px', padding: '8px 12px', background: '#eef4fb', borderRadius: 'var(--rs)', fontSize: 12 }}>
+          <div style={{ fontWeight: 700, color: '#1a5fa0', marginBottom: 4 }}>Combined sub-jobs — billed on this job, under CO {project.co || '—'}</div>
+          {combinedKids.map(k => (
+            <div key={k.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+              <span>↳ {k.name || 'Sub-job'}</span><span style={{ fontWeight: 700 }}>{money(project.type === 'tm' ? ownTmTotal(k) : ownJobTotal(k))}</span>
+            </div>
+          ))}
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, borderTop: '1px solid #c8d8ea', marginTop: 4, paddingTop: 4, fontWeight: 800 }}>
+            <span>Total with sub-jobs</span><span>{money(effectiveJobTotal(project))}</span>
+          </div>
+        </div>
+      )}
       <FieldRow label="Progress">
         <ProgressSlider value={project.progress} onChange={v => onUpdate({ progress: v })} />
       </FieldRow>
       <div data-fix="billing">
-      {project.type === 'warranty' ? null : project.type === 'tm' ? (
+      {combinedInto ? (
+        <div style={{ margin: '0 16px 10px', padding: '8px 12px', background: '#eef4fb', borderRadius: 'var(--rs)', fontSize: 12, color: 'var(--text-mid)' }}>
+          Billed with <b style={{ color: '#1a5fa0' }}>{combinedInto.name || 'the main job'}</b>{combinedInto.co ? ` under CO ${combinedInto.co}` : ''} — this job's {money(project.type === 'tm' ? ownTmTotal(project) : ownJobTotal(project))} is part of that job's total. Bill it from there.
+        </div>
+      ) : project.type === 'warranty' ? null : project.type === 'tm' ? (
         <BillTM project={project} onBill={m => billTM(typeof m === 'string' ? m : undefined)} onUndoLast={undoLastBilling} />
       ) : (
         <BillToProgress

@@ -8,7 +8,7 @@
 import { openLaborFlags } from './jobHealth.js'
 import { leftoverLinesForJob } from './slips.js'
 import { todayLocal } from './albertaTime.js'
-import { effectiveJobTotal, unbilledAmount } from './billing.js'
+import { effectiveJobTotal, unbilledAmount, combinedParent } from './billing.js'
 
 export const CLOSED_STATUSES = ['deficiencies', 'unbilled', 'billed']
 export const isClosingStatus = value => CLOSED_STATUSES.includes(value)
@@ -50,16 +50,18 @@ export function statusPatch(project, value) {
 const num = v => Number(v) || 0
 const filled = v => v !== undefined && v !== null && String(v).trim() !== ''
 
-export function closeoutChecks(project, value, { more = [] } = {}) {
+export function closeoutChecks(project, value, { more = [], jobs } = {}) {
   const p = project || {}
   const out = []
-  const quoted = p.type === 'quoted'
+  // Combined into a main job: CO, value and billing live on the main job
+  const combined = !!combinedParent(p, jobs)
+  const quoted = p.type === 'quoted' && !combined
   const linkedIds = p.linkedQuoteIds || (p.linkedQuoteId ? [p.linkedQuoteId] : [])
   const labor = (p.laborEntries || []).filter(e => num(e.hours) > 0)
 
   // The basics
   if (!p.type) out.push({ id: 'type', text: 'Job type not set (Quoted / T&M / Warranty)', fix: 'type' })
-  if (!filled(p.co)) out.push({ id: 'co', text: 'No CO / PO #', fix: 'co' })
+  if (!combined && !filled(p.co)) out.push({ id: 'co', text: 'No CO / PO #', fix: 'co' })
   if (!p.dateStart) out.push({ id: 'dateStart', text: 'No start date', fix: 'dateStart' })
   if (quoted && !p.dateApproved) out.push({ id: 'dateApproved', text: 'No date approved', fix: 'dateApproved' })
 
@@ -75,7 +77,7 @@ export function closeoutChecks(project, value, { more = [] } = {}) {
   // Money
   if (quoted && !(effectiveJobTotal(p) > 0)) out.push({ id: 'jobValue', text: 'No job value', fix: 'jobValue' })
   if (quoted && num(p.progress) < 100) out.push({ id: 'progress', text: `Progress is at ${num(p.progress)}%, not 100%`, fix: 'progress' })
-  if (value === 'billed' && p.type !== 'warranty' && unbilledAmount(p) > 0.5) {
+  if (!combined && value === 'billed' && p.type !== 'warranty' && unbilledAmount(p) > 0.5) {
     out.push({ id: 'billing', text: `Marked Billed, but $${unbilledAmount(p).toFixed(2)} hasn't been billed yet (Billing on this job)`, fix: null })
   }
 

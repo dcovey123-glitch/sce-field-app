@@ -22,11 +22,26 @@ export function parentCandidates(jobs, job, customers = [], search = '', limit =
     .slice(0, limit)
 }
 
-// → [{ id, patch }] — the job, plus any sub-jobs it had, now under parentId
-export function makeSubJobUpdates(jobs, job, parentId) {
+// → [{ id, patch }] — the job, plus any sub-jobs it had, now under parentId.
+// combine: true = one CO, one total (its value counts toward the parent and
+// it's billed only through the parent); false = its own CO and billing.
+// Sub-jobs it had keep whichever way they were set up.
+export function makeSubJobUpdates(jobs, job, parentId, combine = false) {
   if (!parentId || parentId === job.id) return []
   const kids = (jobs || []).filter(p => live(p) && p.relatedJobId === job.id)
-  return [{ id: job.id, patch: { relatedJobId: parentId } }, ...kids.map(k => ({ id: k.id, patch: { relatedJobId: parentId } }))]
+  return [{ id: job.id, patch: { relatedJobId: parentId, foldIntoParent: !!combine } }, ...kids.map(k => ({ id: k.id, patch: { relatedJobId: parentId } }))]
+}
+
+const TYPE_NAME = { quoted: 'Quoted', tm: 'T&M', warranty: 'Warranty' }
+
+// Can this job be combined into that one (one CO, one total)? → null if yes,
+// or the reason it can't (it can still be a sub-job with its own CO).
+export function whyCantCombine(job, parent) {
+  if (!parent) return 'Pick the main job first.'
+  if (job.type === 'warranty' || parent.type === 'warranty') return 'Warranty jobs aren\'t billed, so there\'s no total to combine.'
+  if ((job.type || '') !== (parent.type || '')) return `Only jobs of the same type combine — this is ${TYPE_NAME[job.type] || 'untyped'}, ${parent.name || 'that job'} is ${TYPE_NAME[parent.type] || 'untyped'}.`
+  if ((job.billingHistory || []).length) return 'This job has already been billed on its own, so it keeps its own CO.'
+  return null
 }
 
 // The job's quotes now show as sub-job quotes

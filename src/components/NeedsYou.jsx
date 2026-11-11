@@ -7,6 +7,7 @@ import { setFlagJump } from '../api/flags.js'
 import { REQUESTS_KEY } from '../api/requests.js'
 import { useFlags } from '../api/flags.js'
 import { effectiveLifecycleStatus } from '../pages/Jobs.jsx'
+import { isCombinedChild } from '../api/billing.js'
 import { unpostedCount } from './PostTimeToLabor.jsx'
 import { tasksOf, isOverdue, isDueToday, today, fmtDay, uid } from '../api/tasks.js'
 import { materialFindings } from '../api/materialsAudit.js'
@@ -78,7 +79,7 @@ export function useNeedsYou(navigate) {
 
   // 2. Money waiting: work done but not billed, time not on the job yet
   const billing = []
-  jobs.filter(j => effectiveLifecycleStatus(j) === 'unbilled').forEach(j => billing.push({
+  jobs.filter(j => effectiveLifecycleStatus(j) === 'unbilled' && !isCombinedChild(j, jobs)).forEach(j => billing.push({
     key: 'unbilled:' + j.id, tone: 'warn', text: `Bill ${j.name || 'job'}`,
     detail: `${custName(j.customerId)} · marked complete, not billed${j.coValue ? ' · ' + money(j.coValue) : ''}`, action: 'Open job', onGo: jobGo(j, 'general'),
   }))

@@ -17,12 +17,45 @@ function uid() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
 }
 
-// T&M jobs have no fixed price: hours at the charge-out rate plus materials
-// with the standard markup.
-export function tmTotal(project) {
+// ── Combined sub-jobs ──
+// A sub-job can be combined into its main job ("one CO, one total"): it keeps
+// its own record (labour, materials, notes), but its value counts toward the
+// main job and it's billed only through the main job. Only jobs of the same
+// type combine (Quoted into Quoted, T&M into T&M).
+//
+// The billing functions find a job's combined sub-jobs in the current jobs
+// list. The app registers where that list lives (useHubStore); tests pass
+// their own with setJobsSource.
+let jobsSource = () => []
+export function setJobsSource(fn) { jobsSource = typeof fn === 'function' ? fn : () => [] }
+const liveJobs = () => { try { return (jobsSource() || []).filter(j => j && !j.trashedAt) } catch { return [] } }
+
+// The main job this one is combined into, or null
+export function combinedParent(project, jobs = liveJobs()) {
+  if (!project || !project.foldIntoParent || !project.relatedJobId) return null
+  const parent = jobs.find(j => j.id === project.relatedJobId)
+  return parent && parent.type === project.type && !parent.foldIntoParent ? parent : null
+}
+export const isCombinedChild = (project, jobs) => !!combinedParent(project, jobs)
+
+// The sub-jobs combined into this job
+export function combinedChildren(project, jobs = liveJobs()) {
+  if (!project || project.foldIntoParent) return []
+  return jobs.filter(j => j.relatedJobId === project.id && j.foldIntoParent && j.type === project.type)
+}
+
+// This job's own T&M total, not counting combined sub-jobs
+export function ownTmTotal(project) {
   const labor = Number(project.actualLabor) || 0
   const mats = Number(project.actualMaterials) || 0
   return round2(labor + mats * (1 + TM_MATERIAL_MARKUP))
+}
+
+// T&M jobs have no fixed price: hours at the charge-out rate plus materials
+// with the standard markup — including any combined sub-jobs.
+export function tmTotal(project, jobs = liveJobs()) {
+  if (isCombinedChild(project, jobs)) return 0
+  return round2(ownTmTotal(project) + combinedChildren(project, jobs).reduce((a, k) => a + ownTmTotal(k), 0))
 }
 
 // What has been sent for billing on a T&M job, in dollars.
@@ -31,11 +64,11 @@ export function tmBilledAmount(project) {
   return (project.billingHistory || []).reduce((s, h) => s + (Number(h.amount) || 0), 0)
 }
 
-// Job total: T&M = hours + marked-up materials; quoted = job value, falling
-// back to the CO value; warranty = nothing (it's our cost).
-export function effectiveJobTotal(project) {
+// This job's own value, not counting combined sub-jobs (what the Job value
+// field edits). Quoted = job value, falling back to the CO value.
+export function ownJobTotal(project) {
   if (project.type === 'warranty') return 0
-  if (project.type === 'tm') return tmTotal(project)
+  if (project.type === 'tm') return ownTmTotal(project)
   const jv = Number(project.jobValue)
   if (jv > 0) return jv
   const cv = Number(project.coValue)
@@ -43,10 +76,20 @@ export function effectiveJobTotal(project) {
   return 0
 }
 
-export function unbilledAmount(project) {
+// Job total: T&M = hours + marked-up materials; quoted = job value, falling
+// back to the CO value; warranty = nothing (it's our cost). Combined sub-jobs
+// count toward their main job, and show 0 on their own.
+export function effectiveJobTotal(project, jobs = liveJobs()) {
   if (project.type === 'warranty') return 0
-  if (project.type === 'tm') return Math.max(0, round2(tmTotal(project) - tmBilledAmount(project)))
-  return effectiveJobTotal(project) * (1 - (Number(project.billedProgress) || 0) / 100)
+  if (isCombinedChild(project, jobs)) return 0
+  if (project.type === 'tm') return tmTotal(project, jobs)
+  return round2(ownJobTotal(project) + combinedChildren(project, jobs).reduce((a, k) => a + ownJobTotal(k), 0))
+}
+
+export function unbilledAmount(project, jobs = liveJobs()) {
+  if (project.type === 'warranty') return 0
+  if (project.type === 'tm') return Math.max(0, round2(tmTotal(project, jobs) - tmBilledAmount(project)))
+  return effectiveJobTotal(project, jobs) * (1 - (Number(project.billedProgress) || 0) / 100)
 }
 
 // When an amount is recorded late (it really went out in an earlier month),
