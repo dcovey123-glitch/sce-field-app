@@ -20,7 +20,7 @@ import MaterialUsedTab, { QuickAddRow, partsList } from '../components/MaterialU
 import OrdersList from './Orders.jsx'
 import { groupMonthDist } from '../api/monthDist.js'
 import { buildPurchases, purchaseSearchText, STAGES, needsYou, FLAG_FIX } from '../api/purchases.js'
-import { REQUESTS_KEY, quoteCandidates, quoteChoices, catalogQuoteTotal, autoMatchPricingRequests } from '../api/requests.js'
+import { REQUESTS_KEY, quoteCandidates, quoteChoices, catalogQuoteTotal, autoMatchPricingRequests, unmatchPatch, requestQuoteRef, quotePickList } from '../api/requests.js'
 import { addPlanLinesToOrderList, tagSlipsFromRequests } from '../api/materialPlan.js'
 import StockCount, { lastFullCount } from '../components/StockCount.jsx'
 import { EXPORT_EXTRA_KEY, exportWeekKey } from '../api/timesheetExport.js'
@@ -3655,13 +3655,14 @@ function PurchasesOverview({ focus = null, layout = 'overview', q, orders, feedR
   }
   const [compareMsg, setCompareMsg] = useState({}) // purchase key → message
   const matchReq = async (req, row) => {
-    updReq(req.id, { matchedFeedId: row.id, matchedSlipId: null, matchedAt: new Date().toISOString() })
+    updReq(req.id, { matchedFeedId: row.id, matchedSlipId: null, matchedAt: new Date().toISOString(), feedWasPricing: feedPoState(row) === 'pricing' })
     setMatching(''); setMatchQ('')
     if (req.pricing) await fileForPricing(req, row)
   }
   // Matched by hand to a quote or slip read into the app
   const matchReqToSlip = (req, o) => {
-    updReq(req.id, { matchedSlipId: o.id, matchedFeedId: null, matchedAt: new Date().toISOString(), needsConfirm: false })
+    updReq(req.id, { matchedSlipId: o.id, matchedFeedId: null, matchedAt: new Date().toISOString(), needsConfirm: false,
+      slipPrev: { kind: o.kind || null, recordOnly: !!o.recordOnly, pricingTarget: o.pricingTarget || null } })
     setMatching(''); setMatchQ('')
     if (req.pricing && !hasPoNumber(o) && slipKind(o) === 'order') {
       onUpdateOrder(o.id, { kind: 'pricing', recordOnly: true, pricingTarget: req.quote && req.quote.id ? { type: 'quote', quoteId: req.quote.id, quoteNumber: req.quote.number || '', title: req.quote.title || '' } : { type: 'catalog' } })
@@ -3680,10 +3681,44 @@ function PurchasesOverview({ focus = null, layout = 'overview', q, orders, feedR
     if (req.catalogPricing && src) onCompareCatalog(src, req)
   }
   const confirmPricing = async (req, row) => {
-    updReq(req.id, { needsConfirm: false, confirmedAt: new Date().toISOString() })
+    updReq(req.id, { needsConfirm: false, confirmedAt: new Date().toISOString(), feedWasPricing: !!row && feedPoState(row) === 'pricing' })
     if (row) await fileForPricing(req, row)
   }
-  const notThisQuote = req => updReq(req.id, { matchedFeedId: null, matchedAt: null, autoMatched: false, needsConfirm: false, rejectedFeedIds: [...(req.rejectedFeedIds || []), req.matchedFeedId].filter(Boolean) })
+  const notThisQuote = req => updReq(req.id, unmatchPatch(req))
+  // Unmatch after it was filed: undo the filing on the wrong quote, and never
+  // suggest that quote for this request again
+  const unmatchReq = async req => {
+    updReq(req.id, unmatchPatch(req))
+    if (req.matchedFeedId && req.pricing) {
+      await setFeedPricingFor(req.matchedFeedId, {}, false)
+      if (req.feedWasPricing) await setFeedPricing(req.matchedFeedId, true)
+    }
+    if (req.matchedSlipId && req.pricing) {
+      const o = (orders || []).find(x => x.id === req.matchedSlipId)
+      if (o && slipKind(o) === 'pricing' && !hasPoNumber(o)) {
+        const prev = req.slipPrev || { kind: 'order', recordOnly: false, pricingTarget: null }
+        onUpdateOrder(o.id, { kind: prev.kind || 'order', recordOnly: !!prev.recordOnly, pricingTarget: prev.pricingTarget || null })
+      }
+    }
+  }
+  // Change which of our quotes a request is for. If its answer is already
+  // matched and filed, it's re-filed under the new quote.
+  const [quotePick, setQuotePick] = useState('') // request id
+  const [quotePickQ, setQuotePickQ] = useState('')
+  const changeReqQuote = async (req, qt) => {
+    const ref = requestQuoteRef(qt)
+    updReq(req.id, { quote: ref })
+    setQuotePick(''); setQuotePickQ('')
+    if (!req.pricing || req.needsConfirm) return
+    if (req.matchedFeedId) {
+      if (ref) await setFeedPricingFor(req.matchedFeedId, { ref: ref.number || ref.title || '', refLabel: [ref.number, ref.title].filter(Boolean).join(' — ') })
+      else { await setFeedPricingFor(req.matchedFeedId, {}, false); await setFeedPricing(req.matchedFeedId, true) }
+    }
+    if (req.matchedSlipId) {
+      const o = (orders || []).find(x => x.id === req.matchedSlipId)
+      if (o && slipKind(o) === 'pricing') onUpdateOrder(o.id, { pricingTarget: ref && ref.id ? { type: 'quote', quoteId: ref.id, quoteNumber: ref.number, title: ref.title } : { type: 'catalog' } })
+    }
+  }
   const itsAnOrder = req => updReq(req.id, { pricing: false, needsConfirm: false })
   const all = buildPurchases({ slips: orders, feed: feedRows || [], previous: prevRows || [], marks: marks || {}, billingFlag, requests: reqList })
   const shown = all.filter(p => !q || hit(purchaseSearchText(p), q))
@@ -3799,7 +3834,7 @@ function PurchasesOverview({ focus = null, layout = 'overview', q, orders, feedR
             {(p.requests || []).map(rq => {
               const matched = (rq.matchedFeedId && p.rows.some(r => r.id === rq.matchedFeedId)) || (rq.matchedSlipId && p.slips.some(o => o.id === rq.matchedSlipId))
               const cands = matched ? [] : quoteCandidates(rq, feedRows || [], takenFeed)
-              const best = cands.find(c => c.score > 0)
+              const best = cands.find(c => c.score > 0 && !(rq.rejectedFeedIds || []).includes(c.r.id))
               const items = rq.items || []
               return (
                 <div key={rq.id} style={{ padding: '6px 12px', borderTop: '1px solid var(--border)', fontSize: 12 }}>
@@ -3811,6 +3846,7 @@ function PurchasesOverview({ focus = null, layout = 'overview', q, orders, feedR
                         : <><b>{rq.pricing ? 'Pricing list' : 'Order'} {rq.phoned ? 'phoned in' : 'sent'}</b> to {rq.wholesaler || 'PDF only'} · {String(rq.sentAt || '').slice(0, 10)} · {items.length} item{items.length === 1 ? '' : 's'}</>}
                       {rq.file && window.desktop?.openFile && <> · <a href="#" onClick={e => { e.preventDefault(); window.desktop.openFile(rq.file) }} style={{ color: 'var(--blue, #2563eb)', fontWeight: 700 }}>order form</a></>}
                       {rq.quote && <> · for quote <b>{rq.quote.number || rq.quote.title}</b>{rq.quote.number && rq.quote.title ? ' — ' + rq.quote.title : ''}</>}
+                      {rq.pricing && !rq.fromCatalog && !rq.catalogPricing && <> <a href="#" onClick={e => { e.preventDefault(); setQuotePick(quotePick === rq.id ? '' : rq.id); setQuotePickQ('') }} title="Change which of your quotes this is for" style={{ color: 'var(--blue, #2563eb)', fontWeight: 700 }}>{rq.quote ? '✎ change quote' : '＋ for a quote…'}</a></>}
                       {matched && (rq.needsConfirm
                         ? <span style={{ color: '#1a5fa0', fontWeight: 700 }}> · came back — is it for pricing?</span>
                         : <span style={{ color: '#1e7a34', fontWeight: 700 }}> · ✓ matched to this quote</span>)}
@@ -3829,7 +3865,7 @@ function PurchasesOverview({ focus = null, layout = 'overview', q, orders, feedR
                       <button onClick={() => notThisQuote(rq)} title="Wrong quote — unmatch it and don't suggest it again" style={linkBtn}>Not this quote</button>
                       <button onClick={() => itsAnOrder(rq)} title="Material is being bought — move it to Orders" style={linkBtn}>→ It's an order</button>
                     </>}
-                    {matched && !rq.needsConfirm && <button onClick={() => updReq(rq.id, { matchedFeedId: null, matchedSlipId: null, matchedAt: null })} style={linkBtn}>Unmatch</button>}
+                    {matched && !rq.needsConfirm && <button onClick={() => unmatchReq(rq)} title="Wrong quote — unmatch it, undo the filing, and don't suggest it again" style={linkBtn}>Unmatch</button>}
                     {!matched && <button onClick={() => updReq(rq.id, { removedAt: new Date().toISOString() })} title="Not sent, or not needed any more" style={linkBtn}>Remove</button>}
                   </div>
                   {!matched && !rq.fromCatalog && best && matching !== rq.id && (
@@ -3838,6 +3874,27 @@ function PurchasesOverview({ focus = null, layout = 'overview', q, orders, feedR
                       <button onClick={() => matchReq(rq, best.r)} style={{ ...linkBtn, background: '#1a5fa0', color: '#fff', borderColor: '#1a5fa0' }}>Match it</button>
                     </div>
                   )}
+                  {quotePick === rq.id && (() => {
+                    const list = quotePickList(quotes, quotePickQ)
+                    return (
+                      <div style={{ marginTop: 4, border: '1px solid #9fb8d6', borderRadius: 5, background: 'var(--surface)' }}>
+                        <input autoFocus value={quotePickQ} onChange={e => setQuotePickQ(e.target.value)} onKeyDown={e => { if (e.key === 'Escape') { setQuotePick(''); setQuotePickQ('') } if (e.key === 'Enter' && list[0]) changeReqQuote(rq, list[0]) }}
+                          placeholder="Which of your quotes is this for? Search quote #, title, customer…"
+                          style={{ width: '100%', boxSizing: 'border-box', fontSize: 12, padding: '6px 8px', border: 'none', borderBottom: '1px solid var(--border)', outline: 'none' }} />
+                        <div style={{ maxHeight: 240, overflow: 'auto' }}>
+                          {list.map(qt => (
+                            <div key={qt.id} onClick={() => changeReqQuote(rq, qt)} style={{ display: 'flex', gap: 8, padding: '5px 8px', cursor: 'pointer', borderBottom: '1px solid var(--border)', alignItems: 'baseline', background: rq.quote && rq.quote.id === qt.id ? '#eef4fb' : undefined }}>
+                              <b style={{ width: 90 }}>{qt.quoteNumber}</b>
+                              <span style={{ flex: 1, minWidth: 0 }}>{qt.title}{qt.customerName ? <span style={{ color: 'var(--text-light)' }}> — {qt.customerName}</span> : null}</span>
+                              {rq.quote && rq.quote.id === qt.id && <span style={{ color: '#1e7a34', fontWeight: 700 }}>current</span>}
+                            </div>
+                          ))}
+                          {!list.length && <div style={{ padding: 8, color: 'var(--text-light)' }}>{quotePickQ ? `No quote matches “${quotePickQ}”.` : 'No quotes yet.'}</div>}
+                          {rq.quote && <div onClick={() => changeReqQuote(rq, null)} style={{ padding: '5px 8px', cursor: 'pointer', color: '#a12a1e' }}>✕ Not for any quote (just pricing)</div>}
+                        </div>
+                      </div>
+                    )
+                  })()}
                   {matching === rq.id && (() => {
                     const choices = quoteChoices(rq, { rows: feedRows || [], previous: prevRows || [], slips: orders || [] }, { feed: takenFeed, slip: takenSlip }, matchQ)
                     return (

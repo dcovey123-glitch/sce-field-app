@@ -111,3 +111,34 @@ export function autoMatchPricingRequests(requests, rows) {
   })
   return changed ? next : null
 }
+
+// Unmatch a request from the quote it was matched to (by hand or by the
+// auto-matcher, confirmed or not). The quote it was on goes on the
+// "don't suggest" list so the auto-matcher won't put it straight back.
+// → the patch for the request
+export function unmatchPatch(req) {
+  const rejected = [...(req.rejectedFeedIds || [])]
+  if (req.matchedFeedId && !rejected.includes(req.matchedFeedId)) rejected.push(req.matchedFeedId)
+  const rejectedSlips = [...(req.rejectedSlipIds || [])]
+  if (req.matchedSlipId && !rejectedSlips.includes(req.matchedSlipId)) rejectedSlips.push(req.matchedSlipId)
+  return {
+    matchedFeedId: null, matchedSlipId: null, matchedAt: null, autoMatched: false, needsConfirm: false, confirmedAt: null,
+    feedWasPricing: null, slipPrev: null,
+    rejectedFeedIds: rejected, rejectedSlipIds: rejectedSlips
+  }
+}
+
+// Which of our quotes a request is for — stored on the request as { id, number, title }
+export const requestQuoteRef = q => q ? { id: q.id || '', number: q.quoteNumber || q.number || '', title: q.title || '' } : null
+
+// Our quotes to pick from when changing which quote a request is for.
+// quotes: [{ id, quoteNumber, title, customerName }]. No search → newest-numbered
+// first; with a search → every word in the number, title or customer.
+export function quotePickList(quotes, q = '', limit = 12) {
+  const words = String(q || '').toLowerCase().split(/\s+/).filter(Boolean)
+  const hay = x => [x.quoteNumber, x.title, x.customerName].join(' ').toLowerCase()
+  return (quotes || [])
+    .filter(x => x && x.id && (!words.length || words.every(w => hay(x).includes(w))))
+    .sort((a, b) => String(b.quoteNumber || '').localeCompare(String(a.quoteNumber || ''), undefined, { numeric: true }))
+    .slice(0, limit)
+}
