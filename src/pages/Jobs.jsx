@@ -30,6 +30,7 @@ import { todayLocal, monthLocal } from '../api/albertaTime.js'
 import NoteGroups from '../components/NoteGroups.jsx'
 import { money, fmtDate } from '../api/format.js'
 import { aiPost, AI_MODEL, useApiKey } from '../api/ai.js'
+import { parentCandidates, makeSubJobUpdates, quoteIdsOf } from '../api/subJobs.js'
 
 function uid() {
   return Math.random().toString(36).slice(2, 10)
@@ -1350,6 +1351,137 @@ function RelatedJobBanner({ project, navigate }) {
   )
 }
 
+// Two jobs approved separately that turned out to be one: make this one a
+// sub-job of the other after the fact. It keeps its own record (labour,
+// materials, CO, quotes) and just points at the parent — the same as a
+// sub-job made at approval. Its quotes show as sub-job quotes. Undo with
+// "Make it its own job again".
+function SubJobButton({ project }) {
+  const jobsHub = useHubStore({
+    hub: 'jobs', recordFileName: 'project.json', getRecordFolderName: p => p.name,
+    customersKey: 'job_customers', recordsKey: 'job_projects',
+  })
+  const quotesHub = useHubStore({
+    hub: 'quotes', recordFileName: 'quote.json',
+    getRecordFolderName: q => q.title ? `${q.quoteNumber} - ${q.title}` : q.quoteNumber,
+    customersKey: 'quote_customers', recordsKey: 'quote_quotes',
+  })
+  const [picking, setPicking] = useState(false)
+  const [query, setQuery] = useState('')
+  const [confirming, setConfirming] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  if (jobsHub.loading) return null
+
+  const kids = jobsHub.records.filter(p => p.relatedJobId === project.id && !p.trashedAt)
+  const matches = parentCandidates(jobsHub.records, project, jobsHub.customers, query)
+
+  async function setQuoteType(type) {
+    if (quotesHub.loading) return
+    for (const id of quoteIdsOf(project)) {
+      const q = quotesHub.records.find(x => x.id === id)
+      if (q && q.linkedJobId === project.id) await quotesHub.updateRecord(id, { linkType: type })
+    }
+  }
+
+  async function confirmSubJob(parent) {
+    setBusy(true); setError('')
+    try {
+      for (const u of makeSubJobUpdates(jobsHub.records, project, parent.id)) await jobsHub.updateRecord(u.id, u.patch)
+      await setQuoteType('subjob')
+      setPicking(false); setConfirming(null); setQuery('')
+    } catch (err) {
+      setError(err.message || 'Something went wrong making it a sub-job.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function detach() {
+    setBusy(true); setError('')
+    try {
+      await jobsHub.updateRecord(project.id, { relatedJobId: null })
+      await setQuoteType('primary')
+      setConfirming(null)
+    } catch (err) {
+      setError(err.message || 'Something went wrong.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const pill = { fontSize: 12, fontWeight: 700, color: 'var(--text-mid)', background: 'var(--surface-2)', border: 'none', borderRadius: 20, padding: '6px 12px', cursor: 'pointer' }
+  const box = { marginTop: 10, padding: 12, background: '#e8f2fc', border: '1px solid #1a5fa0', borderRadius: 'var(--rs)', maxWidth: 360 }
+  const btn = primary => ({ flex: 1, padding: 7, background: primary ? '#1a5fa0' : 'var(--surface)', border: primary ? 'none' : '1px solid var(--border)', borderRadius: 'var(--rs)', color: primary ? '#fff' : undefined, fontWeight: primary ? 700 : 600, fontSize: 12, cursor: 'pointer' })
+
+  if (project.relatedJobId) {
+    const parent = jobsHub.records.find(p => p.id === project.relatedJobId)
+    return (
+      <div style={{ margin: '8px 16px 0' }}>
+        {confirming !== 'detach'
+          ? <button onClick={() => setConfirming('detach')} style={pill}>Make it its own job again</button>
+          : <div style={box}>
+              <div style={{ fontSize: 12, color: '#1a5fa0', marginBottom: 8 }}>Take "{project.name}" out from under <strong>{parent?.name || 'its parent job'}</strong>? Nothing on it changes — it just stops being a sub-job.</div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button onClick={() => setConfirming(null)} disabled={busy} style={btn(false)}>Cancel</button>
+                <button onClick={detach} disabled={busy} style={btn(true)}>{busy ? 'Saving…' : 'Make it its own job'}</button>
+              </div>
+            </div>}
+        {error && <div style={{ fontSize: 11, color: 'var(--red)', marginTop: 6 }}>{error}</div>}
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ margin: '8px 16px 0' }}>
+      {!picking ? (
+        <button onClick={() => setPicking(true)} style={pill}>Make this a sub-job of…</button>
+      ) : (
+        <div style={{ position: 'relative', maxWidth: 360 }}>
+          <input
+            autoFocus value={query} onChange={e => setQuery(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Escape') { setPicking(false); setQuery('') } }}
+            onBlur={() => setTimeout(() => { if (!confirming) setPicking(false) }, 150)}
+            placeholder="Which job is this part of? Search name, CO, customer…"
+            style={{ width: '100%', fontSize: 13, border: '1px solid var(--border)', borderRadius: 6, padding: '7px 10px', fontFamily: 'var(--font)', boxSizing: 'border-box' }}
+          />
+          {matches.length > 0 && !confirming && (
+            <div style={{
+              position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 2, zIndex: 20,
+              background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--rs)',
+              maxHeight: 220, overflowY: 'auto', boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+            }}>
+              {matches.map(p => (
+                <div key={p.id} onMouseDown={() => setConfirming(p)} style={{ padding: '8px 10px', fontSize: 13, cursor: 'pointer', borderBottom: '1px solid var(--border)' }}>
+                  <span style={{ fontWeight: 600 }}>{p.name}</span>
+                  {p.co ? <span style={{ color: 'var(--text-light)' }}> · CO {p.co}</span> : null}
+                  {p.customerId !== project.customerId && p.customerName ? <span style={{ color: 'var(--text-light)' }}> · {p.customerName}</span> : null}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {confirming && confirming !== 'detach' && (
+        <div style={box}>
+          <div style={{ fontSize: 12, color: '#1a5fa0', marginBottom: 8 }}>
+            Make "{project.name}" a sub-job of <strong>{confirming.name}</strong>? It keeps its own labour, materials, CO and quotes.
+            {kids.length > 0 && <> Its {kids.length} sub-job{kids.length === 1 ? '' : 's'} ({kids.map(k => k.name).join(', ')}) move{kids.length === 1 ? 's' : ''} under {confirming.name} too.</>}
+            {confirming.customerId !== project.customerId && <> It stays under its own customer.</>}
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={() => { setConfirming(null); setPicking(false); setQuery('') }} disabled={busy} style={btn(false)}>Cancel</button>
+            <button onClick={() => confirmSubJob(confirming)} disabled={busy} style={btn(true)}>{busy ? 'Saving…' : 'Make it a sub-job'}</button>
+          </div>
+        </div>
+      )}
+      {error && <div style={{ fontSize: 11, color: 'var(--red)', marginTop: 6 }}>{error}</div>}
+    </div>
+  )
+}
+
 // Moves a job to a different customer entirely — physically relocates its
 // folder and files, not just a reference. Confirms first since it's a real
 // move, then follows the job to its new location.
@@ -2282,6 +2414,7 @@ function GeneralInfoSection({ project, customer, onUpdate, navigate }) {
       <TypeBanner project={project} />
       <RelatedJobBanner project={project} navigate={navigate} />
       <MoveToCustomerButton project={project} navigate={navigate} />
+      <SubJobButton project={project} />
       <JobTypeRow project={project} onUpdate={onUpdate} />
       <FieldRow label="Project name">
         <EditableField value={project.name} placeholder="Project name" onSave={v => onUpdate({ name: v })} />
