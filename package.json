@@ -11,9 +11,10 @@
     "build": "vite build",
     "preview": "vite preview",
     "electron:dev": "concurrently -k \"vite\" \"wait-on http://localhost:5173 && electron .\"",
-    "dist": "vite build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder",
+    "dist": "node scripts/dist.cjs",
     "test": "vitest run",
-    "lint": "eslint -c .eslintrc.json --ext .js,.jsx,.cjs src electron tests"
+    "lint": "eslint -c .eslintrc.json --ext .js,.jsx,.cjs src electron tests",
+    "dist:build": "node scripts/dist.cjs --no-install"
   },
   "dependencies": {
     "docxtemplater": "^3.69.0",
@@ -53,7 +54,12 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "installerIcon": "build/icon.ico",
-      "uninstallerIcon": "build/icon.ico"
+      "uninstallerIcon": "build/icon.ico",
+      "perMachine": false,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "Field App",
+      "runAfterFinish": true
     },
     "directories": {
       "output": "release",
