@@ -1640,19 +1640,19 @@ export async function generateWorkSummary(project, apiKey, quoteInfo = null) {
   const workLines = entries
     .filter(e => (e.workCompleted || '').trim())
     .map(e => `${e.date || 'undated'}: ${e.workCompleted.trim()}`)
-  const noteLines = (project.notesLog || []).map(n => `${fmtDate(n.timestamp, 'medium')}: ${n.text}`)
+  // Job notes are yours, not the customer's — they never go to the AI. Pick
+  // any you want in the report with the notes picker instead.
   const materialLines = (project.materialEntries || []).map(m => `${m.qty || 0} ${m.uom || ''} ${m.item || 'material'}`.trim())
 
   const context = [
     `Job: ${project.name || 'Untitled job'}${project.co ? ` (CO ${project.co})` : ''}`,
     workLines.length ? `Work log entries:\n${workLines.join('\n')}` : '',
-    noteLines.length ? `Job notes:\n${noteLines.join('\n')}` : '',
     materialLines.length ? `Materials used:\n${materialLines.join('\n')}` : '',
     quoteInfo && quoteInfo.scopeText ? `Quoted scope of work (this is a fixed-price job):\n${quoteInfo.scopeText}` : '',
   ].filter(Boolean).join('\n\n')
 
   const hasQuoteScope = !!(quoteInfo && quoteInfo.scopeText)
-  if (!context.trim() || (!workLines.length && !noteLines.length && !hasQuoteScope)) {
+  if (!context.trim() || (!workLines.length && !hasQuoteScope)) {
     return 'Work was completed on this job as scoped. See the materials and labor details below for a full breakdown.'
   }
 
@@ -1699,6 +1699,34 @@ export async function generateDailySummaries(project, apiKey) {
   return JSON.parse(m[0])
 }
 
+// Job notes for an AI report: none go in unless you tick them.
+function ReportNotesPicker({ notes, picked, setPicked }) {
+  const list = (notes || []).slice().sort((a, b) => String(b.timestamp || '').localeCompare(String(a.timestamp || '')))
+  if (!list.length) return null
+  const toggle = id => setPicked(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 4 }}>
+        <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-light)', textTransform: 'uppercase', flex: 1 }}>
+          Job notes to include — {picked.size ? `${picked.size} of ${list.length} picked` : 'none'}
+        </span>
+        {picked.size > 0 && <button onClick={() => setPicked(new Set())} style={{ border: 'none', background: 'none', color: '#1a5fa0', fontSize: 11, fontWeight: 700, cursor: 'pointer', padding: 0 }}>Clear</button>}
+      </div>
+      <div style={{ maxHeight: 150, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 8px' }}>
+        {list.map(n => (
+          <label key={n.id} style={{ display: 'flex', gap: 7, alignItems: 'flex-start', padding: '4px 0', fontSize: 12, cursor: 'pointer', borderBottom: '1px solid var(--surface-2)' }}>
+            <input type="checkbox" checked={picked.has(n.id)} onChange={() => toggle(n.id)} style={{ marginTop: 2 }} />
+            <span style={{ flex: 1, minWidth: 0 }}>
+              <b style={{ color: 'var(--text-mid)' }}>{fmtDate(n.timestamp, 'medium')}</b> — {n.text}
+            </span>
+          </label>
+        ))}
+      </div>
+    </div>
+  )
+}
+const pickedNotes = (project, picked) => (project.notesLog || []).filter(n => picked.has(n.id)).slice().sort((a, b) => String(a.timestamp || '').localeCompare(String(b.timestamp || '')))
+
 export function CustomerSummaryModal(props) {
   return props.project.type === 'quoted' ? <QuotedSummaryModal {...props} /> : <TMSummaryModal {...props} />
 }
@@ -1710,6 +1738,7 @@ function TMSummaryModal({ project, customer, onClose }) {
   const [error, setError] = useState('')
   const [exporting, setExporting] = useState(false)
   const [daily, setDaily] = useState({})
+  const [notePick, setNotePick] = useState(() => new Set())
   const isTM = project.type === 'tm'
 
   const materials = (project.materialEntries || []).map(m => ({
@@ -1794,8 +1823,8 @@ function TMSummaryModal({ project, customer, onClose }) {
         </tr>
         ${isTM && (daily[e.id] || '').trim() ? `<tr><td colspan="5" style="font-size:11px;color:#555;padding-top:0">${daily[e.id].trim().replace(/</g, '&lt;')}</td></tr>` : ''}
       `).join('')
-      const noteRows = (project.notesLog || []).slice().reverse().map(n => `
-        <div class="note"><span class="note-date">${fmtDate(n.timestamp, 'medium')}</span> — ${n.text}</div>
+      const noteRows = pickedNotes(project, notePick).map(n => `
+        <div class="note"><span class="note-date">${fmtDate(n.timestamp, 'medium')}</span> — ${escHtml(n.text)}</div>
       `).join('')
 
       const html = `
@@ -1900,6 +1929,7 @@ function TMSummaryModal({ project, customer, onClose }) {
                 ))}
               </div>
             )}
+            <ReportNotesPicker notes={project.notesLog} picked={notePick} setPicked={setNotePick} />
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--text-mid)', marginBottom: 14, padding: '10px 12px', background: 'var(--surface-2)', borderRadius: 'var(--rs)' }}>
               <span>{materials.length} material line{materials.length === 1 ? '' : 's'} · {laborEntries.length} labor entr{laborEntries.length === 1 ? 'y' : 'ies'}</span>
               <span style={{ fontWeight: 700, color: 'var(--text)' }}>Total: ${grandTotal.toFixed(2)}</span>
@@ -1994,7 +2024,6 @@ const QUOTED_REPORT_PARTS = [
   { id: 'billing', label: 'Billing progress to date', on: false },
   { id: 'breakdown', label: 'Labor & materials breakdown', on: false },
   { id: 'photos', label: 'Photos from the job Files', on: true },
-  { id: 'notes', label: 'Job notes', on: false },
 ]
 
 function QuotedSummaryModal({ project, customer, onClose }) {
@@ -2011,6 +2040,7 @@ function QuotedSummaryModal({ project, customer, onClose }) {
   const [error, setError] = useState('')
   const [exporting, setExporting] = useState(false)
   const [parts, setParts] = useState(() => Object.fromEntries(QUOTED_REPORT_PARTS.map(p => [p.id, p.on])))
+  const [notePick, setNotePick] = useState(() => new Set())
 
   const info = quotesStore.loading ? null : quotedJobInfo(project, quotesStore.records)
   const workEntries = (project.laborEntries || []).filter(e => (e.workCompleted || '').trim())
@@ -2120,7 +2150,7 @@ function QuotedSummaryModal({ project, customer, onClose }) {
 
           ${photoTiles ? `<h2>Photos</h2><div class="photo-grid">${photoTiles}</div>` : ''}
 
-          ${parts.notes && (project.notesLog || []).length ? `<h2>Notes</h2>${(project.notesLog || []).slice().reverse().map(n => `<div class="note"><span class="note-date">${fmtDate(n.timestamp, 'medium')}</span> — ${escHtml(n.text)}</div>`).join('')}` : ''}
+          ${notePick.size ? `<h2>Notes</h2>${pickedNotes(project, notePick).map(n => `<div class="note"><span class="note-date">${fmtDate(n.timestamp, 'medium')}</span> — ${escHtml(n.text)}</div>`).join('')}` : ''}
         </body></html>
       `
       const pdfBase64 = await window.desktop.pdfFromHtml(html)
@@ -2203,6 +2233,7 @@ function QuotedSummaryModal({ project, customer, onClose }) {
                 </label>
               ))}
             </div>
+            <ReportNotesPicker notes={project.notesLog} picked={notePick} setPicked={setNotePick} />
             {error && <div style={{ fontSize: 12, color: 'var(--red)', marginBottom: 10 }}>{error}</div>}
           </>
         )}
