@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import ProposalPill from '../components/ProposalPill.jsx'
+import CustomerNotes from '../components/CustomerNotes.jsx'
 import { linkedQuotesCustomer, sharedKey, useSharedCustomerLinks } from '../api/sharedCustomer.js'
 import { useHubStore } from '../api/useHubStore.js'
 import { SectionPage, ProjectBlock, ProjectColumnHeader, effectiveLifecycleStatus, topLevelJobs } from './Jobs.jsx'
@@ -594,6 +595,8 @@ export default function CustomerJobsWindow({ customerId, initialProjectId = null
           <div style={{ padding: '40px 20px', textAlign: 'center', color: 'var(--text-light)', fontSize: 13 }}>Pick a category above.</div>
         )}
       </div>
+
+      <CustomerNotes customer={customer} updateCustomer={patch => jobsHub.updateCustomer(customer.id, patch)} />
 
       {approvalTarget && !approvalTarget.approved && !(approvalTarget.linkedJobId && jobsHub.records.some(p => p.id === approvalTarget.linkedJobId && !p.trashedAt)) && (
         <ApprovalModal
