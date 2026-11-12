@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld('desktop', {
   openManageCustomersWindow: () => ipcRenderer.invoke('window:openManageCustomers'),
   openFilesWindow: (customerId, kind) => ipcRenderer.invoke('window:openFiles', { customerId, kind }),
   openDeficienciesWindow: (customerId) => ipcRenderer.invoke('window:openDeficiencies', customerId),
+  openHitListWindow: () => ipcRenderer.invoke('window:openHitList'),
 
   saveCustomer: (hub, customer) => ipcRenderer.invoke('data:saveCustomer', { hub, customer }),
   renameCustomerFolder: (hub, oldFolder, newName) => ipcRenderer.invoke('data:renameCustomerFolder', { hub, oldFolder, newName }),

@@ -218,6 +218,39 @@ function createDeficienciesWindow(customerId) {
   return win
 }
 
+// The Home Hit List in its own window — one at a time (opening it again just
+// brings it forward).
+let hitListWin = null
+function createHitListWindow() {
+  if (hitListWin && !hitListWin.isDestroyed()) {
+    if (hitListWin.isMinimized()) hitListWin.restore()
+    hitListWin.focus()
+    return hitListWin
+  }
+  const win = new BrowserWindow({
+    width: 760,
+    height: 820,
+    minWidth: 380,
+    backgroundColor: '#f6f8fb',
+    autoHideMenuBar: true,
+    title: 'Hit List',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  })
+  setupEditingSupport(win)
+  if (isDev) {
+    win.loadURL('http://localhost:5173/#/hitlist')
+  } else {
+    win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'), { hash: '/hitlist' })
+  }
+  hitListWin = win
+  win.on('closed', () => { hitListWin = null })
+  return win
+}
+
 function createFilesWindow(customerId, kind) {
   const win = new BrowserWindow({
     width: 1000,
@@ -355,6 +388,10 @@ ipcMain.handle('window:openFiles', (e, { customerId, kind }) => {
 
 ipcMain.handle('window:openDeficiencies', (e, customerId) => {
   createDeficienciesWindow(customerId)
+})
+
+ipcMain.handle('window:openHitList', () => {
+  createHitListWindow()
 })
 
 app.whenReady().then(() => {

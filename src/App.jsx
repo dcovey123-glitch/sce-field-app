@@ -22,6 +22,7 @@ import MorningReview, { loadReviewCount } from './pages/MorningReview.jsx'
 import Snapshot from './pages/Snapshot.jsx'
 import CustomerJobsWindow from './pages/CustomerJobsWindow.jsx'
 import DeficienciesWindow from './pages/DeficienciesWindow.jsx'
+import HitList from './components/HitList.jsx'
 import CustomerFilesWindow from './pages/CustomerFilesWindow.jsx'
 import ManageCustomersWindow from './pages/ManageCustomersWindow.jsx'
 import { useNeedsYou } from './components/NeedsYou.jsx'
@@ -43,6 +44,7 @@ function parseWindowRoute() {
   if (m) return { kind: 'time', view: m[1] }
   m = window.location.hash.match(/^#\/calendar\/(.+)$/)
   if (m) return { kind: 'calendar', date: m[1] }
+  if (window.location.hash === '#/hitlist') return { kind: 'hitlist' }
   m = window.location.hash.match(/^#\/deficiencies\/(.+)$/)
   if (m) return { kind: 'deficiencies', customerId: m[1] }
   return null
@@ -220,6 +222,9 @@ export default function App() {
   }
   if (windowRoute?.kind === 'deficiencies') {
     return <DeficienciesWindow customerId={windowRoute.customerId} />
+  }
+  if (windowRoute?.kind === 'hitlist') {
+    return <HitList full />
   }
 
   return (
