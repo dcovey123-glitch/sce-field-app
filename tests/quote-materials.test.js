@@ -113,3 +113,23 @@ describe('renaming a job keeps its orders', () => {
     expect(out.local.overrides.r3.parts.QT3.ref).toBe('Gym')
   })
 })
+
+import { receivedInWeek, poCompletion, exportWeekKey } from '../src/api/timesheetExport.js'
+describe('an order goes to Jonathan in one piece', () => {
+  const wk = exportWeekKey(new Date('2026-11-12T12:00:00'))
+  const s1 = { id: 'a', kind: 'order', poNumber: '5001', invoiceNumber: '100', receivedAt: '2026-11-10T15:00:00Z', lineItems: [{ received: true }] }
+  const s2 = { id: 'b', kind: 'order', poNumber: '5001', invoiceNumber: '100-01', lineItems: [{ received: false, backordered: true }] }
+  it('a slip waits while another slip on its PO is still backordered', () => {
+    expect(receivedInWeek([s1, s2], wk)).toEqual([])
+    expect(poCompletion([s1, s2]).get('5001')).toMatchObject({ complete: false, waiting: 1 })
+  })
+  it('once the last slip is in, the whole PO goes on that week', () => {
+    const done = { ...s2, receivedAt: '2026-11-12T15:00:00Z', lineItems: [{ received: true }] }
+    const list = receivedInWeek([s1, done], wk)
+    expect(list.map(o => o.id).sort()).toEqual(['a', 'b'])
+    expect(list.every(o => o.receivedAt === '2026-11-12T15:00:00Z')).toBe(true)
+  })
+  it('a slip with no PO still goes on its own', () => {
+    expect(receivedInWeek([{ id: 'c', kind: 'order', receivedAt: '2026-11-11T15:00:00Z', lineItems: [{ received: true }] }], wk).length).toBe(1)
+  })
+})

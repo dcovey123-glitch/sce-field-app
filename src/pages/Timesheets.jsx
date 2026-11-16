@@ -3,7 +3,7 @@ import { useHubStore } from '../api/useHubStore.js'
 import { clockEntriesInRange, pushClockTime } from '../api/timesheetFromClock.js'
 import { weekKeyOf, weekdayName } from '../api/weekStart.js'
 import { useLocalStore } from '../api/useLocalStore.js'
-import { EXPORT_EXTRA_KEY, normPoKeyTs, entryCustomer, weekMainCustomer, dayMainCustomer, billShares, dayByCustomer, MAIN_CUSTOMER, tsHours, orderTotalForReport, receivedInWeek, itemExportWeek, shiftWeek } from '../api/timesheetExport.js'
+import { EXPORT_EXTRA_KEY, normPoKeyTs, entryCustomer, weekMainCustomer, dayMainCustomer, billShares, dayByCustomer, MAIN_CUSTOMER, tsHours, orderTotalForReport, receivedInWeek, itemExportWeek, shiftWeek, poCompletion } from '../api/timesheetExport.js'
 export { entryCustomer, weekMainCustomer, dayMainCustomer, billShares, dayByCustomer }
 import FileAttachments, { FileTile } from '../components/FileAttachments.jsx'
 import ConfirmDeleteButton from '../components/ConfirmDeleteButton.jsx'
@@ -945,6 +945,10 @@ export default function Timesheets() {
                 style={{ background: 'none', border: 'none', padding: 0, color: 'rgba(255,255,255,.9)', fontSize: 11.5, cursor: 'pointer', textDecoration: 'underline dotted' }}>
                 Received material ({receivedInWeek(materialOrders, activeKey).length})
               </button>
+              {(() => {
+                const waiting = [...poCompletion(materialOrders).values()].filter(g => !g.complete && g.count > g.waiting).length
+                return waiting ? <span title="A PO goes to Jonathan in one piece once all its slips (backorders too) are received" style={{ fontSize: 11, color: '#ffd27a' }}>· {waiting} PO{waiting === 1 ? '' : 's'} waiting on backorders</span> : null
+              })()}
             </span>
             <button onClick={exportWeek} disabled={exporting} style={{ background: 'var(--accent)', border: 'none', borderRadius: 'var(--rs)', padding: '7px 14px', color: 'var(--navy)', fontFamily: 'var(--font-d)', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
               {exporting ? 'Exporting…' : isDesktop ? '↓ Export & Email' : '↓ Export'}

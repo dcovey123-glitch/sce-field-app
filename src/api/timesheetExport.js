@@ -24,7 +24,7 @@ export function orderExportState(o, matOrders, extras) {
     if (sl.every(m => m.sentAt)) return { state: 'sent', sentAt: latest(sl) }
     const live = sl.filter(m => !m.sentAt)
     // every slip still to go is on an export (a received order has nothing left to receive)
-    if (live.every(m => m.receivedAt || m.exportWeek)) return { state: 'on', week: live.map(m => m.exportWeek || (m.receivedAt ? exportWeekKey(new Date(m.receivedAt)) : '')).filter(Boolean).sort()[0] || '' }
+    if (live.every(m => m.receivedAt || m.exportWeek)) return { state: 'on', week: live.map(m => m.exportWeek || (m.receivedAt ? exportWeekKey(new Date(m.receivedAt)) : '')).filter(Boolean).sort().pop() || '' } // the whole PO goes the week the last slip came in
     return { state: 'off' }
   }
   const ex = (extras || []).filter(x => x.feedId === o.id)
@@ -109,12 +109,45 @@ export function shiftWeek(wk, delta) {
   return exportWeekKey(d)
 }
 
+// An order goes to Jonathan as ONE piece: every packing slip on a PO waits
+// until the whole PO is received (all backorders in), then they all go on the
+// export for the week the last one came in. A slip with no PO goes on its own.
+// → Map poKey → { complete, lastAt }
+const isFull = o => !!o.receivedAt || !!o.forceReceivedAt || ((o.lineItems || []).length > 0 && (o.lineItems || []).every(li => li.received || li.movedTo))
+export function poCompletion(orders) {
+  const groups = new Map()
+  for (const o of orders || []) {
+    if (o.recordOnly || o.kind === 'pricing' || o.archivedNote || (o.docType === 'quote' && o.replacedAt)) continue
+    const k = normPoKeyTs(o.poNumber)
+    if (!k) continue
+    if (!groups.has(k)) groups.set(k, [])
+    groups.get(k).push(o)
+  }
+  const out = new Map()
+  groups.forEach((list, k) => {
+    const packing = list.filter(o => o.docType !== 'quote')
+    const members = packing.length ? packing : list
+    const complete = members.every(isFull)
+    const lastAt = members.map(o => o.receivedAt || o.forceReceivedAt || '').filter(Boolean).sort().pop() || null
+    out.set(k, { complete, lastAt, count: members.length, waiting: members.filter(o => !isFull(o)).length })
+  })
+  return out
+}
+
 // Material orders received this week, plus any received earlier that never
 // went out to Jonathan — so nothing slips through if a week is missed.
 export function receivedInWeek(orders, wk, { skipped = false } = {}) {
   const start = new Date(wk + 'T00:00:00').getTime()
   const end = start + 7 * 86400000
+  const po = poCompletion(orders)
+  // a slip on a PO counts as received when its whole PO is (last slip's date)
+  const effReceived = o => {
+    const g = o.poNumber ? po.get(normPoKeyTs(o.poNumber)) : null
+    if (!g) return o.receivedAt
+    return g.complete ? (g.lastAt || o.receivedAt) : null
+  }
   return (orders || [])
+    .map(o => { const at = effReceived(o); return at === o.receivedAt ? o : { ...o, receivedAt: at || undefined, slipReceivedAt: o.receivedAt } })
     // a quote whose packing slips came in is listed through those slips
     // pushed to this week's export from Orders → Done: on it (unless marked already sent)
     .filter(o => ((o.exportWeek === wk || o.week === wk) && !o.sentManually) || (!o.recordOnly && o.kind !== 'pricing' && o.receivedAt && !(o.docType === 'quote' && o.replacedAt) && (() => {
