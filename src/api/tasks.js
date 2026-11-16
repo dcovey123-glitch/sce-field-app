@@ -2,7 +2,7 @@ import { fmtDate } from './format.js'
 // Job tasks: what has to be done on a job, ticked off with the date and who.
 // Kept on the job itself (job.tasks), so it travels with the job's file.
 //
-// task: { id, text, who, due, notes, createdAt, createdBy, done, doneAt, doneBy }
+// task: { id, text, who, due, notes, createdAt, createdBy, editedAt, done, doneAt, doneBy }
 //
 // The phone sees open tasks (sync/tasks.json) and sends back small changes
 // (tasks/pending/*.json): { id, op: 'done'|'undo'|'add', jobId, taskId, text, by, at }
@@ -22,7 +22,23 @@ export const isDueToday = t => !t.done && t.due && t.due === today()
 
 // Function patches, so two quick changes never overwrite each other
 export const addTasks = (items) => job => ({ tasks: [...tasksOf(job), ...items] })
-export const changeTask = (id, patch) => job => ({ tasks: tasksOf(job).map(t => t.id === id ? { ...t, ...(typeof patch === 'function' ? patch(t) : patch) } : t) })
+// Editing the task itself (words, who, by when, notes) stamps editedAt;
+// ticking it done / not done doesn't
+const EDIT_FIELDS = ['text', 'who', 'due', 'notes']
+export const changeTask = (id, patch) => job => ({ tasks: tasksOf(job).map(t => {
+  if (t.id !== id) return t
+  const p = typeof patch === 'function' ? patch(t) : patch
+  const edited = Object.keys(p || {}).some(k => EDIT_FIELDS.includes(k) && p[k] !== t[k])
+  return { ...t, ...p, ...(edited ? { editedAt: new Date().toISOString() } : {}) }
+}) })
+// Whole days since the task was last edited (or added, if never edited)
+export function daysSinceEdit(t, now = Date.now()) {
+  const at = Date.parse(t.editedAt || t.createdAt || '')
+  if (isNaN(at)) return null
+  const d0 = new Date(at); d0.setHours(0, 0, 0, 0)
+  const d1 = new Date(now); d1.setHours(0, 0, 0, 0)
+  return Math.max(0, Math.round((d1 - d0) / 86400000))
+}
 export const removeTask = id => job => ({ tasks: tasksOf(job).filter(t => t.id !== id) })
 export const setDone = (id, done, by, at) => changeTask(id, done
   ? { done: true, doneAt: at || new Date().toISOString(), doneBy: by || '' }

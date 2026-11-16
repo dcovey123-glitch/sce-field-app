@@ -107,26 +107,7 @@ export function useNeedsYou(navigate) {
   if ((usedPending || []).length) inbox.push({ key: 'used', tone: 'info', text: `${usedPending.length} material-used entr${usedPending.length === 1 ? 'y' : 'ies'} to approve`, detail: 'Sent from the phone', action: 'Approve', onGo: go({ hub: 'materials', view: 'used' }) })
   const catLines = approvalLineCount(catPending)
   if (catLines) inbox.push({ key: 'catalog', tone: 'info', text: `${catLines} catalog count${catLines === 1 ? '' : 's'} / new part${catLines === 1 ? '' : 's'} to approve`, detail: 'Sent from the phone', action: 'Catalog', onGo: go({ hub: 'materials', view: 'catalog' }) })
-  // Job plans: lines to order that haven't gone out, Stock lines short / unpicked
-  const [orderSheet] = useLocalStore('materials_order_list', [])
-  const outRefs = new Set([...(Array.isArray(orderSheet) ? orderSheet : []).flatMap(i => (i.planRefs || []).map(p => p.jobId + ':' + p.lineId)),
-    ...(Array.isArray(requests) ? requests : []).filter(r => !r.removedAt).flatMap(r => (r.items || []).flatMap(i => (i.planRefs || []).map(p => p.jobId + ':' + p.lineId)))])
-  const openJobs = jobs.filter(j => effectiveLifecycleStatus(j) !== 'billed')
-  const toOrder = openJobs.flatMap(j => (j.plannedMaterials || []).filter(l => l.source === 'order' && !outRefs.has(j.id + ':' + l.id)).map(l => ({ j, l })))
-  const planItems = []
-  if (toOrder.length) planItems.push({ key: 'plan-order:' + toOrder.map(x => x.l.id).join(','), tone: 'warn', text: `${toOrder.length} planned line${toOrder.length === 1 ? '' : 's'} to order`, detail: `${[...new Set(toOrder.map(x => x.j.name))].slice(0, 4).join(', ')} — put them on one order and send or phone it in`, action: 'Material Order', onGo: go({ hub: 'materials', view: 'orderform' }) })
-  const stockQty = id => { const s0 = (Array.isArray(stock) ? stock : []).find(x => x.id === id); return s0 ? Number(s0.qty) || 0 : null }
-  const held = {}
-  openJobs.forEach(j => (j.plannedMaterials || []).forEach(l => { if (l.source === 'stock' && l.stockPick) held[l.stockPick] = (held[l.stockPick] || 0) + (Number(l.qty) || 0) }))
-  openJobs.forEach(j => {
-    const lines = (j.plannedMaterials || []).filter(l => l.source === 'stock')
-    const unpicked = lines.filter(l => !l.stockPick)
-    const short = lines.filter(l => l.stockPick && stockQty(l.stockPick) != null && held[l.stockPick] > stockQty(l.stockPick))
-    if (unpicked.length || short.length) planItems.push({ key: 'plan-stock:' + j.id + ':' + [...unpicked, ...short].map(l => l.id).join(','), tone: short.length ? 'bad' : 'warn',
-      text: `${j.name}: ${short.length ? `${short.length} Stock line${short.length === 1 ? '' : 's'} short on the shelf` : `${unpicked.length} Stock line${unpicked.length === 1 ? '' : 's'} to pick`}`,
-      detail: [...short, ...unpicked].slice(0, 3).map(l => `${l.qty} ${l.item || l.partNo}`).join(', ') + (short.length ? ' — more is reserved than is on the shelf; order the difference' : ''), action: 'Plan', onGo: jobGo(j, 'materials') })
-  })
-  add('material', '📦 Material', [...planItems, ...matItems, ...inbox])
+  add('material', '📦 Material', [...matItems, ...inbox])
 
   // 3b. Material checks: slips vs jobs vs Stock, most with a one-click fix
   const ctx = { updateJob: (id, patch) => jobsHub.updateRecord(id, patch), setStock, setOrders, uid, adjustStockDraw }

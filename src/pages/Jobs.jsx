@@ -7,15 +7,18 @@ export { TM_MATERIAL_MARKUP, billingWhen, billingEntries, tmTotal, tmBilledAmoun
 import React, { useState, useEffect, useRef } from 'react'
 import FlagBanner from '../components/FlagBanner.jsx'
 import { quoteMaterialsTotal, quoteLaborTotal, quoteGrandTotal, normalizeQuote, scopeTotal, allowancesTotal, splitLines } from '../api/quoteMath.js'
-import { quotePlannedMaterials } from '../api/plannedMaterials.js'
+import { quoteLines, legacyKeys, quoteLineStatus, quoteLinesSummary, addQuoteLinesToOrderList } from '../api/quoteMaterials.js'
 import { useLocalStore } from '../api/useLocalStore.js'
 import { useHubStore } from '../api/useHubStore.js'
 import FileAttachments, { FileTile } from '../components/FileAttachments.jsx'
 import ConfirmDeleteButton from '../components/ConfirmDeleteButton.jsx'
+import AutoReview from '../components/AutoReview.jsx'
+import { useAutoMode, useAutoSkip } from '../api/automations.js'
+import { addCustomerPair, renameCustomerPair, trashCustomerPair } from '../api/customers.js'
 import WholesalerExportBar from '../components/WholesalerExportBar.jsx'
 import JobTasks from '../components/JobTasks.jsx'
 import { missingSlipCharges, addMissingSlipCharges } from '../api/materialsAudit.js'
-import { planLineStatus, planSummary, stockFree, findStockFor, addPlanLinesToOrderList, ORDER_LIST_KEY, REQUESTS_KEY as PLAN_REQUESTS_KEY, linkCandidates, linkLine, unlinkLine, linkedLines } from '../api/materialPlan.js'
+import { removePlanLinesFromOrderList, findStockFor, ORDER_LIST_KEY, REQUESTS_KEY as PLAN_REQUESTS_KEY } from '../api/materialPlan.js'
 import { useOrdersFeed, partsForJob, openQuotePdf } from '../api/orders.js'
 import PostTimeToLabor, { unpostedCount } from '../components/PostTimeToLabor.jsx'
 import { jobDeficiencies, openLaborFlags, LABOR_FLAG_KINDS } from '../api/jobHealth.js'
@@ -1574,7 +1577,7 @@ function MoveToCustomerButton({ project, navigate }) {
   const currentCustomer = jobsHub.customers.find(c => c.id === project.customerId)
   const q = query.trim().toLowerCase()
   const matches = q ? jobsHub.customers.filter(c =>
-    c.id !== project.customerId && !c.trashedAt && hit(c.name, q)
+    c.id !== project.customerId && !c.trashedAt && !c.sleepingAt && hit(c.name, q)
   ).slice(0, 8) : []
 
   async function confirmMove(newCustomer) {
@@ -3170,92 +3173,6 @@ function FromSlipsList({ entries, dupOf, onDelete, onSlipQty }) {
   )
 }
 
-// Link a plan line to the slip or quote line it actually came on, when it
-// didn't match on its own. This job's slips first, then the closest wording.
-function OrderLinkSearch({ orders, job, line, onPick, onClose }) {
-  const [q, setQ] = useState('')
-  const [hi, setHi] = useState(0)
-  const wrapRef = useRef(null)
-  useEffect(() => {
-    const away = ev => { if (wrapRef.current && !wrapRef.current.contains(ev.target)) onClose() }
-    document.addEventListener('mousedown', away)
-    return () => document.removeEventListener('mousedown', away)
-  }, [onClose])
-  const list = linkCandidates(orders, job, line, q).filter(c => !c.linked)
-  const pick = c => c && onPick(c.orderId, c.lineId)
-  return (
-    <span ref={wrapRef} style={{ position: 'relative', display: 'inline-block' }}>
-      <input autoFocus value={q} onChange={ev => { setQ(ev.target.value); setHi(0) }} placeholder="Search slips & quotes — part #, words, slip #, PO…"
-        onKeyDown={ev => {
-          if (ev.key === 'Escape') onClose()
-          if (ev.key === 'ArrowDown') { ev.preventDefault(); setHi(h => Math.min(h + 1, list.length - 1)) }
-          if (ev.key === 'ArrowUp') { ev.preventDefault(); setHi(h => Math.max(h - 1, 0)) }
-          if (ev.key === 'Enter') { ev.preventDefault(); pick(list[hi]) }
-        }}
-        style={{ fontSize: 12, width: 300, border: '1px solid var(--blue, #2563eb)', borderRadius: 6, padding: '4px 8px' }} />
-      <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 30, marginTop: 2, width: 520, maxHeight: 300, overflowY: 'auto', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 6, boxShadow: '0 6px 18px rgba(0,0,0,.14)' }}>
-        {list.length ? list.map((c, i) => (
-          <div key={c.orderId + c.lineId} onMouseDown={ev => { ev.preventDefault(); pick(c) }} onMouseEnter={() => setHi(i)}
-            style={{ display: 'flex', gap: 8, padding: '6px 10px', cursor: 'pointer', fontSize: 12, background: i === hi ? '#e8f2fc' : 'transparent', borderBottom: '1px solid var(--border)' }}>
-            <span style={{ flex: 1, minWidth: 0 }}>
-              <b>{c.li.name || c.li.partNo || 'Line'}</b>
-              <span style={{ color: 'var(--text-light)' }}>{c.li.partNo ? ' · ' + c.li.partNo : ''}</span>
-              <div style={{ fontSize: 11, color: 'var(--text-light)' }}>
-                {c.o.wholesaler} {c.o.docType === 'quote' ? 'quote ' : '#'}{c.o.invoiceNumber}{c.o.poNumber ? ` · PO ${c.o.poNumber}` : ''}{c.date ? ` · ${fmtDate(c.date)}` : ''}
-                {c.onJob ? <b style={{ color: '#1e7a34' }}> · this job</b> : ''}{c.li.received ? ' · received' : ''}
-              </div>
-            </span>
-            <span style={{ whiteSpace: 'nowrap', fontWeight: 700 }}>{c.li.qty} {c.li.uom || ''}</span>
-          </div>
-        )) : <div style={{ padding: 10, fontSize: 12, color: 'var(--text-light)' }}>{q ? `No slip or quote line matches “${q}”.` : 'No slips or quotes in the last 4 months — type to search older ones.'}</div>}
-      </div>
-    </span>
-  )
-}
-
-// Searchable Stock picker for a plan line: type part #, nickname or words
-// (any order); best matches for the line come first. Enter picks the top one.
-function StockPickSearch({ stock, line, onPick, onClose }) {
-  const [q, setQ] = useState(line.partNo || '')
-  const [hi, setHi] = useState(0)
-  const wrapRef = useRef(null)
-  useEffect(() => {
-    const away = ev => { if (wrapRef.current && !wrapRef.current.contains(ev.target)) onClose() }
-    document.addEventListener('mousedown', away)
-    return () => document.removeEventListener('mousedown', away)
-  }, [onClose])
-  const all = (stock || []).filter(x => Number(x.qty) > 0)
-  let list = q.trim() ? all.filter(x => hit([x.nickname, x.name, x.partNo, x.category], q)) : all
-  // nothing for the part #? fall back to the line's own words
-  if (!list.length && q === (line.partNo || '') && line.item) list = all.filter(x => hit([x.nickname, x.name, x.partNo, x.category], line.item.split(/\s+/).slice(0, 2).join(' ')))
-  list = list.slice().sort((a, b) => String(a.nickname || a.name).localeCompare(String(b.nickname || b.name))).slice(0, 40)
-  const pick = x => x && onPick(x.id)
-  return (
-    <span ref={wrapRef} style={{ position: 'relative', display: 'inline-block' }}>
-      <input autoFocus value={q} onChange={ev => { setQ(ev.target.value); setHi(0) }} placeholder="Search Stock — part #, name, nickname…"
-        onKeyDown={ev => {
-          if (ev.key === 'Escape') onClose()
-          if (ev.key === 'ArrowDown') { ev.preventDefault(); setHi(h => Math.min(h + 1, list.length - 1)) }
-          if (ev.key === 'ArrowUp') { ev.preventDefault(); setHi(h => Math.max(h - 1, 0)) }
-          if (ev.key === 'Enter') { ev.preventDefault(); pick(list[hi]) }
-        }}
-        style={{ fontSize: 12, width: 260, border: '1px solid var(--blue, #2563eb)', borderRadius: 6, padding: '4px 8px' }} />
-      <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 30, marginTop: 2, width: 420, maxHeight: 280, overflowY: 'auto', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 6, boxShadow: '0 6px 18px rgba(0,0,0,.14)' }}>
-        {list.length ? list.map((x, i) => (
-          <div key={x.id} onMouseDown={ev => { ev.preventDefault(); pick(x) }} onMouseEnter={() => setHi(i)}
-            style={{ display: 'flex', gap: 8, padding: '6px 10px', cursor: 'pointer', fontSize: 12, background: i === hi ? '#e8f2fc' : 'transparent', borderBottom: '1px solid var(--border)' }}>
-            <span style={{ flex: 1, minWidth: 0 }}>
-              <b>{x.nickname || x.name}</b>
-              <span style={{ color: 'var(--text-light)' }}>{x.partNo ? ' · ' + x.partNo : ''}{x.nickname && x.name && x.name !== x.nickname ? ' · ' + x.name : ''}</span>
-            </span>
-            <span style={{ whiteSpace: 'nowrap', fontWeight: 700, color: '#1e7a34' }}>{x.qty} {x.uom || ''}</span>
-          </div>
-        )) : <div style={{ padding: 10, fontSize: 12, color: 'var(--text-light)' }}>No Stock item matches “{q}”.</div>}
-      </div>
-    </span>
-  )
-}
-
 function MaterialEntryRow({ entry, onUpdate, onDelete }) {
   return (
     <div style={{ ...nestedRowStyle, cursor: 'default', paddingLeft: 16 }}>
@@ -3684,10 +3601,14 @@ function MaterialsActual({ project, onUpdate }) {
   const entries = project.materialEntries || []
   const [stock, setStock] = useLocalStore('material_stock', [])
   const [matOrders, setMatOrders] = useLocalStore('material_orders', [])
+  // Automations (Ask first / Automatic / Off — see Automations)
+  const [modeMove, setModeMove] = useAutoMode('quote-to-slips')
+  const [skipMove, addSkipMove] = useAutoSkip('quote-to-slips')
+  const [modeCharge, setModeCharge] = useAutoMode('job-auto-charge')
   // Charged from a parsed quote whose packing slips have since come in: charge
   // from the slips instead (so the qty can be changed and the rest sent to Stock)
   const feedForCharges = useOrdersFeed()
-  useEffect(() => {
+  function quoteMove() {
     let acc = matOrders || [], job = project, any = false, ordersChanged = false, taken = []
     for (const step of [o => moveQuoteChargesToSlips(o, job, uid), o => moveFeedChargesToSlips(o, job, feedForCharges, uid)]) {
       const r = step(acc)
@@ -3695,26 +3616,44 @@ function MaterialsActual({ project, onUpdate }) {
       acc = r.orders; ordersChanged = ordersChanged || r.ordersChanged; taken = [...taken, ...r.stockTaken]
       job = { ...job, materialEntries: r.entries }; any = true
     }
-    if (!any) return
-    if (ordersChanged) setMatOrders(acc)
-    if (taken.length) setStock(list => taken.reduce((a, x) => takeFromStock(a, x.li, x.qty), list || []))
-    onUpdate({ materialEntries: job.materialEntries, actualMaterials: materialsTotal(job.materialEntries) })
-  }, [project.id, matOrders, feedForCharges, (project.materialEntries || []).length]) // eslint-disable-line react-hooks/exhaustive-deps
-  // Everything ordered for this job counts toward its actual cost on its own:
+    if (!any) return null
+    const now = new Set((job.materialEntries || []).map(e => e.id))
+    const moved = (project.materialEntries || []).filter(e => !now.has(e.id))
+    return { acc, ordersChanged, taken, entries: job.materialEntries, key: `${project.id}:${moved.map(e => e.id).sort().join(',')}`,
+      text: `${moved.length || 'Some'} line${moved.length === 1 ? '' : 's'} charged from a quote → charged from its packing slips`, sub: moved.slice(0, 3).map(e => e.item || e.partNo).filter(Boolean).join(', ') }
+  }
+  function applyQuoteMove() {
+    const m = quoteMove()
+    if (!m) return
+    if (m.ordersChanged) setMatOrders(m.acc)
+    if (m.taken.length) setStock(list => m.taken.reduce((a, x) => takeFromStock(a, x.li, x.qty), list || []))
+    onUpdate({ materialEntries: m.entries, actualMaterials: materialsTotal(m.entries) })
+  }
+  const moveNow = modeMove === 'off' ? null : quoteMove()
+  const moveAsk = modeMove === 'ask' && moveNow && !skipMove.has(moveNow.key) ? [{ key: moveNow.key, text: moveNow.text, sub: moveNow.sub }] : []
+  useEffect(() => {
+    if (modeMove === 'auto' && moveNow) applyQuoteMove()
+  }, [project.id, matOrders, feedForCharges, (project.materialEntries || []).length, modeMove]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Everything ordered for this job counts toward its actual cost:
   //  · slip lines tagged to this job that aren't on its list yet
   //  · PO quotes filed to this job only, with a PO and no slips in yet
-  // A line you take off stays off (remembered in autoChargeSkip).
-  useEffect(() => {
-    if (project.lifecycleStatus === 'billed') return
+  // A line you take off (or Skip) stays off (remembered in autoChargeSkip).
+  function chargeGroups() {
+    if (project.lifecycleStatus === 'billed') return []
     const skip = new Set(project.autoChargeSkip || [])
     const orders = matOrders || []
     let next = project.materialEntries || []
-    const added = []
+    const groups = []
     const miss = missingSlipCharges(orders, project).filter(m => !skip.has(m.key))
     if (miss.length) {
       const keys = new Set(miss.map(m => m.key))
       const adds = [...new Set(miss.map(m => m.order))].flatMap(o => jobEntriesFromSlip(o, project.id, uid)).filter(e => keys.has(e.orderKey))
-      next = [...next, ...adds]; added.push(...adds.map(e => e.orderKey))
+      miss.forEach(m => {
+        const mine = adds.filter(e => e.orderKey === m.key)
+        if (mine.length) groups.push({ key: m.key, adds: mine, text: `${m.order.wholesaler || 'Slip'} #${m.order.invoiceNumber || ''}: ${m.qty} ${m.li.uom || ''} ${m.li.partNo || ''} ${m.li.name || ''}`.replace(/\s+/g, ' ').trim(), sub: money(m.value) })
+      })
+      next = [...next, ...adds]
     }
     partsForJob(feedForCharges, project.name).forEach(p => {
       const o = p.order
@@ -3728,11 +3667,22 @@ function MaterialsActual({ project, onUpdate }) {
         ? p.lines.map(l => ({ id: uid(), kind: 'order', orderKey: lineKey(p, l), qty: l.qty || 1, uom: l.uom || '', partNo: l.partNo || '', item: l.desc || l.partNo || 'Material', price: Math.round((l.qty ? l.ext / l.qty : l.ext) * 10000) / 10000, source: src }))
         : (Number(p.total) ? [{ id: uid(), kind: 'order', orderKey: p.key, qty: 1, uom: 'lot', partNo: p.number || '', item: [src, o.description].filter(Boolean).join(' — '), price: Number(p.total) || 0, source: src }] : [])
       if (!adds.length) return
-      next = [...next, ...adds]; added.push(p.key)
+      groups.push({ key: p.key, adds, text: src, sub: money(adds.reduce((a, e) => a + (Number(e.qty) || 1) * (Number(e.price) || 0), 0)) })
+      next = [...next, ...adds]
     })
-    if (!added.length) return
-    onUpdate({ materialEntries: next, actualMaterials: materialsTotal(next), autoChargeSkip: [...skip, ...added] })
-  }, [project.id, matOrders, feedForCharges, project.lifecycleStatus]) // eslint-disable-line react-hooks/exhaustive-deps
+    return groups
+  }
+  function applyCharge(keys) {
+    const pick = new Set(keys)
+    const chosen = chargeGroups().filter(g => pick.has(g.key))
+    const next = [...(project.materialEntries || []), ...chosen.flatMap(g => g.adds)]
+    onUpdate({ materialEntries: next, actualMaterials: materialsTotal(next), autoChargeSkip: [...new Set([...(project.autoChargeSkip || []), ...chosen.map(g => g.key)])] })
+  }
+  const skipCharge = keys => onUpdate({ autoChargeSkip: [...new Set([...(project.autoChargeSkip || []), ...keys])] })
+  const chargeNow = modeCharge === 'off' ? [] : chargeGroups()
+  useEffect(() => {
+    if (modeCharge === 'auto' && chargeNow.length) applyCharge(chargeNow.map(g => g.key))
+  }, [project.id, matOrders, feedForCharges, project.lifecycleStatus, modeCharge]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Qty on a slip line changed here: the slip's line follows
   function setSlipQty(e, v) {
@@ -3789,6 +3739,8 @@ function MaterialsActual({ project, onUpdate }) {
 
   return (
     <div>
+      <AutoReview id="quote-to-slips" items={moveAsk} mode={modeMove} onMode={setModeMove} onApply={applyQuoteMove} onSkip={addSkipMove} />
+      <AutoReview id="job-auto-charge" items={modeCharge === 'ask' ? chargeNow : []} mode={modeCharge} onMode={setModeCharge} onApply={applyCharge} onSkip={skipCharge} />
       <OrderLinesForJob project={project} entries={entries} onSetEntries={setEntries} />
       <SlipLinesForJob project={project} entries={entries} onSetEntries={setEntries} />
       <MaterialColumnHeader />
@@ -3830,226 +3782,25 @@ function MaterialsActual({ project, onUpdate }) {
   )
 }
 
-// Editable shopping list pre-filled from the approved quote. Add, edit or
-// remove lines freely as the job changes; nothing here counts toward actual
-// cost until a line is moved to Materials Actual.
-const PLAN_TONE = {
-  ok: { bg: '#e6f4ea', fg: '#1e7a34' }, info: { bg: '#e8f0fb', fg: '#1a5fa0' }, warn: { bg: '#fff3d6', fg: '#8a5d00' },
-  bad: { bg: '#fdecea', fg: '#a12a1e' }, muted: { bg: 'var(--surface-2)', fg: 'var(--text-mid)' },
-}
-
-// The job's material plan: everything it needs, each line from 📦 Stock
-// (reserved off the shelf) or 🚚 Order (onto the shared order sheet, then
-// sent / phoned in, quoted, PO, received) — with where each line is at.
-function MaterialsPlanned({ project, onUpdate, quotesStore, customer }) {
-  const planned = project.plannedMaterials || []
-  const [selectedIds, setSelectedIds] = useState(() => new Set())
-  const actual = project.materialEntries || []
-  const [stock, setStock] = useLocalStore('material_stock', [])
-  const [orders] = useLocalStore('material_orders', [])
-  const [requests] = useLocalStore(PLAN_REQUESTS_KEY, [])
-  const [orderList, setOrderList] = useLocalStore(ORDER_LIST_KEY, [])
-  const feedRows = useOrdersFeed()
-  const jobsAll = useHubStore({ hub: 'jobs', recordFileName: 'project.json', getRecordFolderName: p => p.name, customersKey: 'job_customers', recordsKey: 'job_projects' }).records
-  const [msg, setMsg] = useState('')
-  const [pickFor, setPickFor] = useState('')
-  const [linkFor, setLinkFor] = useState('')
-  const setPlanned = next => onUpdate(cur => ({ plannedMaterials: typeof next === 'function' ? next(cur.plannedMaterials || []) : next }))
-  const ctx = { orders: orders || [], requests: requests || [], feedRows: feedRows || [], orderList: orderList || [], stock: stock || [], jobs: jobsAll }
-  const statusOf = e => planLineStatus(e, project, ctx)
-  const statuses = planned.map(statusOf)
-  const sum = planSummary(statuses)
-
-  function addEntry(data) { setPlanned(l => [...l, { id: uid(), kind: 'custom', source: data.stockPick ? 'stock' : '', ...data }]) }
-  function updateEntry(id, patch) { setPlanned(l => l.map(e => e.id === id ? { ...e, ...patch } : e)) }
-  function deleteEntry(id) { setPlanned(l => l.filter(e => e.id !== id)) }
-  // 📦 From Stock: reserve the best match on the shelf (or let you pick)
-  function setSource(ids, source) {
-    setPlanned(l => l.map(e => {
-      if (!ids.includes(e.id)) return e
-      if (source === 'stock') { const m = e.stockPick ? null : findStockFor(stock, e); return { ...e, source, ...(m ? { stockPick: m.id } : {}) } }
-      const { stockPick, ...rest } = e
-      return { ...rest, source }
-    }))
-  }
-  function toOrderSheet(ids) {
-    const lines = planned.filter(e => ids.includes(e.id))
-    setOrderList(list => addPlanLinesToOrderList(list, project, lines, uid))
-    setPlanned(l => l.map(e => ids.includes(e.id) ? { ...e, source: 'order', queuedAt: new Date().toISOString() } : e))
-    setMsg(`${lines.length} line${lines.length === 1 ? '' : 's'} on the order sheet (Materials → Order Form), with any other jobs' lines for the same parts. Send or phone it in from there.`)
-    setSelectedIds(new Set())
-  }
-  function moveToActual(ids) {
-    const moving = planned.filter(e => ids.includes(e.id))
-    if (!moving.length) return
-    // Lines picked from Stock come off the shelf now that they're actually used
-    let stockList = stock
-    const moved = moving.map(e => {
-      const { stockPick, source, queuedAt, ...rest } = e
-      if (!stockPick) return { ...rest, id: uid() }
-      const res = drawFromStock(stockList, stockPick, Number(e.qty) || 0)
-      if (!res.fields) return { ...rest, id: uid() }
-      stockList = res.list
-      const q = Number(e.qty) || 0, unit = Number(e.price) || res.fields.stockUnit || 0
-      return { ...rest, kind: 'stock', id: uid(), ...res.fields, stockUnit: unit, price: stockLinePrice(project, q, res.fields.stockFree, unit) }
-    })
-    if (stockList !== stock) setStock(stockList)
-    onUpdate(cur => {
-      const nextActual = [...(cur.materialEntries || []), ...moved]
-      return { plannedMaterials: (cur.plannedMaterials || []).filter(e => !ids.includes(e.id)), materialEntries: nextActual, actualMaterials: materialsTotal(nextActual) }
-    })
-  }
-  // Received order lines are charged from their packing slips already
-  const clearReceived = () => setPlanned(l => l.filter(e => statusOf(e).id !== 'received'))
-  function syncFromQuote() {
-    const linked = getLinkedQuotes(project, quotesStore)
-    const have = new Set([...planned, ...actual].map(e => e.sourceLineId).filter(Boolean))
-    const fresh = linked.flatMap(q => quotePlannedMaterials(q)).filter(e => !e.sourceLineId || !have.has(e.sourceLineId)).map(e => ({ ...e, source: '' }))
-    if (fresh.length === 0) { setMsg('Nothing new — every material line from the linked quote is already here.'); return }
-    setPlanned(l => [...l, ...fresh])
-    setMsg(`${fresh.length} line${fresh.length === 1 ? '' : 's'} added from the quote — set each to 📦 Stock or 🚚 Order.`)
-  }
-
-  const toggleSel = id => setSelectedIds(set => { const n2 = new Set(set); n2.has(id) ? n2.delete(id) : n2.add(id); return n2 })
-  const checked = planned.filter(e => selectedIds.has(e.id))
-  const exportItems = checked.map(e => ({ partNo: e.partNo, desc: e.item, uom: e.uom, qty: e.qty, planRefs: [{ jobId: project.id, jobName: project.name, lineId: e.id, qty: Number(e.qty) || 0 }] }))
-  const jobFolder = customer ? `Jobs/${customer.folder}/${project.folder}/Files` : 'Jobs/Materials Orders'
-  const total = materialsTotal(planned)
-  const btn = { fontSize: 12, fontWeight: 700, padding: '6px 12px', borderRadius: 'var(--rs)', border: '1px solid var(--border)', background: '#fff', color: 'var(--navy)', cursor: 'pointer', whiteSpace: 'nowrap' }
-  const seg = on => ({ fontSize: 11, fontWeight: 700, padding: '3px 8px', border: '1px solid var(--border)', background: on ? 'var(--navy)' : '#fff', color: on ? '#fff' : 'var(--text-mid)', cursor: 'pointer' })
-  const chip = (label, val, tone) => val ? <span style={{ fontSize: 11.5, fontWeight: 700, padding: '2px 9px', borderRadius: 12, background: PLAN_TONE[tone].bg, color: PLAN_TONE[tone].fg }}>{val} {label}</span> : null
-
-  return (
-    <div>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', padding: '10px 16px', background: 'var(--surface)' }}>
-        <span style={{ fontSize: 13, fontWeight: 800 }}>{sum.total} line{sum.total === 1 ? '' : 's'}</span>
-        {chip('need you', sum.needs, 'warn')}
-        {chip('from Stock', sum.stock, 'ok')}
-        {chip('being ordered', sum.ordering, 'info')}
-        {chip('on PO', sum.onPo, 'info')}
-        {chip('received', sum.received, 'ok')}
-        <span style={{ flex: 1 }} />
-        <button style={btn} onClick={syncFromQuote}>↻ Add missing from quote</button>
-        {sum.received > 0 && <button style={btn} onClick={clearReceived} title="Received lines are already charged from their packing slips">Clear received ({sum.received})</button>}
-      </div>
-      {msg && <div onClick={() => setMsg('')} style={{ padding: '6px 16px', fontSize: 12, background: '#e8f0fb', color: '#1a5fa0', cursor: 'pointer' }}>{msg}</div>}
-      <MaterialColumnHeader indent={27} />
-      {planned.length === 0 && (
-        <div style={{ padding: '24px 16px', textAlign: 'center', color: 'var(--text-light)', fontSize: 13 }}>
-          Nothing planned yet. Lines fill in when a quote is approved — or use "Add missing from quote", or add them below.
-        </div>
-      )}
-      {planned.map((e, i) => {
-        const st = statuses[i]
-        const tone = PLAN_TONE[st.tone] || PLAN_TONE.muted
-        const sf = e.source === 'stock' && e.stockPick ? stockFree(stock, jobsAll, e.stockPick, e.id) : null
-        const done = st.id === 'received'
-        return (
-          <div key={e.id} style={{ borderBottom: '1px solid var(--border)', background: done ? 'var(--surface-2)' : undefined }}>
-            <div style={{ display: 'flex', alignItems: 'center' }}>
-              <input type="checkbox" checked={selectedIds.has(e.id)} onChange={() => toggleSel(e.id)} aria-label="Select" style={{ width: 15, height: 15, margin: '0 0 0 12px', cursor: 'pointer', flexShrink: 0 }} />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <MaterialEntryRow entry={e} onUpdate={patch => updateEntry(e.id, patch)} onDelete={() => deleteEntry(e.id)} />
-              </div>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 12px 7px 40px', flexWrap: 'wrap' }}>
-              <span style={{ display: 'inline-flex' }}>
-                <button onClick={() => setSource([e.id], 'stock')} style={{ ...seg(e.source === 'stock'), borderRadius: '6px 0 0 6px' }}>📦 Stock</button>
-                <button onClick={() => setSource([e.id], 'order')} style={{ ...seg(e.source === 'order'), borderRadius: '0 6px 6px 0', borderLeft: 'none' }}>🚚 Order</button>
-              </span>
-              <span title={st.detail || ''} style={{ fontSize: 11.5, fontWeight: 700, padding: '2px 9px', borderRadius: 12, background: tone.bg, color: tone.fg }}>{st.label}</span>
-              {st.detail && <span style={{ fontSize: 11, color: 'var(--text-light)' }}>{st.detail}</span>}
-              {e.source === 'stock' && (
-                pickFor === e.id
-                  ? <StockPickSearch stock={stock} line={e} onPick={id => { updateEntry(e.id, { stockPick: id }); setPickFor('') }} onClose={() => setPickFor('')} />
-                  : <a href="#" onClick={ev => { ev.preventDefault(); setPickFor(e.id) }} style={{ fontSize: 11.5, color: 'var(--blue, #2563eb)' }}>{sf ? (sf.item.nickname || sf.item.name) : 'pick item'}</a>
-              )}
-              {e.source !== 'stock' && linkedLines(e, orders).map(k => (
-                <span key={k.orderId + k.lineId} title={k.sub} style={{ fontSize: 11, padding: '1px 4px 1px 8px', borderRadius: 10, border: `1px solid ${k.gone ? '#e5b3ad' : '#c9dbef'}`, background: k.gone ? '#fdeeee' : '#eef4fb', color: k.gone ? '#a12a1e' : '#1a5fa0', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
-                  🔗 {k.label}{k.li ? ` · ${k.li.qty} ${k.li.uom || ''}`.trimEnd() : ''}
-                  <button onClick={() => updateEntry(e.id, unlinkLine(e, k.orderId, k.lineId))} title="Unlink" style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'inherit', fontSize: 11, padding: '0 3px' }}>✕</button>
-                </span>
-              ))}
-              {e.source !== 'stock' && !done && (
-                linkFor === e.id
-                  ? <OrderLinkSearch orders={orders} job={project} line={e} onPick={(oid, lid) => { updateEntry(e.id, linkLine(e, oid, lid)); setLinkFor('') }} onClose={() => setLinkFor('')} />
-                  : <a href="#" onClick={ev => { ev.preventDefault(); setLinkFor(e.id) }} title="It came on a slip or quote the app didn't match — pick the line" style={{ fontSize: 11.5, color: 'var(--blue, #2563eb)' }}>🔗 Link to order</a>
-              )}
-              <span style={{ flex: 1 }} />
-              {e.source === 'order' && st.id === 'toorder' && <button onClick={() => toOrderSheet([e.id])} style={{ ...btn, padding: '3px 9px', fontSize: 11 }}>→ Order sheet</button>}
-              {!done && e.source !== 'order' && <button onClick={() => moveToActual([e.id])} title={e.source === 'stock' ? 'Pulled off the shelf and used — comes off Stock' : 'Used — move to Materials Actual'} style={{ ...btn, padding: '3px 9px', fontSize: 11 }}>{e.source === 'stock' ? '✓ Pulled → Actual' : '→ Actual'}</button>}
-            </div>
-          </div>
-        )
-      })}
-      <MaterialAddRow onAdd={data => addEntry(data)} drawStock={false} />
-      {planned.length > 0 && (
-        <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)', background: 'var(--surface-2)', display: 'flex', justifyContent: 'space-between' }}>
-          <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-mid)' }}>Planned materials (at cost)</span>
-          <span style={{ fontSize: 14, fontWeight: 700 }}>{money(total)}</span>
-        </div>
-      )}
-      {planned.length > 0 && (
-        <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--text-light)', cursor: 'pointer' }}>
-              <input type="checkbox" checked={selectedIds.size === planned.length} onChange={ev => setSelectedIds(ev.target.checked ? new Set(planned.map(e => e.id)) : new Set())} style={{ width: 14, height: 14 }} />
-              Select all
-            </label>
-            <span style={{ flex: 1, fontSize: 11, color: 'var(--text-light)' }}>{selectedIds.size} of {planned.length} checked</span>
-            {checked.length > 0 && <>
-              <button style={btn} onClick={() => setSource(checked.map(e => e.id), 'stock')}>📦 From Stock</button>
-              <button style={btn} onClick={() => toOrderSheet(checked.map(e => e.id))}>🚚 Add to order sheet</button>
-              <button style={btn} onClick={() => moveToActual(checked.filter(e => statusOf(e).id !== 'received').map(e => e.id))}>→ Actual</button>
-            </>}
-          </div>
-          <details>
-            <summary style={{ fontSize: 11.5, color: 'var(--text-light)', cursor: 'pointer' }}>Or send just this job's checked lines now</summary>
-            <div style={{ marginTop: 8 }}>
-              <WholesalerExportBar
-                items={exportItems} date={todayLocal()}
-                subjectPrefix={`Material order — ${customer ? customer.name + ' — ' : ''}${project.name || 'Job'}`}
-                saveFolder={jobFolder} jobs={[{ id: project.id, name: project.name }]}
-                emptyMessage="Check at least one planned line first."
-              />
-            </div>
-          </details>
-        </div>
-      )}
-    </div>
-  )
-}
-
 function MaterialsSection({ project, onUpdate, customer }) {
   const [tab, setTab] = useState('actual')
-  const isQuoted = project.type === 'quoted'
   const quotesStore = useHubStore({
     hub: 'quotes', recordFileName: 'quote.json', getRecordFolderName: q => q.title ? `${q.quoteNumber} - ${q.title}` : q.quoteNumber,
     customersKey: 'quote_customers', recordsKey: 'quote_quotes',
   })
-
-
-  function importMaterials(quote, items) {
-    const entries = project.materialEntries || []
-    const newEntries = items.map(m => ({
-      id: uid(), kind: 'quoted', partNo: m.partNo || '', item: m.desc || '', uom: m.uom || '',
-      qty: Number(m.qty) || 0, price: Number(m.rate) || 0,
-    }))
-    const nextEntries = [...entries, ...newEntries]
-    onUpdate({ materialEntries: nextEntries, actualMaterials: materialsTotal(nextEntries) })
-  }
+  // The quote is the reference for this job's material (📄 Quoted tab)
+  const hasQuote = (project.linkedQuoteIds || (project.linkedQuoteId ? [project.linkedQuoteId] : [])).length > 0
 
   return (
     <div>
       <div style={{ display: 'flex', background: 'var(--surface)', borderBottom: '1px solid var(--border)' }}>
         <button onClick={() => setTab('actual')} style={laborTabBtnStyle(tab === 'actual')}>Materials Actual</button>
-        <button onClick={() => setTab('planned')} style={laborTabBtnStyle(tab === 'planned')}>📋 Plan{(project.plannedMaterials || []).length ? ` (${(project.plannedMaterials || []).length})` : ''}</button>
-        {isQuoted && <button onClick={() => setTab('quoted')} style={laborTabBtnStyle(tab === 'quoted')}>Quoted</button>}
+        {hasQuote && <button onClick={() => setTab('quoted')} style={laborTabBtnStyle(tab === 'quoted')}>📄 Quoted</button>}
       </div>
       {tab === 'actual' && <MaterialsActual project={project} onUpdate={onUpdate} />}
-      {tab === 'planned' && <MaterialsPlanned project={project} onUpdate={onUpdate} quotesStore={quotesStore} customer={customer} />}
       {tab === 'quoted' && (
-        <QuotedTabShell project={project} quotesStore={quotesStore} ViewComponent={QuotedMaterialsView} onImport={importMaterials} />
+        <QuotedTabShell project={project} quotesStore={quotesStore}
+          render={quote => <QuoteMaterialsView key={quote.id} quote={quote} project={project} onUpdate={onUpdate} customer={customer} />} />
       )}
     </div>
   )
@@ -4279,60 +4030,167 @@ const quoteSubTabBtnStyle = active => ({
   color: active ? 'var(--navy)' : 'var(--text-mid)', whiteSpace: 'nowrap', flexShrink: 0,
 })
 
-function QuotedMaterialsView({ quote, onImport }) {
-  const scopes = quote.scopes || []
-  const showScopeNames = scopes.length > 1
-  const allMaterials = scopes.flatMap(sc => sc.materials || [])
+// The job's material, with its quote as the reference (api/quoteMaterials.js).
+// Each quote line shows where it's at; check lines and send them to the order
+// sheet (🛒 Material order or 💲 Pricing — you pick), to Materials Actual, mark
+// them not needed, or send them straight to a wholesaler as this job's order.
+const QL_TONE = {
+  ok: { bg: '#e6f4ea', fg: '#1e7a34' }, info: { bg: '#e8f0fb', fg: '#1a5fa0' }, warn: { bg: '#fff3d6', fg: '#8a5d00' }, muted: { bg: 'var(--surface-2)', fg: 'var(--text-mid)' },
+}
+function QuoteMaterialsView({ quote, project, onUpdate, customer }) {
+  const lines = quoteLines(quote)
+  const [orderList, setOrderList] = useLocalStore(ORDER_LIST_KEY, [])
+  const [requests] = useLocalStore(PLAN_REQUESTS_KEY, [])
+  const [stock, setStock] = useLocalStore('material_stock', [])
   const [selectedIds, setSelectedIds] = useState(() => new Set())
+  const [msg, setMsg] = useState('')
+  const [hideDone, setHideDone] = useState(false)
+  const legacy = legacyKeys(project)
+  const ctx = { orderList: orderList || [], requests: requests || [], legacy }
+  const statuses = lines.map(l => quoteLineStatus(project, l, ctx))
+  const sum = quoteLinesSummary(statuses)
 
-  if (allMaterials.length === 0) {
+  if (lines.length === 0) {
     return <div style={{ padding: '30px 20px', textAlign: 'center', color: 'var(--text-light)', fontSize: 13 }}>This quote has no material lines.</div>
   }
+  const checked = lines.filter(l => selectedIds.has(l.key))
+  const toggle = key => setSelectedIds(s => { const n2 = new Set(s); n2.has(key) ? n2.delete(key) : n2.add(key); return n2 })
+  const clearSel = () => setSelectedIds(new Set())
+  const setState = (keys, patch) => onUpdate(cur => {
+    const st = { ...(cur.quoteLineState || {}) }
+    keys.forEach(k => { const next = { ...(st[k] || {}), ...patch }; if (!next.notNeeded) delete next.notNeeded; if (Object.keys(next).length) st[k] = next; else delete st[k] })
+    return { quoteLineState: st }
+  })
 
-  function toggleSelected(id) {
-    setSelectedIds(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
+  // What's still needed on a line (quote qty less what's ordered / on Actual)
+  const leftOf = l => { const st = statuses[lines.indexOf(l)]; const left = l.qty - st.qtyOrdered - st.actualQty; return left > 0 && left < l.qty ? left : l.qty }
+  function toSheet(tag) {
+    if (!checked.length) return
+    // pricing asks for the whole quote qty; an order asks only for what's still needed
+    const withQty = checked.map(l => tag === 'pricing' ? l : { ...l, qty: leftOf(l) })
+    setOrderList(list => addQuoteLinesToOrderList(list, project, withQty, tag, uid))
+    setState(checked.map(l => l.key), { notNeeded: false })
+    setMsg(`${checked.length} line${checked.length === 1 ? '' : 's'} on the order sheet as ${tag === 'pricing' ? '💲 Pricing (filed under quote ' + quote.quoteNumber + ')' : '🛒 Material order'} — Materials → Material Order to send it.`)
+    clearSel()
   }
-  function toggleAll(checked) {
-    setSelectedIds(checked ? new Set(allMaterials.map(m => m.id)) : new Set())
+  function offSheet() {
+    const keys = checked.map(l => l.key)
+    const legacyIds = Object.keys(legacy).filter(id => keys.includes(legacy[id]))
+    setOrderList(list => removePlanLinesFromOrderList(list, project.id, [...keys, ...legacyIds]).list)
+    setMsg('Taken off the order sheet (anything already sent stays with the supplier).')
+    clearSel()
   }
-  const exportItems = allMaterials.filter(m => selectedIds.has(m.id)).map(m => ({ partNo: m.partNo, desc: m.desc, uom: m.uom, qty: m.qty }))
+  // 📦 From Stock → Actual: take what's still needed off the shelf (matched by
+  // part #, then name). Whatever Stock is short of stays open on the line —
+  // send that to the order sheet.
+  const stockFor = l => findStockFor(stock, { partNo: l.partNo, item: l.desc })
+  function fromStock() {
+    if (!checked.length) return
+    let list = stock
+    const adds = [], none = [], short = []
+    checked.forEach(l => {
+      const st = statuses[lines.indexOf(l)]
+      if (st.notNeeded) return
+      const need = Math.max(0, l.qty - st.qtyOrdered - st.actualQty)
+      if (!need) return
+      const m = findStockFor(list, { partNo: l.partNo, item: l.desc })
+      if (!m) { none.push(l.desc || l.partNo); return }
+      const res = drawFromStock(list, m.id, need)
+      if (!res.fields || !(res.fields.stockQty > 0)) { none.push(l.desc || l.partNo); return }
+      list = res.list
+      const q = res.fields.stockQty, unit = res.fields.stockUnit
+      if (q < need) short.push(`${l.desc || l.partNo} (${need - q} short)`)
+      adds.push({ id: uid(), kind: 'stock', quoteLineKey: l.key, sourceQuoteId: l.quoteId, sourceLineId: l.lineId, partNo: l.partNo || m.partNo || '', item: l.desc || m.name || '', uom: l.uom || m.uom || '',
+        qty: q, ...res.fields, stockUnit: unit, price: stockLinePrice(project, q, res.fields.stockFree, unit) })
+    })
+    if (adds.length) {
+      setStock(list)
+      onUpdate(cur => { const next = [...(cur.materialEntries || []), ...adds]; return { materialEntries: next, actualMaterials: materialsTotal(next) } })
+      setState(adds.map(a => a.quoteLineKey), { notNeeded: false })
+    }
+    setMsg([
+      adds.length ? `📦 Took ${adds.length} line${adds.length === 1 ? '' : 's'} out of Stock onto Materials Actual (at stock cost).` : '',
+      short.length ? `Stock was short on: ${short.join(', ')} — send the rest to the order sheet.` : '',
+      none.length ? `Nothing in Stock for: ${none.join(', ')}.` : '',
+    ].filter(Boolean).join(' ') || 'Those lines are already covered.')
+    clearSel()
+  }
+  function notNeeded(on) {
+    if (on) {
+      const keys = checked.map(l => l.key)
+      const legacyIds = Object.keys(legacy).filter(id => keys.includes(legacy[id]))
+      setOrderList(list => removePlanLinesFromOrderList(list, project.id, [...keys, ...legacyIds]).list)
+    }
+    setState(checked.map(l => l.key), { notNeeded: on })
+    clearSel()
+  }
+  const exportItems = checked.map(l => ({ partNo: l.partNo, desc: l.desc, uom: l.uom, qty: leftOf(l), planRefs: [{ jobId: project.id, jobName: project.name, lineId: l.key, qty: leftOf(l), quoteId: l.quoteId, quoteNumber: l.quoteNumber, quoteTitle: l.quoteTitle }] }))
+  const jobFolder = customer ? `Jobs/${customer.folder}/${project.folder}/Files` : 'Jobs/Materials Orders'
+  const btn = { fontSize: 12, fontWeight: 700, padding: '6px 11px', borderRadius: 'var(--rs)', border: '1px solid var(--border)', background: '#fff', color: 'var(--navy)', cursor: 'pointer', whiteSpace: 'nowrap' }
+  const chip = (label, val, tone) => val ? <span style={{ fontSize: 11.5, fontWeight: 700, padding: '2px 9px', borderRadius: 12, background: QL_TONE[tone].bg, color: QL_TONE[tone].fg }}>{val} {label}</span> : null
+  const shownIdx = lines.map((l, i) => i).filter(i => !hideDone || !statuses[i].done)
+  let lastScope = null
+  const multiScope = new Set(lines.map(l => l.scope)).size > 1
 
   return (
-    <div style={{ padding: 16 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, gap: 10 }}>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--text-light)', cursor: 'pointer' }}>
-          <input type="checkbox" checked={selectedIds.size === allMaterials.length} onChange={e => toggleAll(e.target.checked)} style={{ width: 14, height: 14, cursor: 'pointer' }} />
-          Select all
+    <div>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', padding: '10px 16px', background: 'var(--surface)' }}>
+        <span style={{ fontSize: 13, fontWeight: 800 }}>{sum.total} quote line{sum.total === 1 ? '' : 's'}</span>
+        {chip('not ordered', sum.notOrdered, 'warn')}
+        {chip('on order sheet', sum.onSheet, 'muted')}
+        {chip('ordered', sum.ordered, 'ok')}
+        {chip('pricing', sum.pricing, 'info')}
+        {chip('to Actual', sum.actual, 'ok')}
+        {chip('not needed', sum.notNeeded, 'muted')}
+        <span style={{ flex: 1 }} />
+        <label style={{ fontSize: 11.5, color: 'var(--text-light)', display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' }}>
+          <input type="checkbox" checked={hideDone} onChange={e => setHideDone(e.target.checked)} /> Hide done
         </label>
-        <button
-          onClick={() => onImport(allMaterials)}
-          style={{ fontSize: 12, fontWeight: 700, padding: '7px 14px', borderRadius: 'var(--rs)', border: 'none', background: 'var(--accent)', color: 'var(--navy)', cursor: 'pointer' }}
-        >
-          Import into Materials Actual
-        </button>
       </div>
-      {scopes.map((sc, i) => (sc.materials || []).length > 0 && (
-        <div key={sc.id || i} style={{ marginBottom: 14 }}>
-          {showScopeNames && <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text)', marginBottom: 6 }}>{sc.name || `Scope ${i + 1}`}</div>}
-          {(sc.materials || []).map((m, j) => (
-            <div key={m.id || j} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, padding: '4px 0', borderBottom: '1px solid var(--border)' }}>
-              <input type="checkbox" checked={selectedIds.has(m.id)} onChange={() => toggleSelected(m.id)} style={{ width: 14, height: 14, cursor: 'pointer', flexShrink: 0 }} />
-              <span style={{ color: 'var(--text-mid)', flexShrink: 0 }}>{m.partNo || '—'}</span>
-              <span style={{ flex: 1, color: 'var(--text)' }}>{m.desc || 'Item'}</span>
-              <span style={{ color: 'var(--text-mid)', flexShrink: 0 }}>{m.qty || 0} {m.uom || ''}</span>
+      {msg && <div onClick={() => setMsg('')} style={{ padding: '6px 16px', fontSize: 12, background: '#e8f0fb', color: '#1a5fa0', cursor: 'pointer' }}>{msg}</div>}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 16px', borderBottom: '1px solid var(--border)' }}>
+        <input type="checkbox" checked={checked.length > 0 && checked.length === shownIdx.length} onChange={e => setSelectedIds(e.target.checked ? new Set(shownIdx.map(i => lines[i].key)) : new Set())} style={{ width: 14, height: 14 }} />
+        <span style={{ fontSize: 11, color: 'var(--text-light)' }}>{checked.length ? `${checked.length} checked` : 'Check lines, then pick what to do with them below'}</span>
+        <span style={{ flex: 1 }} />
+        <button onClick={() => setSelectedIds(new Set(shownIdx.filter(i => statuses[i].chips.some(c => c.id === 'none')).map(i => lines[i].key)))} style={{ ...btn, padding: '3px 9px', fontSize: 11 }}>Check the not-ordered</button>
+      </div>
+      {shownIdx.map(i => {
+        const l = lines[i], st = statuses[i]
+        const head = multiScope && l.scope !== lastScope ? l.scope : null
+        lastScope = l.scope
+        return (
+          <React.Fragment key={l.key}>
+            {head && <div style={{ padding: '8px 16px 2px', fontSize: 11, fontWeight: 800, color: 'var(--text-mid)', textTransform: 'uppercase' }}>{head}</div>}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '6px 16px', borderBottom: '1px solid var(--border)', background: st.done ? 'var(--surface-2)' : undefined, opacity: st.notNeeded ? 0.6 : 1 }}>
+              <input type="checkbox" checked={selectedIds.has(l.key)} onChange={() => toggle(l.key)} style={{ width: 14, height: 14, flexShrink: 0 }} />
+              <span style={{ width: 58, textAlign: 'right', fontSize: 12.5, fontWeight: 700, flexShrink: 0 }}>{l.qty} {l.uom}</span>
+              <span style={{ width: 110, fontSize: 12, color: 'var(--text-mid)', flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.partNo || '—'}</span>
+              <span style={{ flex: 1, minWidth: 140, fontSize: 13, textDecoration: st.notNeeded ? 'line-through' : 'none' }}>{l.desc || 'Item'}</span>
+              <span style={{ display: 'flex', gap: 4, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                {st.chips.map((c, k) => <span key={k} style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 10, whiteSpace: 'nowrap', background: QL_TONE[c.tone].bg, color: QL_TONE[c.tone].fg }}>{c.label}</span>)}
+                {!st.done && (() => { const m = stockFor(l); return m ? <span title={`${m.nickname || m.name} — on the shelf`} style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 10, whiteSpace: 'nowrap', background: '#e6f4ea', color: '#1e7a34' }}>📦 {Number(m.qty) || 0} in Stock</span> : null })()}
+              </span>
             </div>
-          ))}
-        </div>
-      ))}
-      <div style={{ paddingTop: 6 }}>
-        <div style={{ fontSize: 11, color: 'var(--text-light)', marginBottom: 6 }}>
-          {selectedIds.size} of {allMaterials.length} checked — check the ones you want to send off for pricing or ordering.
-        </div>
+          </React.Fragment>
+        )
+      })}
+      <div style={{ padding: '12px 16px', display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', borderBottom: '1px solid var(--border)', background: checked.length ? '#fbfcfe' : undefined }}>
+        <span style={{ fontSize: 11.5, fontWeight: 800, color: 'var(--text-mid)', marginRight: 4 }}>{checked.length || 'No'} checked →</span>
+        <button disabled={!checked.length} style={btn} onClick={() => toSheet('order')} title="On the order sheet as a material order for this job">🛒 Order sheet — Material order</button>
+        <button disabled={!checked.length} style={btn} onClick={() => toSheet('pricing')} title={`On the order sheet as pricing — the quote that comes back is filed under ${quote.quoteNumber} and in Pricing`}>💲 Order sheet — Pricing</button>
+        <button disabled={!checked.length} style={btn} onClick={fromStock} title="Take what's still needed out of Stock onto Materials Actual — anything Stock is short of stays open to order">📦 From Stock → Actual</button>
+        <button disabled={!checked.length} style={btn} onClick={() => notNeeded(true)}>✕ Not needed</button>
+        <button disabled={!checked.length} style={{ ...btn, color: 'var(--text-mid)' }} onClick={() => notNeeded(false)} title="Clear Not needed">↺ Needed after all</button>
+        <button disabled={!checked.length} style={{ ...btn, color: 'var(--text-mid)' }} onClick={offSheet} title="Take these back off the order sheet (not yet sent)">Off the order sheet</button>
+      </div>
+      <div style={{ padding: '12px 16px' }}>
+        <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-mid)', marginBottom: 2 }}>Send the checked lines to a wholesaler — an order for this job</div>
+        <div style={{ fontSize: 11.5, color: 'var(--text-light)', marginBottom: 8 }}>The quote that comes back is tied to {project.name || 'this job'}, and each line shows here as ordered.</div>
         <WholesalerExportBar
           items={exportItems} date={todayLocal()}
-          subjectPrefix="Material pricing request"
-          saveFolder="Quotes/Materials Pricing Requests"
-          emptyMessage="Check at least one material first."
+          subjectPrefix={`Material order — ${customer ? customer.name + ' — ' : ''}${project.name || 'Job'}`}
+          saveFolder={jobFolder} jobs={[{ id: project.id, name: project.name }]}
+          emptyMessage="Check at least one quote line first."
         />
       </div>
     </div>
@@ -4376,7 +4234,7 @@ function QuotedLaborView({ quote, onImport }) {
 
 // Shared shell for the "Quoted" tab in both Materials and Labor — handles
 // picking which linked quote to look at when there's more than one.
-function QuotedTabShell({ project, quotesStore, ViewComponent, onImport }) {
+function QuotedTabShell({ project, quotesStore, ViewComponent, onImport, render }) {
   const [activeId, setActiveId] = useState(null)
   if (quotesStore.loading) {
     return <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-light)', fontSize: 13 }}>Loading…</div>
@@ -4401,7 +4259,7 @@ function QuotedTabShell({ project, quotesStore, ViewComponent, onImport }) {
           ))}
         </div>
       )}
-      <ViewComponent quote={active} onImport={items => onImport(active, items)} />
+      {render ? render(active) : <ViewComponent quote={active} onImport={items => onImport(active, items)} />}
     </div>
   )
 }
@@ -4919,7 +4777,6 @@ export default function Jobs({ screen, navigate, goBack }) {
     recordsKey: 'job_projects',
   })
   const { customers, records: projects, loading, needsFolder, chooseFolder,
-          addCustomer: hubAddCustomer, updateCustomer,
           addRecord, updateRecord } = store
 
   // Only needed here to clean up the other side of a Job↔Quote link when a
@@ -4971,14 +4828,17 @@ export default function Jobs({ screen, navigate, goBack }) {
     )
   }
 
+  // A customer is its Jobs side + Quotes side: add / rename / remove both
   function addCustomer(name) {
-    hubAddCustomer({ name })
+    addCustomerPair(store, quotesStore, { name })
   }
   function renameCustomer(id, name) {
-    updateCustomer(id, { name })
+    const c = customers.find(x => x.id === id)
+    if (c) renameCustomerPair(store, quotesStore, c, 'jobs', name)
   }
   function deleteCustomer(id) {
-    updateCustomer(id, { trashedAt: new Date().toISOString() })
+    const c = customers.find(x => x.id === id)
+    if (c) trashCustomerPair(store, quotesStore, c, 'jobs')
     if (expandedCustomerId === id) setExpandedCustomerId(null)
   }
   function addProject(customerId, { type, co, name, notes }) {
@@ -5019,12 +4879,12 @@ export default function Jobs({ screen, navigate, goBack }) {
 
   return (
     <div>
-      {customers.filter(c => !c.trashedAt).length === 0 && (
+      {customers.filter(c => !c.trashedAt && !c.sleepingAt).length === 0 && (
         <div style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-light)', fontSize: 13 }}>
           No customers yet — add one below.
         </div>
       )}
-      {customers.filter(c => !c.trashedAt).map(c => (
+      {customers.filter(c => !c.trashedAt && !c.sleepingAt).map(c => (
         <CustomerBlock
           key={c.id}
           customer={c}

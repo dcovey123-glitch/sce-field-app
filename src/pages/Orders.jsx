@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { mergeOrders, groupOrders, groupByFiling, previousOrders, FILE_TYPES, fileType, STALE_DAYS, quoteNumbersOf, checkQuoteSlips, orderParts, checkPoEmails, refsOf, isFiledOrder, refreshFeed } from '../api/orders.js'
+import { mergeOrders, groupOrders, groupByFiling, previousOrders, FILE_TYPES, fileType, STALE_DAYS, quoteNumbersOf, checkQuoteSlips, orderParts, checkPoEmails, refsOf, isFiledOrder, refreshFeed, resolvePoEmailsPending, normPo } from '../api/orders.js'
+import { useAutoMode, useAutoSkip } from '../api/automations.js'
+import AutoReview from '../components/AutoReview.jsx'
 import { useLocalStore } from '../api/useLocalStore.js'
 import { useHubStore } from '../api/useHubStore.js'
 import { poStatus } from '../api/billingCheck.js'
@@ -523,7 +525,7 @@ export default function Orders({ onAttentionChange, embedded = false, query, ext
     try {
       const pr = await checkPoEmails()
       setPoMsg(pr)
-      if (pr.applied.length) await load()
+      if (pr.applied.length || (pr.pending || []).length) await load()
     } catch { /* ignore */ }
     setSlipCheck({ busy: true, msg: 'Checking Quote Slips for new quotes…' })
     try {
@@ -787,11 +789,12 @@ export default function Orders({ onAttentionChange, embedded = false, query, ext
           {slipCheck.msg}
         </div>
       )}
-      {poMsg && (poMsg.applied.length > 0 || poMsg.unmatched.length > 0 || poMsg.missing) && (
+      {poMsg && (poMsg.applied.length > 0 || poMsg.unmatched.length > 0 || poMsg.missing || (poMsg.pending || []).length > 0) && (
         <div style={{ flexBasis: '100%', fontSize: 12, color: 'var(--text-mid)', background: poMsg.applied.length ? 'var(--green-bg)' : 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--rs)', padding: '6px 10px', display: 'flex', gap: 8, alignItems: 'flex-start' }}>
           <span style={{ flex: 1 }}>
             {poMsg.missing && <>📧 No “PO Emails” folder in Field App yet — set up the Power Automate flow for Jonathan's emails, and Refresh picks up his POs.</>}
             {poMsg.applied.length > 0 && <>📧 From Jonathan's emails: {poMsg.applied.map(a => `PO ${a.po} → ${a.row}`).join(' · ')}. </>}
+            {(poMsg.pending || []).length > 0 && <>📧 {poMsg.pending.length} PO{poMsg.pending.length === 1 ? '' : 's'} from Jonathan's emails waiting for your OK (below). </>}
             {poMsg.unmatched.length > 0 && <>⚠ {poMsg.unmatched.map(u => `PO ${u.po}${u.subject ? ` (“${u.subject}”)` : ''}: ${u.note}`).join(' · ')}</>}
           </span>
           <button style={btn()} onClick={() => setPoMsg(null)}>OK</button>
@@ -834,16 +837,40 @@ export default function Orders({ onAttentionChange, embedded = false, query, ext
   }, [state.feed, state.local, matOrders, exportExtra])
 
   const balanceOf = o => poStatus(o.poNumber, matOrders, rows)
-  // A PO whose quote and slips now balance gets marked Received
-  const autoMarked = React.useRef(new Set())
-  useEffect(() => {
-    if (!state.feed) return
-    const ids = rows.filter(o => o.status === 'Ordered' && o.poNumber && !autoMarked.current.has(o.id) && balanceOf(o).balanced).map(o => o.id)
+  // Automation "Mark a PO Received when it balances" (Ask first / Automatic / Off)
+  const [modeBal, setModeBal] = useAutoMode('po-balanced')
+  const [skipBal, addSkipBal] = useAutoSkip('po-balanced')
+  const balancedNow = state.feed && modeBal !== 'off' ? rows.filter(o => o.status === 'Ordered' && o.poNumber && balanceOf(o).balanced) : []
+  const balKey = o => o.id + ':' + normPo(o.poNumber)
+  const balAsk = modeBal === 'ask' ? balancedNow.filter(o => !skipBal.has(balKey(o))).map(o => ({ key: balKey(o), text: `PO ${o.poNumber} — ${o.supplier || ''} ${quoteNumbersOf(o)[0] || o.quoteNumber || ''}`.trim(), sub: 'slips add up to the quote → mark Received' })) : []
+  function markBalanced(keys) {
+    const pick = new Set(keys)
+    const ids = balancedNow.filter(o => pick.has(balKey(o))).map(o => o.id)
     if (!ids.length) return
     ids.forEach(id => autoMarked.current.add(id))
     saveLocal(ov => { const at = new Date().toISOString(); ids.forEach(id => { ov[id] = { ...(ov[id] || {}), status: 'Received', at, balancedAt: at } }) })
+  }
+  const autoMarked = React.useRef(new Set())
+  useEffect(() => {
+    if (modeBal !== 'auto') return
+    const ids = balancedNow.filter(o => !autoMarked.current.has(o.id))
+    if (ids.length) markBalanced(ids.map(balKey))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.feed, state.local, matOrders])
+  }, [state.feed, state.local, matOrders, modeBal])
+
+  // Automation "PO numbers from Jonathan's emails": matches waiting for your OK
+  const [modePo, setModePo] = useAutoMode('po-emails')
+  const poPending = Object.values((state.local && state.local.poEmailsPending) || {})
+  const poAsk = modePo === 'off' ? [] : poPending.map(p => ({ key: p.key, text: `PO ${p.po} → ${p.row}`, sub: p.subject ? `“${p.subject}”` : p.file }))
+  async function resolvePo(keys, apply) {
+    let fresh = state.local
+    try { const r = await window.desktop.ordersLoad(); if (r && r.local) fresh = r.local } catch { /* use what we have */ }
+    const next = resolvePoEmailsPending(fresh, keys, apply)
+    setState(st => ({ ...st, local: next }))
+    const ok = await window.desktop.ordersSaveLocal(next)
+    if (!ok) alert('Could not save that change. Check that the Field App folder is still there.')
+    else { try { window.dispatchEvent(new Event('orders-local-changed')) } catch { /* ignore */ } refreshFeed(true) }
+  }
   if (state.loading) return <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-light)', fontSize: 13 }}>Loading orders…</div>
 
   if (state.error === 'not-desktop') {
@@ -896,6 +923,10 @@ export default function Orders({ onAttentionChange, embedded = false, query, ext
   return (
     <div style={{ padding: embedded ? '12px 16px' : 16, maxWidth: embedded ? 'none' : 1100 }}>
       {header}
+      {!listOnly && <>
+        <AutoReview compact id="po-emails" items={poAsk} mode={modePo} onMode={setModePo} onApply={keys => resolvePo(keys, true)} onSkip={keys => resolvePo(keys, false)} />
+        <AutoReview compact id="po-balanced" items={balAsk} mode={modeBal} onMode={setModeBal} onApply={markBalanced} onSkip={addSkipBal} />
+      </>}
       {nothing && view !== 'previous' && <div style={{ padding: 30, textAlign: 'center', color: 'var(--text-light)', fontSize: 13 }}>{q ? 'Nothing matches that search.' : 'No orders yet.'}</div>}
       {view === 'previous' ? (
         (() => {

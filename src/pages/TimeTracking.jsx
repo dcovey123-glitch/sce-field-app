@@ -454,7 +454,7 @@ export default function TimeTracking({ embedded = false }) {
       {editing && (
         <TimeEntryEditor
           entry={editing} workers={workers}
-          customers={jobsStore.customers.filter(c => !c.trashedAt)}
+          customers={jobsStore.customers.filter(c => !c.trashedAt && !c.sleepingAt)}
           jobs={jobsStore.records.filter(j => !j.trashedAt)}
           onCancel={() => setEditing(null)} onSave={vals => saveEdit(editing, vals)}
           onDelete={() => removeEntry(editing)}

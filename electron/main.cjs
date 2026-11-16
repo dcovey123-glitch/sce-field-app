@@ -894,6 +894,33 @@ handleDataWrite('data:moveRecordToCustomer', (e, { hub, oldCustomerFolder, newCu
   return { ok: true, folder: path.basename(newPath) }
 })
 
+// Merging customers: anything still in the old customer's folder that isn't a
+// job / quote record (files or folders you put there yourself) moves into
+// "From <old name>" in the customer you keep, so emptying Trash later can't
+// take it with the old folder. customer.json stays behind.
+handleDataWrite('data:moveCustomerLooseItems', (e, { hub, oldCustomerFolder, newCustomerFolder, fromName, recordFile }) => {
+  const oldCustPath = path.join(dataRoot, hubFolderName(hub), oldCustomerFolder)
+  const newCustPath = path.join(dataRoot, hubFolderName(hub), newCustomerFolder)
+  if (!fs.existsSync(oldCustPath)) return { ok: true, moved: 0 }
+  const loose = fs.readdirSync(oldCustPath).filter(n => {
+    if (n === 'customer.json') return false
+    const p = path.join(oldCustPath, n)
+    // a record folder still here (not moved) stays with its customer
+    if (fs.statSync(p).isDirectory() && recordFile && fs.existsSync(path.join(p, recordFile))) return false
+    return true
+  })
+  if (!loose.length) return { ok: true, moved: 0 }
+  ensureDir(newCustPath)
+  const dest = uniqueDir(newCustPath, `From ${String(fromName || oldCustomerFolder).replace(/[<>:"/\\|?*]/g, ' ').trim()}`)
+  ensureDir(dest)
+  for (const n of loose) {
+    const src = path.join(oldCustPath, n)
+    fs.cpSync(src, path.join(dest, n), { recursive: true })
+    fs.rmSync(src, { recursive: true, force: true })
+  }
+  return { ok: true, moved: loose.length, folder: path.basename(dest) }
+})
+
 // ── App storage snapshot ──
 // Materials, timesheets, notes, non-job time, to-dos, trash, etc. live in the
 // app's internal storage, not in record folders. The app mirrors them into

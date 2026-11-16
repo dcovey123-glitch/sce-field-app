@@ -126,7 +126,9 @@ function finish(p, mark, billingFlag) {
       : pricing ? `No PO · kept for pricing${filing ? ' (' + filing + ')' : forQuote ? ' (quote ' + (forQuote.number || forQuote.title) + ')' : ''}` : 'No PO · old quote the email run archived'
   } else if (!po && !anyIn && !slips.some(o => noPoState(o) === 'none')) {
     stage = 'waiting'; why = `Quote in ${date || ''} · no PO yet`
-  } else if (mark.closed || oldRecord || allArchived || (po && feedClosed)) {
+  } else if (mark.closed || oldRecord || ((allArchived || (po && feedClosed)) && !unused)) {
+    // Closed only once every line is on a job or in Stock (or you closed it
+    // yourself with a reason) — archived / closed in Orders & POs isn't enough
     stage = 'closed'
     why = mark.closed ? `Closed by you${mark.reason ? ' — ' + mark.reason : ''}` : oldRecord ? 'Old pick-up record (before job tracking)' : allArchived ? 'Sent, every line on a job or Stock, balanced' : 'Closed in Orders & POs'
   } else if (!received) {
@@ -135,9 +137,9 @@ function finish(p, mark, billingFlag) {
   } else if (!live.length) {
     stage = 'received'; why = `PO ${po} · received${forced ? ' (closed without slips)' : ''} · no slip in Materials`
   } else if (!sent) {
-    stage = 'received'; why = `${po ? 'PO ' + po + ' · ' : ''}all received · not sent to Jonathan yet`
+    stage = 'received'; why = `${po ? 'PO ' + po + ' · ' : ''}all received · ready to send to Jonathan${unused ? ` · ${unused} line${unused === 1 ? '' : 's'} still to put on a job or Stock` : ''}`
   } else if (unused || billed) {
-    stage = 'sent'; why = 'Sent to Jonathan · something still open'
+    stage = 'sent'; why = `Sent to Jonathan · ${unused ? `${unused} line${unused === 1 ? '' : 's'} still to put on a job or Stock before it closes` : 'billing still to check'}`
   } else {
     stage = 'closed'; why = 'Sent, every line on a job or Stock'
   }

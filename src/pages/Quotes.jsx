@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react'
 import NoteGroups from '../components/NoteGroups.jsx'
 import FlagBanner from '../components/FlagBanner.jsx'
-import { quotePlannedMaterials } from '../api/plannedMaterials.js'
 import { linkedJobsCustomer } from '../api/sharedCustomer.js'
+import { addCustomerPair, renameCustomerPair, trashCustomerPair } from '../api/customers.js'
 import { useLocalStore } from '../api/useLocalStore.js'
 import { useHubStore } from '../api/useHubStore.js'
 import FileAttachments from '../components/FileAttachments.jsx'
@@ -865,6 +865,15 @@ function QuoteRow({ quote, onUpdate, onDelete, onOpen, onRequestApprove, onReque
           ⊘
         </button>
       )}
+      {quote.invalidated && (
+        <button
+          onClick={e => { e.stopPropagation(); if (window.confirm(`Bring quote ${quote.quoteNumber || ''} back as a live quote?`)) onUpdate(restoreQuotePatch(quote)) }}
+          title="Restore — make it a live quote again" aria-label="Restore quote"
+          style={{ justifySelf: 'center', background: 'none', border: 'none', color: 'var(--text-light)', fontSize: 13, cursor: 'pointer', padding: '0 2px' }}
+        >
+          ↺
+        </button>
+      )}
       <span style={{ ...chevronWrapStyle, justifySelf: 'center' }}><ChevronDown open={false} /></span>
       <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--blue)', whiteSpace: 'nowrap', textAlign: 'right' }}>
         {total > 0 ? money(total) : ''}
@@ -1677,9 +1686,11 @@ const modalBtnStyle = (primary) => ({
   color: primary ? 'var(--navy)' : 'var(--text)',
 })
 
+// The Jobs side of the quote's customer — by link ID only (never by name, so a
+// look-alike name can't pull the job onto the wrong customer). Missing → made,
+// carrying the same link ID.
 function findOrCreateJobCustomer(jobsStore, name, quoteCustomer) {
-  const existing = linkedJobsCustomer(quoteCustomer, jobsStore.customers)
-    || jobsStore.customers.find(c => (c.name || '').trim().toLowerCase() === name.trim().toLowerCase())
+  const existing = quoteCustomer ? linkedJobsCustomer(quoteCustomer, jobsStore.customers.filter(c => !c.trashedAt)) : null
   if (existing) return Promise.resolve(existing)
   return jobsStore.addCustomer({ name, ...(quoteCustomer ? { sharedId: quoteCustomer.sharedId || quoteCustomer.id } : {}) })
 }
@@ -1711,8 +1722,7 @@ export function ApprovalModal({ quote, quoteCustomerName, quoteCustomer, jobsSto
         linkedQuoteIds: newIds,
         quotedMaterials: alreadyCounted ? previousMaterials : previousMaterials + quoteMaterialsTotal(quote),
         quotedLabor: alreadyCounted ? previousLabor : previousLabor + quoteLaborTotal(quote),
-        // Pre-fill the job's editable planned-materials list from this quote
-        ...(alreadyCounted ? {} : { plannedMaterials: [...(job?.plannedMaterials || []), ...quotePlannedMaterials(quote)] }),
+        // (the job's material list is the quote itself — Materials → 📄 Quoted)
       })
       await onDone({ approved: true, linkedJobId: projectId, linkType: type })
     } catch (err) {
@@ -1888,6 +1898,11 @@ export function ApprovalModal({ quote, quoteCustomerName, quoteCustomer, jobsSto
 }
 
 // Simple confirm — used when un-approving, or approving a quote already linked to a job
+// Un-invalidate: a live quote again; the reason it was invalidated is kept in its history
+export function restoreQuotePatch(quote) {
+  return { invalidated: false, invalidReason: '', invalidHistory: [...(quote.invalidHistory || []), { reason: quote.invalidReason || '', restoredAt: new Date().toISOString() }] }
+}
+
 export function SimpleApprovalConfirm({ quote, approving, linkedJobName, onConfirm, onClose }) {
   return (
     <ModalOverlay onClose={onClose}>
@@ -1897,6 +1912,12 @@ export function SimpleApprovalConfirm({ quote, approving, linkedJobName, onConfi
         </div>
         {approving && linkedJobName && (
           <div style={{ fontSize: 13, color: 'var(--text-mid)', marginBottom: 16 }}>Linked to job: {linkedJobName}</div>
+        )}
+        {!approving && linkedJobName && (
+          <div style={{ fontSize: 13, color: '#8a5d00', background: '#fff8e6', borderRadius: 6, padding: '8px 10px', marginBottom: 4, lineHeight: 1.45 }}>
+            Its job <b>{linkedJobName}</b> stays as it is — labor, materials and billing are kept, and it stays linked to this quote.
+            If the work is off, close or delete the job yourself.
+          </div>
         )}
         <div style={{ display: 'flex', gap: 8, marginTop: approving && !linkedJobName ? 0 : 12 }}>
           <button style={modalBtnStyle(false)} onClick={onClose}>Cancel</button>
@@ -3015,7 +3036,7 @@ export default function Quotes({ screen, navigate, goBack }) {
     recordsKey: 'quote_quotes',
   })
   const { customers, records: quotes, loading, needsFolder, chooseFolder,
-          addCustomer: hubAddCustomer, updateCustomer,
+          updateCustomer,
           addRecord, updateRecord } = store
 
   // A second, independent instance of the Jobs store — used only for
@@ -3114,14 +3135,17 @@ export default function Quotes({ screen, navigate, goBack }) {
     )
   }
 
+  // A customer is its Jobs side + Quotes side: add / rename / remove both
   function addCustomer({ name, code }) {
-    hubAddCustomer({ name, code, nextQuoteNum: 1 })
+    addCustomerPair(jobsStore, store, { name, code })
   }
   function renameCustomer(id, name) {
-    updateCustomer(id, { name })
+    const c = customers.find(x => x.id === id)
+    if (c) renameCustomerPair(jobsStore, store, c, 'quotes', name)
   }
   function deleteCustomer(id) {
-    updateCustomer(id, { trashedAt: new Date().toISOString() })
+    const c = customers.find(x => x.id === id)
+    if (c) trashCustomerPair(jobsStore, store, c, 'quotes')
     if (expandedCustomerId === id) setExpandedCustomerId(null)
   }
   function addQuote(customerId, { title, notes }) {
@@ -3173,12 +3197,12 @@ export default function Quotes({ screen, navigate, goBack }) {
   }
 
   const approvedByCustomer = customers
-    .filter(c => !c.trashedAt)
+    .filter(c => !c.trashedAt && !c.sleepingAt)
     .map(c => ({ customer: c, list: sortByQuoteNumber(quotes.filter(q => q.customerId === c.id && q.approved && !q.invalidated && !q.trashedAt)) }))
     .filter(g => g.list.length > 0)
 
   const invalidatedByCustomer = customers
-    .filter(c => !c.trashedAt)
+    .filter(c => !c.trashedAt && !c.sleepingAt)
     .map(c => ({ customer: c, list: sortByQuoteNumber(quotes.filter(q => q.customerId === c.id && q.invalidated && !q.trashedAt)) }))
     .filter(g => g.list.length > 0)
 
@@ -3203,12 +3227,12 @@ export default function Quotes({ screen, navigate, goBack }) {
         <PriceReferenceTab />
       ) : (
         <div>
-      {customers.filter(c => !c.trashedAt).length === 0 && (
+      {customers.filter(c => !c.trashedAt && !c.sleepingAt).length === 0 && (
         <div style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-light)', fontSize: 13 }}>
           No customers yet — add one below.
         </div>
       )}
-      {customers.filter(c => !c.trashedAt).map(c => (
+      {customers.filter(c => !c.trashedAt && !c.sleepingAt).map(c => (
         <CustomerBlock
           key={c.id}
           customer={c}

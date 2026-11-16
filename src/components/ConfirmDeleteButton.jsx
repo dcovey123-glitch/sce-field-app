@@ -4,7 +4,7 @@ import React, { useState } from 'react'
 // a second tap on a small popover before actually deleting anything. Self-
 // contained (manages its own confirm state), so it can be swapped in
 // anywhere without needing to restructure the surrounding row.
-export default function ConfirmDeleteButton({ onConfirm, style, wrapperStyle, ariaLabel = 'Delete', confirmText = 'Delete this? This can\'t be undone.', label = 'Delete', triggerLabel = '×', popoverAlign = 'right' }) {
+export default function ConfirmDeleteButton({ onConfirm, style, wrapperStyle, ariaLabel = 'Delete', confirmText = 'Delete this? This can\'t be undone.', label = 'Delete', triggerLabel = '×', popoverAlign = 'right', popoverWidth = 170 }) {
   const [confirming, setConfirming] = useState(false)
 
   return (
@@ -22,7 +22,7 @@ export default function ConfirmDeleteButton({ onConfirm, style, wrapperStyle, ar
           style={{
             position: 'absolute', top: '100%', [popoverAlign]: 0, marginTop: 4, zIndex: 50,
             background: '#fff', border: '1px solid #c0392b', borderRadius: 8,
-            padding: 8, boxShadow: '0 4px 12px rgba(0,0,0,.18)', width: 170,
+            padding: 8, boxShadow: '0 4px 12px rgba(0,0,0,.18)', width: popoverWidth,
           }}
         >
           <div style={{ fontSize: 11, color: '#c0392b', marginBottom: 6, fontWeight: 600, lineHeight: 1.3 }}>{confirmText}</div>

@@ -84,7 +84,7 @@ export default function HitList({ full = false }) {
     const byCust = new Map()
     custTodos.forEach(t => { if (!byCust.has(t.customerId)) byCust.set(t.customerId, { name: t.customerName, items: [] }); byCust.get(t.customerId).items.push(t) })
     const groups = [...byCust.entries()].sort((a, b) => a[1].name.localeCompare(b[1].name))
-    const customers = (jobsHub.customers || []).filter(c => !c.trashedAt).slice().sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')))
+    const customers = (jobsHub.customers || []).filter(c => !c.trashedAt && !c.sleepingAt).slice().sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')))
     const head = { fontSize: 11.5, fontWeight: 800, color: 'var(--text-light)', textTransform: 'uppercase', letterSpacing: '.05em', margin: '18px 0 4px' }
     return (
       <div style={{ height: '100vh', overflowY: 'auto', background: 'var(--bg, #f6f8fb)' }}>

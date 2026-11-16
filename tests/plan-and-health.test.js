@@ -89,10 +89,9 @@ describe('job health — is the project current?', () => {
     expect(slipDuplicateOf(hand, [slipE, hand])).toBe(slipE)
     expect(jobDeficiencies(job({ materialEntries: [slipE, hand] }), { status: 'ongoing' })).toContain('Materials: 1 item charged twice')
   })
-  it('plan lines not decided, or to order and not sent, are listed', () => {
+  it('the old Plan no longer raises job-health lines (the quote is the reference now)', () => {
     const j = job({ plannedMaterials: [{ id: 'p1', item: 'A', qty: 1, source: '' }, { id: 'p2', item: 'B', qty: 1, source: 'order' }] })
-    expect(jobDeficiencies(j, { status: 'ongoing' })).toEqual(['Plan: 1 line not set to Stock or Order', 'Plan: 1 line to order, not sent'])
-    expect(jobDeficiencies(j, { status: 'ongoing', orderSheet: [{ planRefs: [{ jobId: 'j1', lineId: 'p2' }] }] })).toEqual(['Plan: 1 line not set to Stock or Order'])
+    expect(jobDeficiencies(j, { status: 'ongoing' })).toEqual([])
   })
   it('flagged labor, notes put on Needs you, overdue tasks and open deficiencies keep it from being current', () => {
     const j = job({

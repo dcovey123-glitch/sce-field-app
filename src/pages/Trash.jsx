@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from 'react'
 import { useLocalStore } from '../api/useLocalStore.js'
 import { useHubStore } from '../api/useHubStore.js'
+import { useAutoMode, useAutoSkip } from '../api/automations.js'
+import AutoReview from '../components/AutoReview.jsx'
+import ConfirmDeleteButton from '../components/ConfirmDeleteButton.jsx'
 
 const PURGE_AFTER_DAYS = 30
 
@@ -55,27 +58,58 @@ export default function Trash() {
     })
   }
 
-  // Auto-purge anything past the window, quietly, once stores are ready.
+  // Past the 30 days: automation "Empty Trash after 30 days" (Ask first /
+  // Automatic / Off). Ask = listed at the top for you to delete or keep.
+  const [modePurge, setModePurge] = useAutoMode('trash-purge')
+  const [keptPurge, addKeptPurge] = useAutoSkip('trash-purge')
+  const purgeKey = it => `${it.type}:${it.id}:${it.deletedAt}`
+  const expiredItems = storesLoading || modePurge === 'off' ? [] : items.filter(it => daysSince(it.deletedAt) > PURGE_AFTER_DAYS)
+  const purgeAsk = modePurge === 'ask' ? expiredItems.filter(it => !keptPurge.has(purgeKey(it))).map(it => ({ key: purgeKey(it), text: `${typeLabel(it.type)}: ${it.label}`, sub: whatGoes(it) })) : []
+  function purge(keys) {
+    const pick = new Set(keys)
+    expiredItems.filter(it => pick.has(purgeKey(it))).forEach(deletePermanently)
+  }
   useEffect(() => {
-    if (storesLoading) return
-    jobsStore.records.filter(p => p.trashedAt && daysSince(p.trashedAt) > PURGE_AFTER_DAYS).forEach(p => jobsStore.deleteRecord(p.id))
-    jobsStore.customers.filter(c => c.trashedAt && daysSince(c.trashedAt) > PURGE_AFTER_DAYS).forEach(c => jobsStore.deleteCustomer(c.id))
-    quotesStore.records.filter(q => q.trashedAt && daysSince(q.trashedAt) > PURGE_AFTER_DAYS).forEach(q => quotesStore.deleteRecord(q.id))
-    quotesStore.customers.filter(c => c.trashedAt && daysSince(c.trashedAt) > PURGE_AFTER_DAYS).forEach(c => quotesStore.deleteCustomer(c.id))
-    const expired = trashBin.filter(t => daysSince(t.deletedAt) > PURGE_AFTER_DAYS)
-    if (expired.length > 0) {
-      purgeMaterialsTrashItems(expired)
-      const expiredIds = expired.map(t => t.id)
-      setTrashBin(list => list.filter(t => !expiredIds.includes(t.id)))
-    }
+    if (storesLoading || modePurge !== 'auto' || !expiredItems.length) return
+    purge(expiredItems.map(purgeKey))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [storesLoading])
+  }, [storesLoading, modePurge])
+
+  // What deleting for good takes with it (customers: their whole folder)
+  function whatGoes(item) {
+    if (item.type === 'job_customer') {
+      const n = jobsStore.records.filter(p => p.customerId === item.id).length
+      return `deletes the customer's folder — ${n} job${n === 1 ? '' : 's'} and their files`
+    }
+    if (item.type === 'quote_customer') {
+      const n = quotesStore.records.filter(q => q.customerId === item.id).length
+      return `deletes the customer's quotes folder — ${n} quote${n === 1 ? '' : 's'} and their files`
+    }
+    if (item.type === 'job_project' || item.type === 'quote') return 'deletes its folder and files'
+    return ''
+  }
+
+  // A customer is one customer on both sides (Jobs and Quotes): restoring
+  // either side brings back its partner removed at the same time
+  function partnerOf(item) {
+    const mine = item.type === 'job_customer' ? jobsStore.customers.find(c => c.id === item.id) : quotesStore.customers.find(c => c.id === item.id)
+    if (!mine) return null
+    const key = mine.sharedId || mine.id
+    const other = item.type === 'job_customer' ? quotesStore.customers : jobsStore.customers
+    return other.find(c => c.trashedAt && (c.sharedId || c.id) === key) || null
+  }
 
   function restore(item) {
     if (item.type === 'job_project') jobsStore.updateRecord(item.id, { trashedAt: null })
-    else if (item.type === 'job_customer') jobsStore.updateCustomer(item.id, { trashedAt: null })
+    else if (item.type === 'job_customer') {
+      jobsStore.updateCustomer(item.id, { trashedAt: null })
+      const q = partnerOf(item); if (q) quotesStore.updateCustomer(q.id, { trashedAt: null })
+    }
     else if (item.type === 'quote') quotesStore.updateRecord(item.id, { trashedAt: null })
-    else if (item.type === 'quote_customer') quotesStore.updateCustomer(item.id, { trashedAt: null })
+    else if (item.type === 'quote_customer') {
+      quotesStore.updateCustomer(item.id, { trashedAt: null })
+      const j = partnerOf(item); if (j) jobsStore.updateCustomer(j.id, { trashedAt: null })
+    }
     else {
       const entry = trashBin.find(t => t.id === item.id)
       if (!entry) return
@@ -124,11 +158,12 @@ export default function Trash() {
         )}
       </div>
       <div style={{ fontSize: 12, color: 'var(--text-light)', marginBottom: 16 }}>
-        Deleted jobs, quotes, customers, catalog and stock items, orders, and cable sections land here for 30 days before
-        they're gone for good — plenty of time to catch a mistake.
+        Deleted jobs, quotes, customers, catalog and stock items, orders, and cable sections land here. After 30 days
+        they're listed for you to delete for good or keep (see ⚙ Auto → Empty Trash after 30 days).
       </div>
 
       {restoredMsg && <div style={{ fontSize: 12, color: '#1e7a34', marginBottom: 12 }}>{restoredMsg}</div>}
+      <AutoReview compact id="trash-purge" items={purgeAsk} mode={modePurge} onMode={setModePurge} onApply={purge} onSkip={addKeptPurge} applyLabel="Delete for good" />
 
       {confirmingEmpty && (
         <div style={{ padding: 12, background: '#fdf0f0', border: '1px solid var(--red)', borderRadius: 'var(--rs)', marginBottom: 16 }}>
@@ -156,15 +191,15 @@ export default function Trash() {
           <div key={`${item.type}-${item.id}`} style={{ border: '1px solid var(--border)', borderRadius: 'var(--rs)', padding: '10px 14px', marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
             <div style={{ minWidth: 0 }}>
               <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.label}</div>
-              <div style={{ fontSize: 11, color: 'var(--text-light)' }}>{typeLabel(item.type)} · {remaining} day{remaining === 1 ? '' : 's'} left</div>
+              <div style={{ fontSize: 11, color: 'var(--text-light)' }}>{typeLabel(item.type)} · {remaining > 0 ? `${remaining} day${remaining === 1 ? '' : 's'} left` : 'past 30 days'}</div>
             </div>
             <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
               <button onClick={() => restore(item)} style={{ fontSize: 11, fontWeight: 700, color: 'var(--accent-dim)', background: 'none', border: '1px solid var(--accent)', borderRadius: 'var(--rs)', padding: '5px 10px', cursor: 'pointer' }}>
                 Restore
               </button>
-              <button onClick={() => deletePermanently(item)} style={{ fontSize: 11, color: 'var(--text-light)', background: 'none', border: '1px solid var(--border)', borderRadius: 'var(--rs)', padding: '5px 10px', cursor: 'pointer' }}>
-                Delete now
-              </button>
+              <ConfirmDeleteButton onConfirm={() => deletePermanently(item)} triggerLabel="Delete now" label="Delete" ariaLabel="Delete for good" popoverWidth={230}
+                confirmText={`Delete "${item.label}" for good?${whatGoes(item) ? ' This ' + whatGoes(item) + '.' : ''} Can't be undone.`}
+                style={{ fontSize: 11, color: 'var(--text-light)', background: 'none', border: '1px solid var(--border)', borderRadius: 'var(--rs)', padding: '5px 10px', cursor: 'pointer' }} />
             </div>
           </div>
         )

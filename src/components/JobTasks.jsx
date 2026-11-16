@@ -1,10 +1,10 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { useLocalStore } from '../api/useLocalStore.js'
 import { useHubStore } from '../api/useHubStore.js'
 import { useCrewRoster } from '../api/crewRoster.js'
 import {
   TEMPLATES_KEY, uid, newTask, tasksOf, isOverdue, isDueToday, addTasks, changeTask, removeTask, setDone, moveTask,
-  tasksFromQuote, fmtDay,
+  tasksFromQuote, fmtDay, daysSinceEdit,
 } from '../api/tasks.js'
 
 const inp = { fontSize: 13, border: '1px solid var(--border)', borderRadius: 6, padding: '6px 9px', fontFamily: 'inherit', background: 'var(--surface)', color: 'var(--text)', boxSizing: 'border-box' }
@@ -15,19 +15,25 @@ const small = { fontSize: 11, color: 'var(--text-light)' }
 // One task line. Used on the job and on the To do page.
 export function TaskRow({ t, onPatch, onToggle, onRemove, onMove, people = [], jobLabel, onOpenJob, compact }) {
   const [open, setOpen] = useState(false)
-  const [text, setText] = useState(t.text)
   const over = isOverdue(t), dueToday = isDueToday(t)
+  const age = daysSinceEdit(t)
   return (
     <div style={{ borderBottom: '1px solid var(--border)', background: t.done ? 'var(--surface-2)' : 'var(--surface)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: compact ? '6px 12px' : '8px 14px' }}>
         <input type="checkbox" checked={!!t.done} onChange={e => onToggle(e.target.checked)} style={{ width: 18, height: 18, cursor: 'pointer', flexShrink: 0 }} title={t.done ? 'Not done after all' : 'Done — records today and who'} />
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div onClick={() => setOpen(o => !o)} style={{ cursor: 'pointer', fontSize: 13.5, color: t.done ? 'var(--text-light)' : 'var(--text)', textDecoration: t.done ? 'line-through' : 'none' }}>
-            {t.text || '(no description)'}
-            {t.notes && !open && <span style={{ ...small, marginLeft: 6 }}>📝</span>}
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
+            <InlineText value={t.text} done={t.done} onSave={v => onPatch({ text: v })} />
+            {t.notes && !open && <span onClick={() => setOpen(true)} title="Has notes" style={{ ...small, cursor: 'pointer', paddingTop: 3 }}>📝</span>}
           </div>
-          {(jobLabel || t.who || t.due || t.done) && (
+          {(jobLabel || t.who || t.due || t.done || age != null) && (
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 2, ...small }}>
+              {!t.done && age != null && (
+                <span title={`${t.editedAt ? 'Last edited' : 'Added'} ${fmtDay(t.editedAt || t.createdAt)}`}
+                  style={{ fontWeight: age >= 14 ? 700 : 400, color: age >= 30 ? '#c0392b' : age >= 14 ? '#9a6610' : 'var(--text-light)' }}>
+                  🕒 {age === 0 ? 'today' : `${age} day${age === 1 ? '' : 's'}`}
+                </span>
+              )}
               {jobLabel && <a href="#" onClick={e => { e.preventDefault(); onOpenJob && onOpenJob() }} style={{ color: 'var(--blue, #2563eb)', fontWeight: 600 }}>{jobLabel}</a>}
               {t.who && !t.done && <span>👷 {t.who}</span>}
               {t.due && !t.done && <span style={{ fontWeight: 700, color: over ? '#c0392b' : dueToday ? '#9a6610' : 'var(--text-light)' }}>{over ? 'Overdue · ' : dueToday ? 'Today · ' : 'By '}{fmtDay(t.due)}</span>}
@@ -44,8 +50,6 @@ export function TaskRow({ t, onPatch, onToggle, onRemove, onMove, people = [], j
       </div>
       {open && (
         <div style={{ padding: '0 14px 10px 42px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <input value={text} onChange={e => setText(e.target.value)} onBlur={() => text.trim() && text !== t.text && onPatch({ text: text.trim() })}
-            onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur() }} style={{ ...inp, width: '100%' }} />
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
             <label style={small}>Who&nbsp;
               <select value={t.who || ''} onChange={e => onPatch({ who: e.target.value })} style={{ ...inp, padding: '4px 6px' }}>
@@ -63,6 +67,41 @@ export function TaskRow({ t, onPatch, onToggle, onRemove, onMove, people = [], j
         </div>
       )}
     </div>
+  )
+}
+
+// The task's words, edited right where they sit: click and type. Enter or
+// clicking away saves; Esc puts it back; Shift+Enter for a second line.
+// Emptying it doesn't delete the task (Delete is under ▾).
+export function InlineText({ value, done, onSave, fontSize = 13.5 }) {
+  const [v, setV] = useState(value || '')
+  const [focus, setFocus] = useState(false)
+  const ref = useRef(null)
+  useEffect(() => { if (!focus) setV(value || '') }, [value, focus])
+  // grow with the text
+  useEffect(() => { const el = ref.current; if (el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px' } }, [v])
+  const commit = () => {
+    setFocus(false)
+    const next = v.trim()
+    if (next && next !== value) onSave(next)
+    else setV(value || '')
+  }
+  return (
+    <textarea ref={ref} value={v} rows={1} placeholder="(no description)"
+      onChange={e => setV(e.target.value)} onFocus={() => setFocus(true)} onBlur={commit}
+      onKeyDown={e => {
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); e.currentTarget.blur() }
+        if (e.key === 'Escape') { setV(value || ''); setTimeout(() => ref.current && ref.current.blur(), 0) }
+      }}
+      title="Click to edit"
+      style={{
+        flex: 1, minWidth: 0, resize: 'none', overflow: 'hidden', fontFamily: 'inherit', fontSize, lineHeight: 1.35,
+        padding: '2px 6px', margin: '-3px 0 -3px -7px', borderRadius: 5, boxSizing: 'border-box',
+        border: focus ? '1px solid var(--navy)' : '1px solid transparent', background: focus ? '#fff' : 'transparent',
+        color: done && !focus ? 'var(--text-light)' : 'var(--text)', textDecoration: done && !focus ? 'line-through' : 'none', cursor: 'text',
+      }}
+      onMouseEnter={e => { if (!focus) e.currentTarget.style.borderColor = 'var(--border)' }}
+      onMouseLeave={e => { if (!focus) e.currentTarget.style.borderColor = 'transparent' }} />
   )
 }
 

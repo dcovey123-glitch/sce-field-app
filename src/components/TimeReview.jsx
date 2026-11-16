@@ -183,7 +183,7 @@ export default function TimeReview({ day, allowManual }) {
     customersKey: 'job_customers', recordsKey: 'job_projects', reloadOnFocus: true,
   })
 
-  const customers = jobsStore.customers.filter(c => !c.trashedAt)
+  const customers = jobsStore.customers.filter(c => !c.trashedAt && !c.sleepingAt)
   const jobs = jobsStore.records.filter(j => !j.trashedAt && ['onGoing', 'deficiencies'].includes(effectiveLifecycleStatus(j)))
   const allJobs = jobsStore.records.filter(j => !j.trashedAt)
   const selectable = [...jobs, ...allJobs.filter(j => pending.some(p => p.jobId === j.id) && !jobs.includes(j))]

@@ -4,10 +4,11 @@ import CustomerNotes from '../components/CustomerNotes.jsx'
 import { linkedQuotesCustomer, sharedKey, useSharedCustomerLinks } from '../api/sharedCustomer.js'
 import { useHubStore } from '../api/useHubStore.js'
 import { SectionPage, ProjectBlock, ProjectColumnHeader, effectiveLifecycleStatus, topLevelJobs } from './Jobs.jsx'
-import { quoteGrandTotal, QuoteAddRow, nextQuoteNumber, sortByQuoteNumber, EditableField, QuoteDetailPage, ApprovalDot, ApprovalModal, SimpleApprovalConfirm, InvalidateQuoteModal } from './Quotes.jsx'
+import { quoteGrandTotal, QuoteAddRow, nextQuoteNumber, sortByQuoteNumber, EditableField, QuoteDetailPage, ApprovalDot, ApprovalModal, SimpleApprovalConfirm, InvalidateQuoteModal, restoreQuotePatch } from './Quotes.jsx'
 import { generateQuoteDocxBase64, quoteExportFileName } from '../api/exportQuote.js'
-import { todayLocal } from '../api/albertaTime.js'
 import { money, fmtDate } from '../api/format.js'
+import { useLocalStore } from '../api/useLocalStore.js'
+import { closeBlockers, statusPatch } from '../api/jobClose.js'
 
 // Blank-last date sort, newest first among the ones that have a date.
 function sortByDateDesc(list, key) {
@@ -126,9 +127,16 @@ function FabMenu({ onNewJob, onNewQuote }) {
 // the job name — the full deficiency list lives in its own popup window.
 function NeedsReviewSection({ projects, updateProject }) {
   const sorted = sortByDateDesc(projects, 'dateComplete')
+  const [orders] = useLocalStore('material_orders', [])
+  // Same closing rules as every other status button (jobClose.js)
   function assign(project, value) {
-    const patch = { lifecycleStatus: value, completed: true, dateComplete: project.dateComplete || todayLocal() }
-    updateProject(project.id, patch)
+    const b = closeBlockers(project, orders)
+    if (b.any) {
+      const why = [b.laborFlags.length ? `${b.laborFlags.length} flagged labor entr${b.laborFlags.length === 1 ? 'y' : 'ies'}` : '', b.leftovers.length ? `${b.leftovers.length} slip line${b.leftovers.length === 1 ? '' : 's'} not used on the job or pushed to Stock` : ''].filter(Boolean).join(' and ')
+      alert(`"${project.name || 'This job'}" can't be closed yet: ${why}. Open the job and sort ${b.laborFlags.length + b.leftovers.length === 1 ? 'it' : 'them'} out first.`)
+      return
+    }
+    updateProject(project.id, statusPatch(project, value))
   }
   return sorted.map(p => (
     <div key={p.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '10px 18px', borderTop: '1px solid var(--border)', flexWrap: 'wrap' }}>
@@ -139,7 +147,7 @@ function NeedsReviewSection({ projects, updateProject }) {
         </div>
       </div>
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-        <button onClick={() => updateProject(p.id, { lifecycleStatus: 'onGoing', completed: false })} style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-light)', background: 'var(--surface-2)', border: 'none', borderRadius: 20, padding: '5px 10px', cursor: 'pointer' }}>
+        <button onClick={() => updateProject(p.id, statusPatch(p, 'onGoing'))} style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-light)', background: 'var(--surface-2)', border: 'none', borderRadius: 20, padding: '5px 10px', cursor: 'pointer' }}>
           Active
         </button>
         <button onClick={() => assign(p, 'deficiencies')} style={{ fontSize: 11, fontWeight: 700, color: '#9a6610', background: '#fff8e6', border: 'none', borderRadius: 20, padding: '5px 10px', cursor: 'pointer' }}>
@@ -194,7 +202,7 @@ function ProjectListSection({ projects, sortKey, customer, updateProject, delete
   )
 }
 
-function QuoteRowSimple({ q, customerFolder, onOpen, onUpdateNotes, onUpdateReason, onRequestApprove, onRequestBack, onInvalidate, onDuplicate, onUpdateTitle }) {
+function QuoteRowSimple({ q, onRestore, customerFolder, onOpen, onUpdateNotes, onUpdateReason, onRequestApprove, onRequestBack, onInvalidate, onDuplicate, onUpdateTitle }) {
   const [invalidating, setInvalidating] = useState(false)
   return (
     <div onClick={onOpen} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 18px', borderTop: '1px solid var(--border)', cursor: 'pointer' }}>
@@ -259,6 +267,15 @@ function QuoteRowSimple({ q, customerFolder, onOpen, onUpdateNotes, onUpdateReas
           ⊘
         </button>
       )}
+      {q.invalidated && onRestore && (
+        <button
+          onClick={e => { e.stopPropagation(); if (window.confirm(`Bring quote ${q.quoteNumber || ''} back as a live quote?`)) onRestore() }}
+          title="Restore — make it a live quote again" aria-label="Restore quote"
+          style={{ background: 'none', border: 'none', color: 'var(--text-light)', fontSize: 15, cursor: 'pointer', padding: '0 2px', flexShrink: 0 }}
+        >
+          ↺
+        </button>
+      )}
       {invalidating && (
         <div onClick={e => e.stopPropagation()}>
           <InvalidateQuoteModal quote={q} onClose={() => setInvalidating(false)} onConfirm={reason => onInvalidate(reason)} />
@@ -271,7 +288,7 @@ function QuoteRowSimple({ q, customerFolder, onOpen, onUpdateNotes, onUpdateReas
 // Same three-way split as the original Quotes page — active, then Approved
 // and Invalidated tucked into their own collapsed sub-sections — each sorted
 // by quote number exactly the same way (numeric-aware, blank-last).
-function QuotesSection({ quotes, customerFolder, onAdd, onOpenQuote, updateQuoteNotes, updateQuoteReason, onRequestApprove, onRequestBack, onInvalidateQuote, onDuplicate, updateQuoteTitle }) {
+function QuotesSection({ quotes, onRestoreQuote, customerFolder, onAdd, onOpenQuote, updateQuoteNotes, updateQuoteReason, onRequestApprove, onRequestBack, onInvalidateQuote, onDuplicate, updateQuoteTitle }) {
   const [showApproved, setShowApproved] = useState(false)
   const [showInvalidated, setShowInvalidated] = useState(false)
   const active = sortByQuoteNumber(quotes.filter(q => !q.approved && !q.invalidated))
@@ -312,7 +329,7 @@ function QuotesSection({ quotes, customerFolder, onAdd, onOpenQuote, updateQuote
             </svg>
             Invalidated ({invalidated.length})
           </button>
-          {showInvalidated && invalidated.map(q => <QuoteRowSimple key={q.id} q={q} customerFolder={customerFolder} onOpen={() => onOpenQuote(q.id)} onUpdateNotes={v => updateQuoteNotes(q.id, v)} onUpdateReason={v => updateQuoteReason(q.id, v)} onRequestApprove={onRequestApprove} onRequestBack={onRequestBack} onInvalidate={reason => onInvalidateQuote(q.id, reason)} onDuplicate={onDuplicate} onUpdateTitle={v => updateQuoteTitle(q.id, v)} />)}
+          {showInvalidated && invalidated.map(q => <QuoteRowSimple key={q.id} q={q} onRestore={() => onRestoreQuote(q)} customerFolder={customerFolder} onOpen={() => onOpenQuote(q.id)} onUpdateNotes={v => updateQuoteNotes(q.id, v)} onUpdateReason={v => updateQuoteReason(q.id, v)} onRequestApprove={onRequestApprove} onRequestBack={onRequestBack} onInvalidate={reason => onInvalidateQuote(q.id, reason)} onDuplicate={onDuplicate} onUpdateTitle={v => updateQuoteTitle(q.id, v)} />)}
         </div>
       )}
     </div>
@@ -516,8 +533,8 @@ export default function CustomerJobsWindow({ customerId, initialProjectId = null
     { id: 'unbilled', label: 'Complete (Unbilled)', count: unbilled.length, color: '#1a5fa0', bg: '#e8f2fc' },
     { id: 'billed', label: 'Complete (Billed)', count: billed.length, color: '#1e7a34', bg: '#e6f4ea' },
     { id: 'quotes', label: 'Quotes', count: quotes.length, color: '#4a5568', bg: '#eef1f4' },
-    { id: 'photos', label: 'Photos', color: '#4a5568', bg: '#eef1f4', opensWindow: true },
-    { id: 'documents', label: 'Documents', color: '#4a5568', bg: '#eef1f4', opensWindow: true },
+    // One button: the window it opens has Photos / Documents tabs (opens on Photos)
+    { id: 'photos', label: 'Photos & Documents', color: '#4a5568', bg: '#eef1f4', opensWindow: true },
   ]
 
   return (
@@ -585,7 +602,7 @@ export default function CustomerJobsWindow({ customerId, initialProjectId = null
         )}
         {activeTab === 'quotes' && (
           <QuotesSection
-            onDuplicate={duplicateQuote} updateQuoteTitle={updateQuoteTitle}
+            onDuplicate={duplicateQuote} updateQuoteTitle={updateQuoteTitle} onRestoreQuote={q => updateQuote(q.id, restoreQuotePatch(q))}
             quotes={quotes} customerFolder={(quotesCustomer || {}).folder} onAdd={addQuote} onOpenQuote={quoteId => navigate({ view: 'quoteDetail', quoteId })}
             updateQuoteNotes={updateQuoteNotes} updateQuoteReason={updateQuoteReason} onInvalidateQuote={invalidateQuote}
             onRequestApprove={handleDotClick} onRequestBack={quote => updateQuote(quote.id, { status: 'red' })}

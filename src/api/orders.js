@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { readMode } from './automations.js'
 import { aiPost, AI_MODEL } from './ai.js'
 
 // Orders & POs — read the feed Claude's morning email run writes to OneDrive
@@ -198,7 +199,9 @@ export async function loadOrdersAttentionCount() {
   try {
     const res = await window.desktop.ordersLoad()
     if (!res || !res.feed) return 0
-    return mergeOrders(res.feed, res.local).filter(isStale).length
+    // + PO numbers from Jonathan's emails waiting for your OK
+    const poWaiting = readMode('po-emails') === 'off' ? 0 : Object.keys((res.local && res.local.poEmailsPending) || {}).length
+    return mergeOrders(res.feed, res.local).filter(isStale).length + poWaiting
   } catch {
     return 0
   }
@@ -416,9 +419,13 @@ export function matchPoEmails(files, rows, seen = {}) {
   }
   return out
 }
-// Read the PO emails and apply any new ones. Returns { applied: [...], unmatched: [...] }.
-export async function checkPoEmails() {
-  const res = { applied: [], unmatched: [], missing: false }
+// Read the PO emails and apply any new ones. Returns { applied: [...], unmatched: [...], pending: [...] }.
+// Automation "PO numbers from Jonathan's emails": ask (default) = matches wait
+// in local.poEmailsPending for your OK on Orders & POs; auto = applied
+// straight away; off = the folder isn't read at all (you type POs in by hand).
+export async function checkPoEmails({ mode = readMode('po-emails') } = {}) {
+  const res = { applied: [], unmatched: [], missing: false, pending: [] }
+  if (mode === 'off') return res
   if (typeof window === 'undefined' || !window.desktop?.ordersReadPoEmails || !window.desktop?.ordersLoad) return res
   try {
     const r = await window.desktop.ordersReadPoEmails()
@@ -432,6 +439,7 @@ export async function checkPoEmails() {
     const found = matchPoEmails(r.files, rows, seen)
     if (!found.length) return res
     const overrides = { ...(local.overrides || {}) }
+    const pending = { ...(local.poEmailsPending || {}) }
     const at = new Date().toISOString()
     for (const m of found) {
       seen[m.file] = { at, po: m.po, rows: m.rowIds, note: m.note }
@@ -441,6 +449,12 @@ export async function checkPoEmails() {
         const cur = { ...(overrides[id] || {}) }
         if (row.poNumber && normPo(row.poNumber) !== normPo(m.po)) { res.unmatched.push({ ...m, note: `${row.supplier} ${row.quoteNumber} already has PO ${row.poNumber}` }); continue }
         if (normPo(row.poNumber) === normPo(m.po)) continue
+        if (mode === 'ask') {
+          const item = { key: m.file + '|' + id, rowId: id, po: m.po, file: m.file, subject: m.subject || '', row: `${row.supplier} ${row.quoteNumber}`, at }
+          pending[item.key] = item
+          res.pending.push(item)
+          continue
+        }
         cur.poNumber = m.po; cur.poFrom = { file: m.file, at }
         overrides[id] = cur
         res.applied.push({ po: m.po, row: `${row.supplier} ${row.quoteNumber}` })
@@ -448,10 +462,28 @@ export async function checkPoEmails() {
     }
     // keep the seen list from growing forever
     const names = Object.keys(seen).sort((a, b) => (seen[b].at || '').localeCompare(seen[a].at || '')).slice(0, 400)
-    await window.desktop.ordersSaveLocal({ ...local, overrides, poEmailsSeen: Object.fromEntries(names.map(n => [n, seen[n]])) })
+    await window.desktop.ordersSaveLocal({ ...local, overrides, poEmailsPending: pending, poEmailsSeen: Object.fromEntries(names.map(n => [n, seen[n]])) })
     refreshFeed(true)
   } catch { /* try again next refresh */ }
   return res
+}
+
+// PO-email matches waiting for your OK → apply (keys chosen) or skip them.
+// → the new local object
+export function resolvePoEmailsPending(local, keys, apply) {
+  const l = { version: 1, overrides: {}, ...(local || {}) }
+  const pending = { ...(l.poEmailsPending || {}) }
+  const overrides = { ...(l.overrides || {}) }
+  const at = new Date().toISOString()
+  for (const k of keys) {
+    const p = pending[k]
+    if (!p) continue
+    delete pending[k]
+    if (apply) overrides[p.rowId] = { ...(overrides[p.rowId] || {}), poNumber: p.po, poFrom: { file: p.file, at, okBy: 'you' } }
+  }
+  // a quote can only take one PO: other waiting matches for the same quote go
+  if (apply) for (const [k, p] of Object.entries(pending)) if (overrides[p.rowId]?.poNumber) delete pending[k]
+  return { ...l, overrides, poEmailsPending: pending }
 }
 
 // ── Quote Slips pick-up (↻ Refresh) ──

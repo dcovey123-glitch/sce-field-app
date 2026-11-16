@@ -2,7 +2,7 @@
 // one job — labor, materials, plan, tasks, deficiencies, status, billing.
 // → list of short lines; empty = "Project current".
 import { missingSlipCharges, slipDuplicateOf } from './materialsAudit.js'
-import { slipKind, isReplacedQuote, lineJobsOf, sameItem } from './slips.js'
+import { slipKind, isReplacedQuote, lineJobsOf } from './slips.js'
 import { tasksOf, isOverdue } from './tasks.js'
 import { isCombinedChild } from './billing.js'
 
@@ -39,27 +39,6 @@ export function jobDeficiencies(job, { orders = [], requests = [], orderSheet = 
   if (slipNoPrice.length) out.push(`Materials: ${slipNoPrice.length} slip ${s(slipNoPrice.length, 'line', 'lines')} for this job with no price`)
   const used = (usedPending || []).filter(x => x.jobId === job.id)
   if (used.length) out.push(`Materials: ${used.length} phone ${s(used.length, 'entry', 'entries')} waiting for approval`)
-
-  // Material plan
-  if (!billed) {
-    const plan = job.plannedMaterials || []
-    const outRefs = new Set([...(orderSheet || []).flatMap(i => (i.planRefs || []).map(p => p.jobId + ':' + p.lineId)),
-      ...(requests || []).filter(r => !r.removedAt).flatMap(r => (r.items || []).flatMap(i => (i.planRefs || []).map(p => p.jobId + ':' + p.lineId)))])
-    // a line already on Materials Actual is taken care of, whatever its source
-    const onActual = l => entries.some(e => sameItem({ partNo: e.partNo, name: e.item }, { partNo: l.partNo, name: l.item }))
-    const undecided = plan.filter(l => l.source !== 'stock' && l.source !== 'order' && !onActual(l))
-    const toOrder = plan.filter(l => l.source === 'order' && !outRefs.has(job.id + ':' + l.id) && !(l.links || []).length) // linked to a slip/quote by hand = ordered
-    const unpicked = plan.filter(l => l.source === 'stock' && !l.stockPick)
-    const short = plan.filter(l => {
-      if (l.source !== 'stock' || !l.stockPick) return false
-      const st = (stock || []).find(x => x.id === l.stockPick)
-      return st && n(st.qty) < n(l.qty)
-    })
-    if (undecided.length) out.push(`Plan: ${undecided.length} ${s(undecided.length, 'line', 'lines')} not set to Stock or Order`)
-    if (toOrder.length) out.push(`Plan: ${toOrder.length} ${s(toOrder.length, 'line', 'lines')} to order, not sent`)
-    if (unpicked.length) out.push(`Plan: ${unpicked.length} Stock ${s(unpicked.length, 'line', 'lines')} with no item picked`)
-    if (short.length) out.push(`Plan: ${short.length} Stock ${s(short.length, 'line', 'lines')} short on the shelf`)
-  }
 
   // Tasks
   const over = tasksOf(job).filter(isOverdue)

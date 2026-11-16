@@ -19,6 +19,8 @@ export const STORE = {
   materials_feed_quotes_checked: { what: 'Email-run quotes already checked' },
   materials_loose_seen: { what: 'Loose slips already looked at' },
   materials_po_split_v1: { what: 'One-time fix marker for split POs' },
+  stock_count: { what: 'Stock count in progress (counts so far)' },
+  stock_count_history: { what: 'Past stock counts — what changed' },
   purchase_marks: { what: 'Purchases you closed or marked by hand' },
   quote_price_references: { what: 'Pricing quotes used as Catalog price references' },
   // Materials screen layout
@@ -66,6 +68,9 @@ export const STORE = {
   today_tab: { what: 'Today tab', view: true },
   snapshot_dismissed: { what: 'Snapshot checks dismissed' },
   snapshot_export_opts: { what: 'Snapshot export options', view: true },
+  // Automations
+  automation_modes: { what: 'Each automation: Ask first / Automatic / Off' },
+  automation_skipped: { what: 'Automatic changes you skipped (not offered again)' },
   // Trash
   trash_bin_items: { file: true, what: 'Trash' },
   // Connections (never copied into backups)

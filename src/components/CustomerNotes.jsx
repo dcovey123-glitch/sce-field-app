@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { addTodo, setTodoDone, removeTodo, clearDoneTodos, openTodos, doneTodos } from '../api/customerNotes.js'
+import { addTodo, setTodoDone, removeTodo, editTodo, clearDoneTodos, openTodos, doneTodos } from '../api/customerNotes.js'
+import { InlineText } from './JobTasks.jsx'
+import { daysSinceEdit, fmtDay } from '../api/tasks.js'
 
 // Customer General Notes — at the bottom of every tab in the customer window.
 // A to-do list (open ones also show on the Home Hit List) and a quick-notes
@@ -24,7 +26,19 @@ export default function CustomerNotes({ customer, updateCustomer }) {
     <div key={x.id} onMouseEnter={() => setHover(x.id)} onMouseLeave={() => setHover('')}
       style={{ display: 'flex', alignItems: 'flex-start', gap: 7, padding: '3px 0', fontSize: 13, lineHeight: 1.4 }}>
       <input type="checkbox" checked={isDone} onChange={e => { const d = e.target.checked; todos(l => setTodoDone(l, x.id, d)) }} style={{ marginTop: 3, cursor: 'pointer' }} />
-      <span style={{ flex: 1, minWidth: 0, wordBreak: 'break-word', color: isDone ? 'var(--text-light)' : 'var(--text)', textDecoration: isDone ? 'line-through' : 'none' }}>{x.text}</span>
+      <InlineText value={x.text} done={isDone} fontSize={13} onSave={v => todos(l => editTodo(l, x.id, v))} />
+      {isDone && x.doneAt && (
+        <span title={`Checked off ${new Date(x.doneAt).toLocaleString()}`} style={{ fontSize: 11, whiteSpace: 'nowrap', paddingTop: 2, fontWeight: 600, color: '#1e7a34' }}>✓ {fmtDay(x.doneAt)}</span>
+      )}
+      {!isDone && (() => {
+        const age = daysSinceEdit({ editedAt: x.editedAt, createdAt: x.at })
+        return age == null ? null : (
+          <span title={`${x.editedAt ? 'Last edited' : 'Added'} ${fmtDay(x.editedAt || x.at)}`}
+            style={{ fontSize: 11, whiteSpace: 'nowrap', paddingTop: 2, fontWeight: age >= 14 ? 700 : 400, color: age >= 30 ? '#c0392b' : age >= 14 ? '#9a6610' : 'var(--text-light)' }}>
+            🕒 {age === 0 ? 'today' : `${age}d`}
+          </span>
+        )
+      })()}
       {hover === x.id && <button onClick={() => todos(l => removeTodo(l, x.id))} title="Remove" style={{ border: 'none', background: 'none', color: 'var(--text-light)', cursor: 'pointer', fontSize: 12, padding: 0 }}>✕</button>}
     </div>
   )
@@ -52,7 +66,7 @@ export default function CustomerNotes({ customer, updateCustomer }) {
           {showDone && done.map(x => row(x, true))}
         </div>
         <div style={{ flex: '1 1 280px', minWidth: 0 }}>
-          <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--text-light)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 5 }}>Quick notes</div>
+          <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--text-light)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 5 }}>Quick notes <span style={{ textTransform: 'none', letterSpacing: 0, fontWeight: 600 }}>· same as Manage Customers → Details → Notes</span></div>
           <NotesBox value={customer.generalNotes || ''} onSave={v => updateCustomer({ generalNotes: v })} />
         </div>
       </div>

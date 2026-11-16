@@ -123,7 +123,7 @@ export default function CloudSync({ background = false }) {
     try { proposals = await syncProposals() } catch { proposals = {} }
     const jobsPayload = {
       updatedAt: new Date().toISOString(),
-      customers: jobsStore.customers.map(c => ({ id: c.id, name: c.name })),
+      customers: jobsStore.customers.filter(c => !c.sleepingAt).map(c => ({ id: c.id, name: c.name })),
       projects: jobsStore.records.map(p => ({
         id: p.id, customerId: p.customerId, name: p.name, co: p.co, coValue: p.coValue,
         status: p.status, completed: !!p.completed, lifecycle: effectiveLifecycleStatus(p), trashed: !!p.trashedAt, type: p.type, notes: p.notes, dateStart: p.dateStart,
@@ -134,7 +134,7 @@ export default function CloudSync({ background = false }) {
     }
     const quotesPayload = {
       updatedAt: new Date().toISOString(),
-      customers: quotesStore.customers.map(c => ({ id: c.id, name: c.name })),
+      customers: quotesStore.customers.filter(c => !c.sleepingAt).map(c => ({ id: c.id, name: c.name })),
       quotes: quotesStore.records.map(q => ({
         id: q.id, customerId: q.customerId, quoteNumber: q.quoteNumber, title: q.title,
         status: q.status, approved: !!q.approved, invalidated: !!q.invalidated, trashed: !!q.trashedAt, notes: q.notes, total: quoteTotal(q),

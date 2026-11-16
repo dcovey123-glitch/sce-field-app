@@ -29,6 +29,8 @@ contextBridge.exposeInMainWorld('desktop', {
     ipcRenderer.invoke('data:deleteRecordFolder', { hub, customerFolder, folder }),
   moveRecordToCustomer: (hub, oldCustomerFolder, newCustomerFolder, folder) =>
     ipcRenderer.invoke('data:moveRecordToCustomer', { hub, oldCustomerFolder, newCustomerFolder, folder }),
+  moveCustomerLooseItems: (hub, oldCustomerFolder, newCustomerFolder, fromName, recordFile) =>
+    ipcRenderer.invoke('data:moveCustomerLooseItems', { hub, oldCustomerFolder, newCustomerFolder, fromName, recordFile }),
 
   // Another window saved jobs/quotes — returns an unsubscribe function
   onDataChanged: (cb) => {

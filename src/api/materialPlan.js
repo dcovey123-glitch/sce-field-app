@@ -157,6 +157,49 @@ export function addPlanLinesToOrderList(list, job, lines, uid) {
   }
   return next
 }
+// Take job plan lines back OFF the order sheet (not needed any more, or now
+// coming from Stock). Merged sheet lines keep the other jobs' share; a sheet
+// line that only existed for these plan lines goes away. Lines you typed onto
+// the sheet yourself (no planRefs) are never touched.
+// → { list, removed } (removed = how many plan refs came off)
+export function removePlanLinesFromOrderList(list, jobId, lineIds) {
+  const ids = new Set(lineIds || [])
+  const hit = p => p.jobId === jobId && ids.has(p.lineId)
+  let removed = 0
+  const next = []
+  for (const x of list || []) {
+    const refs = x.planRefs || []
+    if (!refs.some(hit)) { next.push(x); continue }
+    const keep = refs.filter(p => !hit(p))
+    removed += refs.length - keep.length
+    if (!keep.length) {
+      // only there for these lines — drop it, unless you'd added your own qty on top
+      const planQty = refs.reduce((a, p) => a + n(p.qty), 0)
+      const extra = Math.round((n(x.qty) - planQty) * 1000) / 1000
+      if (extra > 0) next.push({ ...x, qty: extra, planRefs: [], jobId: '', jobName: '' })
+      continue
+    }
+    const gone = refs.filter(hit).reduce((a, p) => a + n(p.qty), 0)
+    next.push({ ...x, qty: Math.max(0, Math.round((n(x.qty) - gone) * 1000) / 1000), planRefs: keep, ...jobLabel(keep) })
+  }
+  return { list: next, removed }
+}
+// Drop these plan lines from requests already sent, so a quote / slip that
+// comes back for that request isn't auto-tagged to this job any more. The
+// request itself (what you sent the supplier) stays as a record.
+// → { list, touched } (touched = requests that still had the line on them)
+export function removePlanRefsFromRequests(requests, jobId, lineIds) {
+  const ids = new Set(lineIds || [])
+  const hit = p => p.jobId === jobId && ids.has(p.lineId)
+  const touched = []
+  const list = (requests || []).map(r => {
+    if (r.removedAt || !(r.items || []).some(i => (i.planRefs || []).some(hit))) return r
+    touched.push(r)
+    return { ...r, items: (r.items || []).map(i => (i.planRefs || []).some(hit) ? { ...i, planRefs: i.planRefs.filter(p => !hit(p)), droppedRefs: [...(i.droppedRefs || []), ...i.planRefs.filter(hit).map(p => ({ ...p, at: new Date().toISOString() }))] } : i) }
+  })
+  return { list, touched }
+}
+
 export function jobLabel(refs) {
   const byJob = new Map()
   ;(refs || []).forEach(p => byJob.set(p.jobId, { name: p.jobName, qty: (byJob.get(p.jobId)?.qty || 0) + n(p.qty) }))

@@ -71,8 +71,9 @@ export default function Home({ onOpenHub, agingDeficiencyCount = 0, reviewCount 
   const [openId, setOpenId] = useState(null)
   const [custSearch, setCustSearch] = useState('')
 
+  // sleeping customers (💤 in Manage Customers) stay hidden until woken
   const customers = jobsHub.loading ? [] : jobsHub.customers
-    .filter(c => !c.trashedAt)
+    .filter(c => !c.trashedAt && !c.sleepingAt)
     .sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' }))
   // Customers with an active job first; the rest go to the bottom, faded
   // (still clickable) — nothing on the go for them right now.

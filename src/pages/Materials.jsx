@@ -21,7 +21,10 @@ import OrdersList from './Orders.jsx'
 import { groupMonthDist } from '../api/monthDist.js'
 import { buildPurchases, purchaseSearchText, STAGES, needsYou, FLAG_FIX } from '../api/purchases.js'
 import { REQUESTS_KEY, quoteCandidates, quoteChoices, catalogQuoteTotal, autoMatchPricingRequests, unmatchPatch, requestQuoteRef, quotePickList } from '../api/requests.js'
-import { addPlanLinesToOrderList, tagSlipsFromRequests } from '../api/materialPlan.js'
+import { tagSlipsFromRequests } from '../api/materialPlan.js'
+import { splitOrderSheet, purchaseQuoteRef } from '../api/quoteMaterials.js'
+import { useAutoMode, useAutoSkip, changedSlipLines, applySlipLineChanges } from '../api/automations.js'
+import AutoReview from '../components/AutoReview.jsx'
 import { rollUp, rollUpLabel, entryForRow, approvalLineCount } from '../api/countEntries.js'
 import { EXPORT_EXTRA_KEY, exportWeekKey } from '../api/timesheetExport.js'
 import { startOfWeek } from '../api/weekStart.js'
@@ -863,55 +866,49 @@ function OrderFormTab({ catalog, stock, parts = [], jobs = [] }) {
   function toggleSelected(id) {
     setSelectedIds(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
   }
-  function toggleAll(checked) {
-    setSelectedIds(checked ? new Set(items.map(i => i.id)) : new Set())
-  }
-
-  const exportItems = items.filter(i => selectedIds.has(i.id))
-
-  // Every job's plan lines set to 🚚 Order that aren't on this sheet or sent yet
-  const jobsHub = useHubStore({ hub: 'jobs', recordFileName: 'project.json', getRecordFolderName: p => p.name, customersKey: 'job_customers', recordsKey: 'job_projects' })
+  // Every line is tagged 🛒 Material order or 💲 Pricing (no tag = order).
+  // Pricing lines from a quote are grouped by that quote and sent as a
+  // Request for Quote for it — what comes back is filed under the quote and
+  // in Pricing (never received). Order lines go out as a material order.
   const [requests] = useLocalStore(REQUESTS_KEY, [])
   const reqRefs = new Set((Array.isArray(requests) ? requests : []).filter(r => !r.removedAt).flatMap(r => (r.items || []).flatMap(i => (i.planRefs || []).map(p => p.jobId + ':' + p.lineId))))
-  const sheetRefs = new Set(items.flatMap(i => (i.planRefs || []).map(p => p.jobId + ':' + p.lineId)))
-  const waiting = jobsHub.records.filter(j => !j.trashedAt && j.lifecycleStatus !== 'billed')
-    .flatMap(j => (j.plannedMaterials || []).filter(l => l.source === 'order' && !reqRefs.has(j.id + ':' + l.id) && !sheetRefs.has(j.id + ':' + l.id)).map(l => ({ j, l })))
-  const [showWaiting, setShowWaiting] = useState(true)
-  function pullIn(list) {
-    setItems(cur => {
-      let next = cur
-      const byJob = new Map()
-      list.forEach(({ j, l }) => { if (!byJob.has(j.id)) byJob.set(j.id, { j, lines: [] }); byJob.get(j.id).lines.push(l) })
-      byJob.forEach(({ j, lines }) => { next = addPlanLinesToOrderList(next, j, lines, uid) })
-      const fresh = next.filter(x => !cur.some(c => c.id === x.id)).map(x => x.id)
-      setSelectedIds(sel => { const n = new Set(sel); fresh.forEach(id => n.add(id)); return n })
-      return next
-    })
-  }
   // sheet lines whose job lines have all gone out on a request
   const sentIds = items.filter(i => (i.planRefs || []).length && i.planRefs.every(p => reqRefs.has(p.jobId + ':' + p.lineId))).map(i => i.id)
+  const { order: orderItems, pricingGroups } = splitOrderSheet(items)
+  const onSentFor = list => () => {
+    const gone = new Set(list.map(i => i.id))
+    setItems(cur => cur.filter(i => !gone.has(i.id)))
+    setSelectedIds(sel => { const n = new Set(sel); gone.forEach(id => n.delete(id)); return n })
+  }
+  const tagBtn = (item, t, label) => (
+    <button onClick={() => updateItem(item.id, t === 'pricing' ? { tag: 'pricing' } : { tag: 'order', quote: undefined })}
+      style={{ fontSize: 10.5, fontWeight: 700, padding: '1px 7px', border: '1px solid var(--border)', cursor: 'pointer', borderRadius: t === 'order' ? '6px 0 0 6px' : '0 6px 6px 0', borderLeft: t === 'pricing' ? 'none' : undefined,
+        background: (item.tag || 'order') === t ? 'var(--navy)' : '#fff', color: (item.tag || 'order') === t ? '#fff' : 'var(--text-mid)' }}>{label}</button>
+  )
+  const rows = list => list.map(item => (
+    <div key={item.id}>
+      <OrderFormRow item={item} stock={stock} selected={selectedIds.has(item.id)}
+        onToggleSelected={() => toggleSelected(item.id)}
+        onUpdate={patch => updateItem(item.id, patch)} onDelete={() => deleteItem(item.id)} />
+      <div style={{ padding: '0 16px 6px 39px', display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--text-light)' }}>
+        <span style={{ display: 'inline-flex' }}>{tagBtn(item, 'order', '🛒 Order')}{tagBtn(item, 'pricing', '💲 Pricing')}</span>
+        {item.quote && item.quote.number && <span>for quote <b>{item.quote.number}</b>{item.quote.title ? ' — ' + item.quote.title : ''}</span>}
+      </div>
+    </div>
+  ))
+  const sectionHead = (title, hint, list) => (
+    <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, padding: '12px 16px 4px', borderTop: '1px solid var(--border)' }}>
+      <span style={{ fontFamily: 'var(--font-d)', fontSize: 15, fontWeight: 800 }}>{title}</span>
+      <span style={{ fontSize: 11.5, color: 'var(--text-light)', flex: 1 }}>{hint}</span>
+      {list.length > 0 && <label style={{ fontSize: 11, color: 'var(--text-light)', display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+        <input type="checkbox" checked={list.every(i => selectedIds.has(i.id))} onChange={e => setSelectedIds(sel => { const n = new Set(sel); list.forEach(i => e.target.checked ? n.add(i.id) : n.delete(i.id)); return n })} /> all
+      </label>}
+    </div>
+  )
+  const checkedIn = list => list.filter(i => selectedIds.has(i.id))
 
   return (
     <div>
-      {waiting.length > 0 && (
-        <div style={{ margin: '10px 16px 0', border: '1px solid #e0a716', borderRadius: 8, background: '#fffaf0', overflow: 'hidden' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 12px' }}>
-            <button onClick={() => setShowWaiting(v => !v)} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 800, color: '#8a5d00', padding: 0 }}>
-              {showWaiting ? '▾' : '▸'} 📋 Waiting to order — {waiting.length} line{waiting.length === 1 ? '' : 's'} on {new Set(waiting.map(x => x.j.id)).size} job{new Set(waiting.map(x => x.j.id)).size === 1 ? '' : 's'}
-            </button>
-            <span style={{ flex: 1, fontSize: 11.5, color: 'var(--text-light)' }}>From each job's 📋 Plan (lines set to 🚚 Order). Same parts are combined into one line, and each job's share is remembered.</span>
-            <button onClick={() => pullIn(waiting)} style={{ fontSize: 12, fontWeight: 700, padding: '5px 12px', borderRadius: 6, border: 'none', background: 'var(--navy)', color: '#fff', cursor: 'pointer' }}>+ Add all to this order</button>
-          </div>
-          {showWaiting && waiting.map(({ j, l }) => (
-            <div key={j.id + l.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '4px 12px', borderTop: '1px solid #f1e2bd', fontSize: 12.5 }}>
-              <span style={{ width: 60, textAlign: 'right', fontWeight: 700 }}>{l.qty} {l.uom || ''}</span>
-              <span style={{ flex: 1 }}>{l.item || l.partNo}{l.partNo && l.item ? <span style={{ color: 'var(--text-light)' }}> · {l.partNo}</span> : null}</span>
-              <span style={{ color: 'var(--text-mid)' }}>for <b>{j.name}</b></span>
-              <button onClick={() => pullIn([{ j, l }])} style={{ fontSize: 11, fontWeight: 700, padding: '2px 9px', borderRadius: 5, border: '1px solid var(--border)', background: '#fff', cursor: 'pointer' }}>+ Add</button>
-            </div>
-          ))}
-        </div>
-      )}
       {sentIds.length > 0 && (
         <div style={{ margin: '8px 16px 0', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#1e7a34' }}>
           ✓ {sentIds.length} line{sentIds.length === 1 ? '' : 's'} below already went out (sent or phoned in).
@@ -920,8 +917,8 @@ function OrderFormTab({ catalog, stock, parts = [], jobs = [] }) {
         </div>
       )}
       <div style={{ padding: '10px 16px 0', fontSize: 11, color: 'var(--text-light)' }}>
-        Build a material order: search Catalog &amp; Stock, enter the qty and the job (or Stock) it's for. Items you add on your phone land here too.
-        Check off which items belong in a given export; different items can go to different wholesalers, or straight to a plain PDF.
+        Every line is either a <b>🛒 Material order</b> or <b>💲 Pricing</b>. Lines come from a job's 📄 Quoted tab, your phone, or the search below.
+        Check which ones go in each export.
       </div>
       <div style={{ display: 'flex', gap: 10, padding: '10px 16px' }}>
         <div style={{ flex: 1 }}>
@@ -934,37 +931,49 @@ function OrderFormTab({ catalog, stock, parts = [], jobs = [] }) {
         </div>
       </div>
 
-      {items.length > 0 && <OrderFormColumnHeader allSelected={items.length > 0 && selectedIds.size === items.length} onToggleAll={toggleAll} />}
-      {items.map(item => (
-        <OrderFormRow
-          key={item.id} item={item} stock={stock} selected={selectedIds.has(item.id)}
-          onToggleSelected={() => toggleSelected(item.id)}
-          onUpdate={patch => updateItem(item.id, patch)} onDelete={() => deleteItem(item.id)}
-        />
-      ))}
+      {sectionHead('🛒 Material order', 'Being bought — the quote that comes back needs a PO, and its slips are received', orderItems)}
+      {orderItems.length > 0 && <OrderFormColumnHeader allSelected={orderItems.every(i => selectedIds.has(i.id))} onToggleAll={on => setSelectedIds(sel => { const n = new Set(sel); orderItems.forEach(i => on ? n.add(i.id) : n.delete(i.id)); return n })} />}
+      {rows(orderItems)}
       <QuickAddRow parts={parts} jobs={jobs} allowStock buttonLabel="+ Add to order"
-        onAdd={({ part, qty, job }) => addItem({ qty, partNo: part.partNo || '', desc: part.name || '', nickname: part.nickname || '', uom: part.uom || '', jobId: job ? job.id : '', jobName: job ? job.name : '', source: 'desktop' })} />
-      <div style={{ padding: '0 16px' }}><details><summary style={{ fontSize: 11, color: 'var(--text-light)', cursor: 'pointer', padding: '6px 0' }}>Type a line by hand instead</summary><OrderFormAddRow catalog={catalog} stock={stock} onAdd={addItem} /></details></div>
-
-      <div style={{ padding: 16 }}>
-        <div style={{ fontSize: 11, color: 'var(--text-light)', marginBottom: 8 }}>
-          {selectedIds.size} of {items.length} checked{selectedIds.size > 0 ? ' — export uses only the checked items' : ' — check items above to export'}
+        onAdd={({ part, qty, job }) => addItem({ qty, partNo: part.partNo || '', desc: part.name || '', nickname: part.nickname || '', uom: part.uom || '', jobId: job ? job.id : '', jobName: job ? job.name : '', source: 'desktop', tag: 'order' })} />
+      <div style={{ padding: '0 16px' }}><details><summary style={{ fontSize: 11, color: 'var(--text-light)', cursor: 'pointer', padding: '6px 0' }}>Type a line by hand instead</summary><OrderFormAddRow catalog={catalog} stock={stock} onAdd={d => addItem({ ...d, tag: 'order' })} /></details></div>
+      {orderItems.length > 0 && (
+        <div style={{ padding: '8px 16px 16px' }}>
+          <div style={{ fontSize: 11, color: 'var(--text-light)', marginBottom: 8 }}>{checkedIn(orderItems).length} of {orderItems.length} checked — the export uses only the checked lines</div>
+          <WholesalerExportBar
+            items={checkedIn(orderItems)} wholesaler={wholesaler} date={date}
+            jobs={[...new Map(checkedIn(orderItems).filter(i => i.jobName).map(i => [i.jobId || i.jobName, { id: i.jobId, name: i.jobName }])).values()]}
+            subjectPrefix={`Material Order — ${date}`}
+            saveFolder="Materials/Order Forms"
+            emptyMessage="Check at least one order line first."
+            confirmToSend onSent={onSentFor(checkedIn(orderItems))}
+          />
         </div>
-        <WholesalerExportBar
-          items={exportItems} wholesaler={wholesaler} date={date}
-          jobs={[...new Map(exportItems.filter(i => i.jobName).map(i => [i.jobId || i.jobName, { id: i.jobId, name: i.jobName }])).values()]}
-          subjectPrefix={`Material Order — ${date}`}
-          saveFolder="Materials/Order Forms"
-          emptyMessage="Check at least one item first."
-          confirmToSend
-          onSent={() => {
-            // what went out comes off the list (everything, when it was all checked)
-            const gone = new Set(exportItems.map(i => i.id))
-            setItems(list => list.filter(i => !gone.has(i.id)))
-            setSelectedIds(new Set())
-          }}
-        />
-      </div>
+      )}
+
+      {sectionHead('💲 Pricing', 'Prices only — filed under the quote and in Pricing, checked against the Catalog, never received', pricingGroups.flatMap(g => g.items))}
+      {!pricingGroups.length && <div style={{ padding: '4px 16px 14px', fontSize: 12, color: 'var(--text-light)' }}>No pricing lines. Send quote lines here from a job's 📄 Quoted tab (💲 Order sheet — Pricing), or switch a line above to 💲 Pricing.</div>}
+      {pricingGroups.map(g => {
+        const ck = checkedIn(g.items)
+        return (
+          <div key={(g.quote && g.quote.id) || 'none'} style={{ margin: '4px 12px 12px', border: '1px solid #c9dbef', borderRadius: 8, overflow: 'hidden' }}>
+            <div style={{ padding: '7px 12px', background: '#eef4fb', fontSize: 13, fontWeight: 800, color: '#1a5fa0' }}>
+              {g.quote ? <>📄 Quote {g.quote.number}{g.quote.title ? ' — ' + g.quote.title : ''}</> : 'No quote — pricing for the Catalog'}
+            </div>
+            {rows(g.items)}
+            <div style={{ padding: '8px 12px 12px' }}>
+              <WholesalerExportBar
+                items={ck} wholesaler={wholesaler} date={date}
+                quote={g.quote || null}
+                subjectPrefix={g.quote ? `Request for Quote — ${g.quote.number}${g.quote.title ? ' — ' + g.quote.title : ''}` : `Material pricing request — ${date}`}
+                saveFolder="Quotes/Materials Pricing Requests"
+                emptyMessage="Check at least one pricing line first."
+                confirmToSend onSent={onSentFor(ck)}
+              />
+            </div>
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -2249,6 +2258,8 @@ function ModalOverlay({ onClose, children, maxWidth }) {
 const ORDER_DETAIL_COLS_R = '20px 52px 1fr 34px 28px 56px 60px'
 
 function OrderDetailModal({ order, onClose, onUpdate, onReceiveItems, onPushPricing, isRecordOnly = false, jobOptions, focus = null }) {
+  // A pricing quote is prices only — nothing to receive
+  const pricingOnly = slipKind(order) === 'pricing'
   const total = orderTotal(order)
   const lineItems = order.lineItems || []
   // Opened from a problem on the slip: mark the lines that need fixing
@@ -2320,7 +2331,7 @@ function OrderDetailModal({ order, onClose, onUpdate, onReceiveItems, onPushPric
                 <button disabled={!poDraft.trim()} onClick={() => { onUpdate({ poNumber: poDraft.trim() }); onClose() }} style={{ fontSize: 11, fontWeight: 700, padding: '3px 9px', border: 'none', borderRadius: 4, background: 'var(--accent)', color: 'var(--navy)', cursor: 'pointer' }}>Save</button>
               </span>
             : <span><strong>PO #:</strong> {order.poNumber || '—'}</span>}
-          <span><strong>Received:</strong> {receivedCount} of {lineItems.length}</span>
+          {pricingOnly ? <span style={{ color: '#1a5fa0', fontWeight: 700 }}>💲 Pricing quote — prices only, nothing to receive</span> : <span><strong>Received:</strong> {receivedCount} of {lineItems.length}</span>}
           <span><strong>Date:</strong> {order.orderDate || '—'}</span>
           {order.subtotal != null && order.subtotal !== '' && <span><strong>Subtotal:</strong> {money(order.subtotal)}</span>}
           {order.tax != null && order.tax !== '' && Number(order.tax) > 0 && <span><strong>Tax:</strong> {money(order.tax)}</span>}
@@ -2352,12 +2363,12 @@ function OrderDetailModal({ order, onClose, onUpdate, onReceiveItems, onPushPric
           <div key={li.id || idx} ref={isFirst ? firstFixRef : undefined} style={{ padding: '4px 0', borderBottom: '1px solid var(--border)', background: bad ? '#fdecea' : li.backordered && !li.received ? '#fff8e6' : 'transparent', boxShadow: bad ? 'inset 3px 0 0 #c0392b' : 'none', paddingLeft: bad ? 6 : 0 }}>
             {bad && <div style={{ fontSize: 10, fontWeight: 800, color: '#a12a1e', marginBottom: 2 }}>⚠ {fixTag}{focus.kind === 'jobs' ? ` · ${lineRemaining(order, li)} ${li.uom || ''} left` : ''}</div>}
             <div style={{ display: 'grid', gridTemplateColumns: ORDER_DETAIL_COLS_R, gap: 5, fontSize: 11, alignItems: 'center' }}>
-              <input
+              {pricingOnly ? <span /> : <input
                 type="checkbox" checked={checked.has(idx)} disabled={li.received || !!li.movedTo}
                 onChange={() => toggle(idx)}
                 title={li.received ? (isRecordOnly ? 'Already marked received' : 'Already received — in Stock') : 'Check to include when marking received'}
                 style={{ width: 14, height: 14, cursor: li.received ? 'default' : 'pointer' }}
-              />
+              />}
               <span style={{ color: 'var(--text-mid)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{li.partNo || '—'}</span>
               <span style={{ color: li.received ? 'var(--text-light)' : 'var(--text)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 5 }}>
                 {li.name || 'Item'}
@@ -2439,7 +2450,7 @@ function OrderDetailModal({ order, onClose, onUpdate, onReceiveItems, onPushPric
               Open original slip
             </button>
           )}
-          {newlyChecked.length > 0 && (
+          {!pricingOnly && newlyChecked.length > 0 && (
             <button
               onClick={() => setConfirming(true)}
               style={{ flex: 1, padding: '9px', background: '#e8f2fc', border: '1px solid #1a5fa0', borderRadius: 'var(--rs)', fontWeight: 700, fontSize: 12, cursor: 'pointer', color: '#1a5fa0' }}
@@ -3073,7 +3084,12 @@ function OrderedTab({ onClearFromJobs = () => {}, onLinkFeedPart = async () => n
   const [linking, setLinking] = useState({}) // part key → 'busy' | message
   async function openPartDetails(part) {
     const have = orders.find(o => o.feedKey === part.key)
-    if (have) { setOpenDetailId(have.id); return }
+    if (have) {
+      // opened before as an order, but the quote is kept for pricing: it's a pricing quote
+      if (slipKind(have) === 'order' && !hasPoNumber(have) && part.order && !String(part.order.poNumber || '').trim() && feedPoState(part.order) === 'pricing' && !(have.lineItems || []).some(li => li.received))
+        onUpdateOrder(have.id, { kind: 'pricing', recordOnly: true, pricingTarget: have.pricingTarget || { type: 'catalog' } })
+      setOpenDetailId(have.id); return
+    }
     setLinking(m => ({ ...m, [part.key]: 'busy' }))
     const r = await onLinkFeedPart(part)
     setLinking(m => ({ ...m, [part.key]: r && r.error ? r.error : '' }))
@@ -3660,7 +3676,6 @@ function PurchasesOverview({ focus = null, layout = 'overview', q, orders, feedR
   const reqList = Array.isArray(requests) ? requests : []
   const updReq = (id, patch) => setRequests(l => (Array.isArray(l) ? l : []).map(r => r.id === id ? { ...r, ...patch } : r))
   const takenFeed = new Set(reqList.filter(r => r.matchedFeedId && !r.removedAt).map(r => r.matchedFeedId))
-  const takenSlip = new Set(reqList.filter(r => r.matchedSlipId && !r.removedAt).map(r => r.matchedSlipId))
   const [matchQ, setMatchQ] = useState('')
   // Open the price comparison against one of our quotes (the quote PDF read in, else the email-run lines)
   const sourcesOf = p => [...p.liveSlips.map(sourceFromSlip), ...p.rows.flatMap(sourcesFromFeedRow)].filter(x => x.lines.length)
@@ -3687,14 +3702,31 @@ function PurchasesOverview({ focus = null, layout = 'overview', q, orders, feedR
     if (req.pricing && req.quote && req.quote.id && src.lines.length) onCompareQuote(req.quote.id, src)
     if (req.catalogPricing && src.lines.length) onCompareCatalog(src, req)
   }
-  const pickChoice = (req, c) => (c.kind === 'slip' ? matchReqToSlip(req, c.o) : matchReq(req, c.r))
+  const pickChoice = (req, c) => {
+    // already on another request: it moves to this one
+    if (c.takenBy && c.takenBy.id !== req.id) updReq(c.takenBy.id, { matchedFeedId: null, matchedSlipId: null, matchedAt: null, needsConfirm: false, autoMatched: false })
+    return c.kind === 'slip' ? matchReqToSlip(req, c.o) : matchReq(req, c.r)
+  }
+  // From the other side: a pricing quote that came in → the request it answers
+  const openPricingReqs = reqList.filter(r => r.pricing && !r.removedAt && !r.fromCatalog && !r.matchedFeedId && !r.matchedSlipId)
+    .sort((a, b) => String(b.sentAt).localeCompare(String(a.sentAt)))
+  const attachToReq = (p, reqId) => {
+    const req = reqList.find(r => r.id === reqId)
+    if (!req) return
+    const row = p.rows.find(r => !r._prev) || p.rows[0]
+    const slip = (p.liveSlips || []).find(o => o) || p.slips[0]
+    if (row) matchReq(req, row)
+    else if (slip) matchReqToSlip(req, slip)
+  }
   // File the quote that came back as Pricing, under the quote it was asked for
   const fileForPricing = async (req, row) => {
     if (req.quote) await setFeedPricingFor(row.id, { ref: req.quote.number || req.quote.title || '', refLabel: [req.quote.number, req.quote.title].filter(Boolean).join(' — ') })
     else if (feedPoState(row) !== 'pricing') await setFeedPricing(row.id, true)
     const src = sourcesFromFeedRow(row).find(x => x.lines.length)
     if (req.quote && req.quote.id && src) onCompareQuote(req.quote.id, src)
-    if (req.catalogPricing && src) onCompareCatalog(src, req)
+    // every pricing quote is also checked against the Catalog (new parts added) —
+    // for a quote's request this opens once the quote comparison is closed
+    if (src && (req.catalogPricing || req.quote)) onCompareCatalog(src, req)
   }
   const confirmPricing = async (req, row) => {
     updReq(req.id, { needsConfirm: false, confirmedAt: new Date().toISOString(), feedWasPricing: !!row && feedPoState(row) === 'pricing' })
@@ -3835,7 +3867,8 @@ function PurchasesOverview({ focus = null, layout = 'overview', q, orders, feedR
                   {pricingOpts.map(o => <option key={o.v} value={o.v}>{o.label}</option>)}
                 </select>)}
               {p.stage !== 'closed' && p.stage !== 'pricing' && (closing && closing.key === p.key
-                ? <span style={{ display: 'inline-flex', gap: 5, alignItems: 'center' }}>
+                ? <span style={{ display: 'inline-flex', gap: 5, alignItems: 'center', flexWrap: 'wrap' }}>
+                    {p.flags.some(f => f.id === 'unused') && <span style={{ fontSize: 11.5, fontWeight: 700, color: '#a12a1e' }}>⚠ {p.flags.find(f => f.id === 'unused').text} — closing leaves them unassigned.</span>}
                     <input autoFocus value={closing.reason} onChange={e => setClosing({ ...closing, reason: e.target.value })} placeholder="Why? e.g. picked up, no slip"
                       onKeyDown={e => { if (e.key === 'Enter') { setMark(p.key, { closed: true, reason: closing.reason.trim(), at: new Date().toISOString() }); setClosing(null) } if (e.key === 'Escape') setClosing(null) }}
                       style={{ fontSize: 12, width: 220, border: '1px solid var(--border)', borderRadius: 5, padding: '3px 7px' }} />
@@ -3847,6 +3880,23 @@ function PurchasesOverview({ focus = null, layout = 'overview', q, orders, feedR
             </div>
             {finding[p.key] && finding[p.key] !== 'busy' && <div style={{ padding: '0 12px 6px', fontSize: 12, color: finding[p.key].startsWith('✓') ? '#1e7a34' : '#a12a1e' }}>{finding[p.key]}</div>}
             {p.notes.length > 0 && <div style={{ padding: '0 12px 6px', fontSize: 12, color: '#7a5a00' }}>📝 {p.notes.join(' · ')}</div>}
+            {p.stage === 'pricing' && !(p.requests || []).length && (p.rows.length > 0 || p.slips.length > 0) && (
+              <div style={{ padding: '6px 12px', borderTop: '1px solid var(--border)', fontSize: 12, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', background: '#f6f9fd' }}>
+                <span style={{ fontWeight: 700, color: '#1a5fa0' }}>🔗 Which pricing request is this the answer to?</span>
+                {openPricingReqs.length ? (
+                  <select value="" onChange={e => e.target.value && attachToReq(p, e.target.value)}
+                    style={{ fontSize: 12, padding: '3px 6px', border: '1px solid #9fb8d6', borderRadius: 5, maxWidth: 520 }}>
+                    <option value="">Pick the request…</option>
+                    {openPricingReqs.map(r => (
+                      <option key={r.id} value={r.id}>
+                        {[r.quote ? `Quote ${r.quote.number || r.quote.title}${r.quote.number && r.quote.title ? ' — ' + r.quote.title : ''}` : 'No quote',
+                          `${r.wholesaler || 'PDF'} ${String(r.sentAt || '').slice(0, 10)}`, `${(r.items || []).length} item${(r.items || []).length === 1 ? '' : 's'}`].join(' · ')}
+                      </option>
+                    ))}
+                  </select>
+                ) : <span style={{ color: 'var(--text-light)' }}>No open pricing requests waiting for an answer.</span>}
+              </div>
+            )}
             {(p.requests || []).map(rq => {
               const matched = (rq.matchedFeedId && p.rows.some(r => r.id === rq.matchedFeedId)) || (rq.matchedSlipId && p.slips.some(o => o.id === rq.matchedSlipId))
               const cands = matched ? [] : quoteCandidates(rq, feedRows || [], takenFeed)
@@ -3912,7 +3962,9 @@ function PurchasesOverview({ focus = null, layout = 'overview', q, orders, feedR
                     )
                   })()}
                   {matching === rq.id && (() => {
-                    const choices = quoteChoices(rq, { rows: feedRows || [], previous: prevRows || [], slips: orders || [] }, { feed: takenFeed, slip: takenSlip }, matchQ)
+                    // quotes already on another request are listed too (picking one moves it here)
+                    const choices = quoteChoices(rq, { rows: feedRows || [], previous: prevRows || [], slips: orders || [] }, {}, matchQ)
+                      .map(c => ({ ...c, takenBy: reqList.find(r => r.id !== rq.id && !r.removedAt && (c.kind === 'slip' ? r.matchedSlipId === c.id : r.matchedFeedId === c.id)) || null }))
                     return (
                       <div style={{ marginTop: 4, border: '1px solid #9fb8d6', borderRadius: 5, background: 'var(--surface)' }}>
                         <input autoFocus value={matchQ} onChange={e => setMatchQ(e.target.value)} onKeyDown={e => { if (e.key === 'Escape') { setMatching(''); setMatchQ('') } if (e.key === 'Enter' && choices[0]) pickChoice(rq, choices[0]) }}
@@ -3928,6 +3980,7 @@ function PurchasesOverview({ focus = null, layout = 'overview', q, orders, feedR
                                 {c.po ? <span style={{ color: 'var(--navy)', fontWeight: 700 }}> · PO {c.po}</span> : null}
                                 {c.archived ? <span style={{ color: 'var(--text-light)' }}> · archived</span> : null}
                               </span>
+                              {c.takenBy && <span title="Picking it moves it to this request" style={{ color: '#8a5d00', fontWeight: 700, whiteSpace: 'nowrap' }}>on another request{c.takenBy.quote ? ' (' + (c.takenBy.quote.number || c.takenBy.quote.title) + ')' : ''}</span>}
                               {c.overlap > 0 && <span style={{ color: '#1e7a34', fontWeight: 700, whiteSpace: 'nowrap' }}>{c.overlap} part{c.overlap === 1 ? '' : 's'} match</span>}
                               <span style={{ width: 80, textAlign: 'right' }}>{money(c.total)}</span>
                             </div>
@@ -4022,10 +4075,24 @@ function PurchasesOverview({ focus = null, layout = 'overview', q, orders, feedR
 
   if (layout === 'pricing') {
     const P = shown.filter(p => p.stage === 'pricing').sort((a, b) => String(b.date).localeCompare(String(a.date)))
+    const needsOk = p => p.flags.some(f => f.id === 'confirmpricing')
+    // Pricing requests attached to one of our quotes get their own header,
+    // grouped by that quote (number + name). Prices only — no receiving.
+    const forQuote = P.filter(p => !needsOk(p) && purchaseQuoteRef(p))
+    const quoteGroups = []
+    forQuote.forEach(p => {
+      const ref = purchaseQuoteRef(p)
+      const k = ref.id || ref.number
+      let g = quoteGroups.find(x => x.k === k)
+      if (!g) { g = { k, ref, L: [] }; quoteGroups.push(g) }
+      g.L.push(p)
+    })
+    const rest = P.filter(p => !forQuote.includes(p))
     const SECS = [
-      { id: 'confirm', title: '❓ Came back — confirm it\'s for pricing', hint: 'A quote came in for a pricing request — OK it once and it stays here', L: P.filter(p => p.flags.some(f => f.id === 'confirmpricing')) },
-      { id: 'asked', title: '📨 Pricing requests sent', hint: 'Sent from a quote, prices not back yet', L: P.filter(p => !p.rows.length && !p.slips.length && !p.flags.some(f => f.id === 'confirmpricing')) },
-      { id: 'have', title: '💲 Pricing quotes', hint: 'Prices back — for the Catalog and quotes, never ordered', L: P.filter(p => (p.rows.length || p.slips.length) && !p.flags.some(f => f.id === 'confirmpricing')) },
+      { id: 'confirm', title: '❓ Came back — confirm it\'s for pricing', hint: 'A quote came in for a pricing request — OK it once and it stays here', L: P.filter(needsOk) },
+      { id: 'quotes', title: '📋 Quote Pricing Requests', hint: 'Pricing requests attached to one of our quotes, by quote — prices only, checked against the Catalog, never received', L: forQuote, groups: quoteGroups },
+      { id: 'asked', title: '📨 Pricing requests sent', hint: 'Not for a quote, prices not back yet', L: rest.filter(p => !p.rows.length && !p.slips.length && !needsOk(p)) },
+      { id: 'have', title: '💲 Pricing quotes', hint: 'Prices back — for the Catalog, never ordered', L: rest.filter(p => (p.rows.length || p.slips.length) && !needsOk(p)) },
     ]
     return (
       <div style={{ padding: '10px 12px 6px', display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -4041,7 +4108,17 @@ function PurchasesOverview({ focus = null, layout = 'overview', q, orders, feedR
                 <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--text-mid)' }}>{g.L.length} item{g.L.length === 1 ? '' : 's'}</span>
               </div>
               {open && <div style={{ padding: 6, borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 4 }}>
-                {g.L.length ? g.L.map(p => tile(p)) : <div style={{ padding: 6, fontSize: 12, color: 'var(--text-light)' }}>None.</div>}
+                {g.groups
+                  ? (g.groups.length ? g.groups.map(qg => (
+                    <div key={qg.k} style={{ marginBottom: 6 }}>
+                      <div style={{ padding: '4px 6px', fontSize: 12.5, fontWeight: 800, color: '#1a5fa0' }}>
+                        📄 {qg.ref.number || 'Quote'}{qg.ref.title ? ' — ' + qg.ref.title : ''}
+                        <span style={{ fontWeight: 600, color: 'var(--text-light)' }}> · {qg.L.length} request{qg.L.length === 1 ? '' : 's'}{qg.L.some(p => p.rows.length || p.slips.length) ? ' · prices back' : ' · waiting for prices'}</span>
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>{qg.L.map(p => tile(p))}</div>
+                    </div>
+                  )) : <div style={{ padding: 6, fontSize: 12, color: 'var(--text-light)' }}>None.</div>)
+                  : (g.L.length ? g.L.map(p => tile(p)) : <div style={{ padding: 6, fontSize: 12, color: 'var(--text-light)' }}>None.</div>)}
               </div>}
             </div>
           )
@@ -4411,14 +4488,8 @@ export default function Materials({ screen }) {
   const [discrepancies, setDiscrepancies] = useState([])
   const [justAdded, setJustAdded] = useState([])
   const startView = screen?.view === 'exportlist' ? 'ordered' : screen?.view
-  // plan lines set to 🚚 Order that haven't gone on the sheet or out yet
-  const [planList] = useLocalStore('materials_order_list', [])
-  const [planReqs] = useLocalStore(REQUESTS_KEY, [])
-  const planWaiting = (() => {
-    const out = new Set([...(Array.isArray(planList) ? planList : []).flatMap(i => (i.planRefs || []).map(p => p.jobId + ':' + p.lineId)),
-      ...(Array.isArray(planReqs) ? planReqs : []).filter(r => !r.removedAt).flatMap(r => (r.items || []).flatMap(i => (i.planRefs || []).map(p => p.jobId + ':' + p.lineId)))])
-    return jobsStore.records.filter(j => !j.trashedAt && j.lifecycleStatus !== 'billed').flatMap(j => (j.plannedMaterials || []).filter(l => l.source === 'order' && !out.has(j.id + ':' + l.id))).length
-  })()
+  const [orderSheetAll] = useLocalStore('materials_order_list', [])
+  const orderSheetCount = Array.isArray(orderSheetAll) ? orderSheetAll.length : 0
   const [tab, setTab] = useState(startView === 'stock' ? 'catalog' : (startView || 'used'))
   const startStockOnly = startView === 'stock'
   // opened again from Home / the nav (e.g. Orders & POs) — go to that tab
@@ -4509,7 +4580,12 @@ export default function Materials({ screen }) {
       && (o.lineItems || []).some(li => li.backordered && !li.received)
     )
     let reconciledCount = 0
-    if (priorOrder) {
+    // Automation "Backorder releases": Off = keep the slips separate; Ask = OK it first
+    const takeOver = priorOrder && modeBackorder !== 'off' && (modeBackorder === 'auto' || window.confirm(
+      `This looks like a backorder release of ${priorOrder.wholesaler || ''} order #${baseOrderNumber(order.invoiceNumber)}.\n\n` +
+      `OK = this slip takes over the backordered lines on #${priorOrder.invoiceNumber || ''} (they're received and charged from this slip only, so nothing is counted twice).\n` +
+      `Cancel = keep the two slips separate — you sort out the backordered lines by hand.`))
+    if (takeOver) {
       // The backordered items arrived on THIS release. They're received (and
       // charged to jobs) from this slip only. On the earlier slip, a line that
       // shipped nothing is marked "came on -02" (no Stock, no cost, no job);
@@ -4563,31 +4639,61 @@ export default function Materials({ screen }) {
     // once it's marked Received (goods have actually arrived), via receiveOrder below.
   }
 
-  // Slip lines ticked to a job become that job's actual material (Materials →
-  // "From slips & orders"). Re-running replaces this slip's lines on each job.
+  // ── Automations on this page (each: Ask first / Automatic / Off — see
+  // Automations). In "ask" they only work out the change and show it; nothing
+  // is saved until you Apply. Skipped changes aren't offered again.
+  const [modeCloseout, setModeCloseout] = useAutoMode('closeout-deficiency')
+  const [skipCloseout, addSkipCloseout] = useAutoSkip('closeout-deficiency')
+  const [modeTag, setModeTag] = useAutoMode('slip-tag')
+  const [skipTag, addSkipTag] = useAutoSkip('slip-tag')
+  const [modeMove, setModeMove] = useAutoMode('quote-to-slips')
+  const [skipMove, addSkipMove] = useAutoSkip('quote-to-slips')
+  const [modeMatch] = useAutoMode('pricing-match')
+  const [modeBackorder] = useAutoMode('backorder-release')
+  const jobName = id => (jobsStore.records.find(j => j.id === id) || {}).name || 'job'
+
   // A job already closed with slip material not closed out (not used on it,
-  // not pushed to Stock) gets a deficiency so it's dealt with; it clears by
-  // itself once the material is closed out on the job.
-  useEffect(() => {
-    if (jobsStore.loading || !orders.length) return
-    const closed = j => ['deficiencies', 'unbilled', 'billed'].includes(j.lifecycleStatus)
-    jobsStore.records.filter(j => !j.trashedAt && closed(j)).forEach(j => {
+  // not pushed to Stock) gets a deficiency so it's dealt with; it clears once
+  // the material is closed out on the job.
+  const closedJob = j => ['deficiencies', 'unbilled', 'billed'].includes(j.lifecycleStatus)
+  function closeoutChanges() {
+    if (jobsStore.loading || !orders.length) return []
+    const out = []
+    jobsStore.records.filter(j => !j.trashedAt && closedJob(j)).forEach(j => {
       const left = leftoverLinesForJob(orders, j)
-      const defs = j.deficiencies || []
-      const open = defs.find(d => d.kind === 'material-closeout' && !d.resolved)
+      const open = (j.deficiencies || []).find(d => d.kind === 'material-closeout' && !d.resolved)
       if (left.length && !open) {
+        const slips = [...new Set(left.map(x => x.order.invoiceNumber || x.order.wholesaler))].join(', ')
+        out.push({ key: `${j.id}:open:${left.map(x => x.order.id).sort().join(',')}`, job: j, left, open: null,
+          text: `${j.name}: ${left.length} slip line${left.length === 1 ? '' : 's'} not closed out (${slips})`, sub: j.lifecycleStatus === 'unbilled' ? 'adds a deficiency, Unbilled → Deficiencies' : 'adds a deficiency' })
+      } else if (!left.length && open) {
+        out.push({ key: `${j.id}:clear:${open.id}`, job: j, left, open, text: `${j.name}: material is closed out now`, sub: 'resolves the "Material not closed out" deficiency' })
+      }
+    })
+    return out
+  }
+  function applyCloseout(keys) {
+    const pick = new Set(keys)
+    closeoutChanges().filter(c => pick.has(c.key)).forEach(({ job: j, left, open }) => {
+      const defs = j.deficiencies || []
+      if (!open) {
         const entry = { id: uid(), kind: 'material-closeout', resolved: false, createdAt: new Date().toISOString(),
           text: `Material not closed out: ${left.length} slip line${left.length === 1 ? '' : 's'} not used on this job or pushed to Stock (${[...new Set(left.map(x => x.order.invoiceNumber || x.order.wholesaler))].join(', ')}). Open the job and close out its material.`,
           prevLifecycle: j.lifecycleStatus }
         jobsStore.updateRecord(j.id, { deficiencies: [...defs, entry], ...(j.lifecycleStatus === 'unbilled' ? { lifecycleStatus: 'deficiencies' } : {}) })
-      } else if (!left.length && open) {
+      } else {
         const at = new Date().toISOString()
         const nextDefs = defs.map(d => d === open ? { ...d, resolved: true, resolvedAt: at, resolvedNote: 'Material closed out' } : d)
         const othersOpen = nextDefs.some(d => !d.resolved)
         jobsStore.updateRecord(j.id, { deficiencies: nextDefs, ...(j.lifecycleStatus === 'deficiencies' && open.prevLifecycle === 'unbilled' && !othersOpen ? { lifecycleStatus: 'unbilled' } : {}) })
       }
     })
-  }, [orders, jobsStore.loading, jobsStore.records]) // eslint-disable-line react-hooks/exhaustive-deps
+  }
+  const closeoutAll = useMemo(() => modeCloseout === 'off' ? [] : closeoutChanges(), [orders, jobsStore.loading, jobsStore.records, modeCloseout]) // eslint-disable-line react-hooks/exhaustive-deps
+  const closeoutAsk = modeCloseout === 'ask' ? closeoutAll.filter(c => !skipCloseout.has(c.key)) : []
+  useEffect(() => {
+    if (modeCloseout === 'auto' && closeoutAll.length) applyCloseout(closeoutAll.map(c => c.key))
+  }, [orders, jobsStore.loading, jobsStore.records, modeCloseout]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // A job charged from a parsed quote whose packing slips have come in: the
   // slips take over (same qty), so nothing's charged twice and the slip line
@@ -4599,18 +4705,30 @@ export default function Materials({ screen }) {
   // A pricing request sent from a quote: when its quote comes back, file it
   // with the request (as Pricing) and ask once to confirm
   useEffect(() => {
+    if (modeMatch === 'off') return
     const next = autoMatchPricingRequests(sentRequests, feedForCharges || [])
     if (next) setSentRequests(next)
-  }, [sentRequests, feedForCharges]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sentRequests, feedForCharges, modeMatch]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const tagNext = cur => tagSlipsFromRequests(cur, Array.isArray(sentRequests) ? sentRequests : [], feedForCharges)
+  const tagProposed = useMemo(() => modeTag === 'off' ? null : tagNext(orders), [orders, sentRequests, feedForCharges, modeTag]) // eslint-disable-line react-hooks/exhaustive-deps
+  const tagAsk = modeTag === 'ask' && tagProposed ? changedSlipLines(orders, tagProposed).filter(c => !skipTag.has(c.key)).map(c => ({
+    key: c.key, text: `${c.order.wholesaler || 'Supplier'} #${c.order.invoiceNumber || ''}: ${c.line.qty || ''} ${c.line.partNo || ''} ${c.line.name || ''}`.replace(/\s+/g, ' ').trim(),
+    sub: '→ ' + (c.line.jobIds || []).map(jobName).join(', '),
+  })) : []
+  function applyTag(keys) {
+    setOrders(cur => { const next = tagNext(cur); return next ? applySlipLineChanges(cur, next, keys) : cur })
+  }
   useEffect(() => {
-    const next = tagSlipsFromRequests(orders, Array.isArray(sentRequests) ? sentRequests : [], feedForCharges)
-    if (next) setOrders(next)
-  }, [orders, sentRequests, feedForCharges]) // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    if (jobsStore.loading || !orders.length) return
+    if (modeTag === 'auto' && tagProposed) setOrders(tagProposed)
+  }, [orders, sentRequests, feedForCharges, modeTag]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Work out the quote → slips moves for every job (or just some)
+  function chargeMoves(onlyJobIds) {
+    if (jobsStore.loading || !orders.length) return { moves: [], acc: orders, changed: false, taken: [] }
     let acc = orders, changed = false, taken = []
-    const total = list => Math.round(list.reduce((a, e) => a + (Number(e.qty) || 1) * (Number(e.price) || 0), 0) * 100) / 100
-    jobsStore.records.filter(j => !j.trashedAt).forEach(j => {
+    const moves = []
+    jobsStore.records.filter(j => !j.trashedAt && (!onlyJobIds || onlyJobIds.has(j.id))).forEach(j => {
       let job = j, any = false
       for (const step of [o => moveQuoteChargesToSlips(o, job, uid), o => moveFeedChargesToSlips(o, job, feedForCharges, uid)]) {
         const r = step(acc)
@@ -4618,12 +4736,28 @@ export default function Materials({ screen }) {
         acc = r.orders; changed = changed || r.ordersChanged; taken = [...taken, ...r.stockTaken]
         job = { ...job, materialEntries: r.entries }; any = true
       }
-      if (any) jobsStore.updateRecord(j.id, { materialEntries: job.materialEntries, actualMaterials: total(job.materialEntries) })
+      if (!any) return
+      const now = new Set((job.materialEntries || []).map(e => e.id))
+      const moved = (j.materialEntries || []).filter(e => !now.has(e.id))
+      moves.push({ key: `${j.id}:${moved.map(e => e.id).sort().join(',')}`, jobId: j.id, entries: job.materialEntries,
+        text: `${j.name}: ${moved.length || 'some'} line${moved.length === 1 ? '' : 's'} charged from a quote → charged from its packing slips`,
+        sub: moved.slice(0, 3).map(e => e.item || e.partNo).filter(Boolean).join(', ') })
     })
-    if (!changed) return
-    setOrders(acc)
+    return { moves, acc, changed, taken }
+  }
+  function applyMoves(keys) {
+    const ids = new Set(keys.map(k => k.split(':')[0]))
+    const { moves, acc, changed, taken } = chargeMoves(ids)
+    const total = list => Math.round(list.reduce((a, e) => a + (Number(e.qty) || 1) * (Number(e.price) || 0), 0) * 100) / 100
+    moves.forEach(m => jobsStore.updateRecord(m.jobId, { materialEntries: m.entries, actualMaterials: total(m.entries) }))
+    if (changed) setOrders(acc)
     if (taken.length) setStock(list => taken.reduce((a, x) => takeFromStock(a, x.li, x.qty), list || []))
-  }, [orders, jobsStore.loading, jobsStore.records, feedForCharges]) // eslint-disable-line react-hooks/exhaustive-deps
+  }
+  const movesAll = useMemo(() => modeMove === 'off' ? [] : chargeMoves().moves, [orders, jobsStore.loading, jobsStore.records, feedForCharges, modeMove]) // eslint-disable-line react-hooks/exhaustive-deps
+  const movesAsk = modeMove === 'ask' ? movesAll.filter(m => !skipMove.has(m.key)) : []
+  useEffect(() => {
+    if (modeMove === 'auto' && movesAll.length) applyMoves(movesAll.map(m => m.key))
+  }, [orders, jobsStore.loading, jobsStore.records, feedForCharges, modeMove]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function writeSlipToJobs(order) {
     // The rule: a quote is what was ordered (the total), packing slips are what
@@ -4680,8 +4814,10 @@ export default function Materials({ screen }) {
     }))
     const jobList = [...new Map([...jobs, ...ticked.map(x => x.j)].map(j => [j.id, { id: j.id, name: j.name, customerName: (jobsStore.customers.find(c => c.id === j.customerId) || {}).name || '' }])).values()]
     if (jobList.length === 1 && !ticked.length) lineItems = lineItems.map(li => ({ ...li, jobIds: [jobList[0].id] }))
+    // a quote kept for pricing (no PO) opens as a pricing quote — nothing to receive
+    const asPricing = !String(o.poNumber || '').trim() && feedPoState(o) === 'pricing'
     const doc = {
-      id: uid(), kind: 'order', docType: 'quote', feedKey: part.key, feedId: o.id,
+      id: uid(), kind: asPricing ? 'pricing' : 'order', ...(asPricing ? { recordOnly: true, pricingTarget: { type: 'catalog' } } : {}), docType: 'quote', feedKey: part.key, feedId: o.id,
       wholesaler: read.wholesaler || o.supplier || '', invoiceNumber: part.number, poNumber: o.poNumber || '', orderDate: read.orderDate || o.date || '',
       subtotal: read.subtotal || part.total || '', tax: read.tax || '', invoiceTotal: read.invoiceTotal || '',
       lineItems, jobs: jobList, received: false, createdAt: new Date().toISOString(), source: 'orders', fileName: `Quote ${part.number}`,
@@ -4938,7 +5074,7 @@ export default function Materials({ screen }) {
 
   return (
     <div>
-      {compareCat && (
+      {compareCat && !compareQuote && (
         <CatalogCompare lines={compareCat.lines} catalog={catalog} request={compareCat.request} sourceLabel={compareCat.label}
           onClose={() => setCompareCat(null)} onApply={applyCatalogCompare} />
       )}
@@ -4957,11 +5093,14 @@ export default function Materials({ screen }) {
           }}
         />
       )}
+      <AutoReview id="slip-tag" items={tagAsk} mode={modeTag} onMode={setModeTag} onApply={applyTag} onSkip={addSkipTag} />
+      <AutoReview id="quote-to-slips" items={movesAsk} mode={modeMove} onMode={setModeMove} onApply={applyMoves} onSkip={addSkipMove} />
+      <AutoReview id="closeout-deficiency" items={closeoutAsk} mode={modeCloseout} onMode={setModeCloseout} onApply={applyCloseout} onSkip={addSkipCloseout} />
       <div style={{ display: 'flex', alignItems: 'center', background: 'var(--surface)', borderBottom: '1px solid var(--border)' }}>
         <button style={tabBtnStyle(tab === 'used')} onClick={() => setTab('used')}>Material Used{pendingUsed.length ? ` (${pendingUsed.length})` : ''}</button>
         <button style={tabBtnStyle(tab === 'ordered')} onClick={() => setTab('ordered')}>Orders &amp; Slips{pendingSlips.length ? ` (${pendingSlips.length})` : ''}</button>
         <button style={tabBtnStyle(tab === 'catalog')} onClick={() => setTab('catalog')}>Catalog &amp; Stock{approvalLineCount(catPendingTab) ? ` (${approvalLineCount(catPendingTab)})` : ''}</button>
-        <button style={tabBtnStyle(tab === 'orderform')} onClick={() => setTab('orderform')}>Material Order{planWaiting ? ` (${planWaiting} waiting)` : ''}</button>
+        <button style={tabBtnStyle(tab === 'orderform')} onClick={() => setTab('orderform')}>Material Order{orderSheetCount ? ` (${orderSheetCount})` : ''}</button>
         <button
           onClick={() => setTab('settings')}
           title="Settings — Anthropic API key for parsing order PDFs"

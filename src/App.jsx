@@ -11,6 +11,7 @@ import Crew from './pages/Crew.jsx'
 import Todo from './pages/Todo.jsx'
 import SlipGrabber from './components/SlipGrabber.jsx'
 import Backup from './pages/Backup.jsx'
+import Automations from './pages/Automations.jsx'
 import Trash from './pages/Trash.jsx'
 import Calendar from './pages/Calendar.jsx'
 import Notes, { useMoveMiscNotesToDaily } from './pages/Notes.jsx'
@@ -96,12 +97,17 @@ const HUB_ROOT = {
   notes:      { hub: 'notes' },
   cloudsync:  { hub: 'cloudsync' },
   backup:     { hub: 'backup' },
+  automations: { hub: 'automations' },
   trash:      { hub: 'trash' },
 }
 
 export default function App() {
   useMoveMiscNotesToDaily()
   const windowRoute = useWindowRoute()
+  // The Materials window's screen object must stay the same between renders —
+  // a new one each render made Materials jump back to its starting tab
+  // (e.g. Orders & Slips) whenever anything in the app updated
+  const materialsWindowScreen = React.useMemo(() => windowRoute?.kind === 'materials' ? { hub: 'materials', view: windowRoute.view } : null, [windowRoute])
   const [screen, setScreen]   = useState({ hub: 'home' })   // current screen object
   const [history, setHistory] = useState([])      // stack of previous screens
   const [agingDeficiencyCount, setAgingDeficiencyCount] = useState(0)
@@ -202,7 +208,7 @@ export default function App() {
   if (windowRoute?.kind === 'materials') {
     return (
       <div style={{ height: '100vh', overflowY: 'auto', background: 'var(--bg, #f6f8fb)' }}>
-        <Materials screen={{ hub: 'materials', view: windowRoute.view }} navigate={() => {}} goBack={() => {}} />
+        <Materials screen={materialsWindowScreen} navigate={() => {}} goBack={() => {}} />
       </div>
     )
   }
@@ -253,6 +259,7 @@ export default function App() {
             { id: 'snapshot', label: 'Snapshot', icon: '📊', title: "What's on the books: left to bill, open quotes, billing" },
             { id: 'cloudsync', label: 'Mobile', icon: '📱', title: 'Phone app and sync' },
             { id: 'crew', label: 'Crew', icon: '👷' },
+            { id: 'automations', label: 'Auto', icon: '⚙', title: 'Automations — what the app does on its own, and the switch for each' },
             { id: 'backup', label: 'Backup', icon: '💾' },
             { id: 'trash', label: 'Trash', icon: '🗑' },
           ].map(item => (
@@ -324,6 +331,10 @@ export default function App() {
 
         {screen?.hub === 'backup' && (
           <Backup />
+        )}
+
+        {screen?.hub === 'automations' && (
+          <Automations />
         )}
 
         {screen?.hub === 'trash' && (
