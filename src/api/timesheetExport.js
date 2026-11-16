@@ -8,6 +8,31 @@ export const EXPORT_EXTRA_KEY = 'timesheet_export_extra'
 export function exportWeekKey(date = new Date()) { return weekKeyOf(date) }
 export const normPoKeyTs = s => String(s || '').toLowerCase().replace(/^po\s*#?\s*/, '').replace(/[^0-9a-z]/g, '')
 
+// ── Has an order (Orders & POs row) gone to Jonathan? ──
+// Its slips in Materials carry it to the export; with no slips, one line in
+// timesheet_export_extra does. Sent = every one of those went out (or you
+// marked it sent by hand).
+export function slipsForPo(po, matOrders) {
+  const k = normPoKeyTs(po)
+  return k ? (matOrders || []).filter(m => normPoKeyTs(m.poNumber) === k && m.kind !== 'pricing' && !m.recordOnly && !(m.docType === 'quote' && m.replacedAt)) : []
+}
+export function orderExportState(o, matOrders, extras) {
+  const latest = list => list.map(x => x.sentAt).filter(Boolean).sort().pop() || null
+  if (o.sentToJonathan) return { state: 'sent', sentAt: o.sentToJonathan, manual: true }
+  const sl = slipsForPo(o.poNumber, matOrders)
+  if (sl.length) {
+    if (sl.every(m => m.sentAt)) return { state: 'sent', sentAt: latest(sl) }
+    const live = sl.filter(m => !m.sentAt)
+    // every slip still to go is on an export (a received order has nothing left to receive)
+    if (live.every(m => m.receivedAt || m.exportWeek)) return { state: 'on', week: live.map(m => m.exportWeek || (m.receivedAt ? exportWeekKey(new Date(m.receivedAt)) : '')).filter(Boolean).sort()[0] || '' }
+    return { state: 'off' }
+  }
+  const ex = (extras || []).filter(x => x.feedId === o.id)
+  if (!ex.length) return { state: 'off' }
+  if (ex.every(x => x.sentAt)) return { state: 'sent', sentAt: latest(ex) }
+  return { state: 'on', week: ex.filter(x => !x.sentAt).map(x => x.week).sort()[0] || '' }
+}
+
 // ── Who each hour bills to ──
 // A job line ("Customer — Job") bills to its customer. Admin / shop / quoting
 // time (no job) bills to the day's main customer (most job hours that day;
@@ -73,6 +98,17 @@ export function dayByCustomer(entries, weekMain) {
 // added to the timesheet export so Jonathan sees them with the week's hours.
 // Before GST — Jonathan adds the tax
 export function orderTotalForReport(o) { return slipPreTax(o) }
+// The week a slip / export line belongs to: the week it was moved or pushed
+// to, otherwise the week it was received.
+export function itemExportWeek(o) {
+  const w = o.exportWeek || (String(o.id).startsWith('x:') ? o.week : '')
+  return w || (o.receivedAt ? exportWeekKey(new Date(o.receivedAt)) : '')
+}
+export function shiftWeek(wk, delta) {
+  const d = new Date(wk + 'T00:00:00'); d.setDate(d.getDate() + 7 * delta)
+  return exportWeekKey(d)
+}
+
 // Material orders received this week, plus any received earlier that never
 // went out to Jonathan — so nothing slips through if a week is missed.
 export function receivedInWeek(orders, wk, { skipped = false } = {}) {
@@ -83,7 +119,9 @@ export function receivedInWeek(orders, wk, { skipped = false } = {}) {
     // pushed to this week's export from Orders → Done: on it (unless marked already sent)
     .filter(o => ((o.exportWeek === wk || o.week === wk) && !o.sentManually) || (!o.recordOnly && o.kind !== 'pricing' && o.receivedAt && !(o.docType === 'quote' && o.replacedAt) && (() => {
       // marked sent by hand = off the export; sent with this week's timesheet stays on it (re-export)
-      const t = Date.parse(o.receivedAt); return (t >= start && t < end && (!o.sentAt || o.sentWithWeek === wk)) || (t < start && !o.sentAt)
+      // the week it was put on (moved there from Orders, or pushed) wins over the received date
+      const wkOn = o.exportWeek || (String(o.id).startsWith('x:') ? o.week : '')
+      const t = wkOn ? new Date(wkOn + 'T00:00:00').getTime() : Date.parse(o.receivedAt); return (t >= start && t < end && (!o.sentAt || o.sentWithWeek === wk)) || (t < start && !o.sentAt)
     })()))
     // taken off this week's export by hand (it carries to next week if still not sent)
     .filter(o => skipped === (o.timesheetSkipWeeks || []).includes(wk))

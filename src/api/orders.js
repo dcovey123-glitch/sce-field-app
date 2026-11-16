@@ -48,6 +48,10 @@ export function mergeOrders(feed, local) {
       changedHere: !!ov.status,
       slip: ov.slip || null,
       forcedReceived: ov.forced || null,
+      // When it was marked (or forced) received here — its timesheet export week
+      receivedOn: (ov.forced && ov.forced.at) || (ov.status === 'Received' && ov.at) || null,
+      // Marked "already sent to Jonathan" by hand (no slip/export line carries it)
+      sentToJonathan: ov.sentToJonathan || null,
       partFilings: (ov.parts && typeof ov.parts === 'object') ? ov.parts : {},
       age: daysSince(o.date),
     }
@@ -161,10 +165,13 @@ export function isStale(o) {
   return o.status === 'Quote in' && o.age != null && o.age >= STALE_DAYS
 }
 
-export function groupOrders(rows) {
-  const g = { decide: [], waiting: [], ordered: [], done: [] }
+// isSent(o): has this received order gone to Jonathan? When given, received
+// orders that haven't gone yet are kept out of Done (toSend).
+export function groupOrders(rows, isSent) {
+  const g = { toSend: [], decide: [], waiting: [], ordered: [], done: [] }
   for (const o of rows) {
-    if (o.status === 'Received' || o.status === 'Closed') g.done.push(o)
+    if (o.status === 'Received' && isSent && !o.archived && !isSent(o)) g.toSend.push(o)
+    else if (o.status === 'Received' || o.status === 'Closed') g.done.push(o)
     else if (o.status === 'Ordered') g.ordered.push(o)
     else if (isStale(o)) g.decide.push(o)
     else g.waiting.push(o)
@@ -175,6 +182,7 @@ export function groupOrders(rows) {
   g.waiting.sort(newest)
   g.ordered.sort(newest)
   g.done.sort(newest)
+  g.toSend.sort(oldest)
   return g
 }
 

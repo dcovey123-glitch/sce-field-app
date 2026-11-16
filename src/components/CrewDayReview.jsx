@@ -5,7 +5,7 @@ import { abtHM, abtFromHM } from '../api/albertaTime.js'
 
 // Review card for a day from the phone's crew clock (or a missed crew day
 // entered by hand). One timeline per person, editable blocks, a job × person
-// totals table, one "what was done" note per job. Confirming writes one
+// totals table, a "what was done" note per job (each person can have their own). Confirming writes one
 // entry per person per job into the same places as the rest of Catch-up
 // (job.trackedTime / time_nonjob_log) — review only, never billing.
 
@@ -80,6 +80,11 @@ export default function CrewDayReview({ item, jobs, allJobs, customers, crew, ro
   const combos = []
   segs.forEach(s => { const k = comboOf(s); if (!combos.includes(k)) combos.push(k) })
   const sampleSeg = t => segs.find(s => s.target === t)
+  // "What was done" — one note per person per job. The first person's note is the
+  // job note; anyone else left blank gets the same note.
+  const peopleOn = t => people.filter(p => segs.some(s => personKeyOf(s) === p.key && s.target === t))
+  const noteKey = (t, p) => { const on = peopleOn(t); return !on.length || on[0].key === p.key ? t : t + '|' + p.key }
+  const noteFor = (t, p) => ((noteKey(t, p) !== t && (notes[noteKey(t, p)] || '').trim()) || (notes[t] || '').trim())
 
   // Picking a job for a "🆕 new job" block maps every block with that name
   function setTarget(seg, target) {
@@ -138,7 +143,7 @@ export default function CrewDayReview({ item, jobs, allJobs, customers, crew, ro
     for (let i = 1; i < mine.length; i++) if (new Date(mine[i].start) < new Date(mine[i - 1].end) - 60000) { problems.push(`${p.name} has overlapping blocks`); break }
     mine.forEach(s => { if (ms(s) > 0 && ms(s) < SHORT_MS) warnings.push(`${p.name}: ${Math.round(ms(s) / 60000)} min block at ${fmtClock(s.start)} — mis-tap?`) })
   })
-  targets.filter(isMapped).forEach(t => { if (!(notes[t] || '').trim()) problems.push(`say what was done on ${targetName(t, sampleSeg(t))}`) })
+  targets.filter(isMapped).forEach(t => { if (!(notes[t] || '').trim() && !peopleOn(t).every(p => noteFor(t, p))) problems.push(`say what was done on ${targetName(t, sampleSeg(t))}`) })
   const uniq = [...new Set(problems)]
 
   // ── Totals (rounded per person) ──
@@ -170,7 +175,7 @@ export default function CrewDayReview({ item, jobs, allJobs, customers, crew, ro
           const entry = {
             id: uid(), date, startedAt: mine[0].start, endedAt: mine[mine.length - 1].end,
             hoursEach: hours, workers: [name], ...(person?.id ? { workerIds: [person.id] } : {}), totalHours: hours, ...(ot ? { ot: true } : {}),
-            note: (notes[target] || '').trim(), sourceId: item.id, sessionId: item.id,
+            note: noteFor(target, p), sourceId: item.id, sessionId: item.id,
             segments: mine.map(s => ({ start: s.start, end: s.end })),
           }
           await writeEntry(target, entry)
@@ -179,7 +184,7 @@ export default function CrewDayReview({ item, jobs, allJobs, customers, crew, ro
         const first = k => Math.min(...segs.filter(s => personKeyOf(s) === p.key && comboOf(s) === k).map(s => new Date(s.start).getTime()))
         const rows = Object.entries(alloc[p.key] || {}).filter(([, h]) => h > 0)
           .sort((a, b) => first(a[0]) - first(b[0]))
-          .map(([k, h]) => { const [t, ot] = parseCombo(k); return { jobId: t.startsWith('job:') ? t.slice(4) : '', project: targetName(t, sampleSeg(t)), hours: h, ot, note: (notes[t] || '').trim() } })
+          .map(([k, h]) => { const [t, ot] = parseCombo(k); return { jobId: t.startsWith('job:') ? t.slice(4) : '', project: targetName(t, sampleSeg(t)), hours: h, ot, note: noteFor(t, p) } })
         sheetPeople.push({ name, workerId: person?.id || '', rows })
       }
       if (toSheet) {
@@ -289,11 +294,22 @@ export default function CrewDayReview({ item, jobs, allJobs, customers, crew, ro
                   {people.map(p => <td key={p.key} style={{ textAlign: 'right', padding: '5px 6px', verticalAlign: 'top', fontWeight: 600, color: ot ? '#9a6610' : undefined }}>{alloc[p.key]?.[k] ? fmtH(alloc[p.key][k]) : '—'}</td>)}
                   <td style={{ padding: '4px 6px' }}>
                     {!firstForJob && <span style={{ fontSize: 11, color: 'var(--text-light)' }}>same note as above</span>}
-                    {isMapped(t) && firstForJob && (
-                      <textarea value={notes[t] || ''} onChange={e => set({ notes: { ...notes, [t]: e.target.value } })} rows={1}
-                        placeholder="e.g. pulled wire to panel 2B, replaced ballasts in 1220"
-                        style={{ ...inputStyle, width: '100%', boxSizing: 'border-box', resize: 'vertical', borderColor: (notes[t] || '').trim() ? 'var(--border)' : '#e0a716' }} />
-                    )}
+                    {isMapped(t) && firstForJob && (() => {
+                      const on = peopleOn(t)
+                      const multi = on.length > 1
+                      return on.map((p, i) => {
+                        const key = noteKey(t, p)
+                        const val = notes[key] || ''
+                        return (
+                          <div key={p.key} style={{ display: 'flex', gap: 6, alignItems: 'flex-start', marginTop: i ? 4 : 0 }}>
+                            {multi && <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-mid)', width: 70, paddingTop: 6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={p.name}>{p.name}</span>}
+                            <textarea value={val} onChange={e => set({ notes: { ...notes, [key]: e.target.value } })} rows={1}
+                              placeholder={i === 0 ? 'e.g. pulled wire to panel 2B, replaced ballasts in 1220' : `Same as ${on[0].name} — type to change`}
+                              style={{ ...inputStyle, flex: 1, width: '100%', boxSizing: 'border-box', resize: 'vertical', borderColor: noteFor(t, p) ? 'var(--border)' : '#e0a716' }} />
+                          </div>
+                        )
+                      })
+                    })()}
                   </td>
                 </tr>
               ) })}

@@ -1,6 +1,7 @@
 import {
   TM_MATERIAL_MARKUP, billingWhen, billingEntries, tmTotal, tmBilledAmount, unbilledAmount, effectiveJobTotal,
   progressBillPatch, tmBillPatch, undoLastBillingPatch, quotedBilledAmount, ownJobTotal, ownTmTotal, combinedParent, combinedChildren,
+  actualMaterialsOf,
 } from '../api/billing.js'
 export { TM_MATERIAL_MARKUP, billingWhen, billingEntries, tmTotal, tmBilledAmount, unbilledAmount, effectiveJobTotal }
 import React, { useState, useEffect, useRef } from 'react'
@@ -24,6 +25,7 @@ import CloseoutChecklist from '../components/CloseoutChecklist.jsx'
 import { drawFromStock, adjustStockDraw, chargesFullStock, stockLinePrice } from '../api/stockDraw.js'
 import { normPo } from '../api/orders.js'
 import { partNosOf } from '../api/partAliases.js'
+import { jobEntriesFromSlip } from '../api/slips.js'
 import { slipKind, lineJobsOf, lineUse, lineRemaining, slipEntry, slipLineKey, sameItem, leftoverLinesForJob, closeOutLines, mergeIntoStock, moveQuoteChargesToSlips, moveFeedChargesToSlips, takeFromStock, setSlipLineUse } from '../api/slips.js'
 import { hit } from '../api/search.js'
 import { todayLocal, monthLocal } from '../api/albertaTime.js'
@@ -1007,7 +1009,7 @@ function BillTM({ project, onBill, onUndoLast }) {
   const rates = getLaborRates(project)
   const lt = laborTotals(project.laborEntries || [], rates)
   const labor = Number(project.actualLabor) || 0
-  const mats = Number(project.actualMaterials) || 0
+  const mats = actualMaterialsOf(project)
   const markup = Math.round(mats * TM_MATERIAL_MARKUP * 100) / 100
   const total = tmTotal(project)
   const billed = tmBilledAmount(project)
@@ -2480,7 +2482,7 @@ function WorkOrderBlock({ wo, project, customer }) {
 function GeneralInfoSection({ project, customer, onUpdate, navigate }) {
   const combinedInto = combinedParent(project)
   const combinedKids = combinedChildren(project)
-  const actualMaterials = project.actualMaterials || 0
+  const actualMaterials = actualMaterialsOf(project)
   const actualLabor = project.actualLabor || 0
   const isQuoted = project.type === 'quoted'
   const rates = getLaborRates(project)
@@ -2549,7 +2551,7 @@ function GeneralInfoSection({ project, customer, onUpdate, navigate }) {
       {project.type === 'warranty' ? (
         <>
           <FieldRow label="Cost to us so far">
-            <span style={{ fontSize: 14, fontWeight: 800, color: '#a12a1e' }}>{money((Number(project.actualLabor) || 0) + (Number(project.actualMaterials) || 0))}</span>
+            <span style={{ fontSize: 14, fontWeight: 800, color: '#a12a1e' }}>{money((Number(project.actualLabor) || 0) + actualMaterialsOf(project))}</span>
           </FieldRow>
           <div style={{ padding: '0 16px 10px', fontSize: 11, color: 'var(--text-light)', marginTop: -6 }}>
             Labor at your charge-out rates plus materials at cost. Not billed — for your own records.
@@ -3698,6 +3700,40 @@ function MaterialsActual({ project, onUpdate }) {
     if (taken.length) setStock(list => taken.reduce((a, x) => takeFromStock(a, x.li, x.qty), list || []))
     onUpdate({ materialEntries: job.materialEntries, actualMaterials: materialsTotal(job.materialEntries) })
   }, [project.id, matOrders, feedForCharges, (project.materialEntries || []).length]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Everything ordered for this job counts toward its actual cost on its own:
+  //  · slip lines tagged to this job that aren't on its list yet
+  //  · PO quotes filed to this job only, with a PO and no slips in yet
+  // A line you take off stays off (remembered in autoChargeSkip).
+  useEffect(() => {
+    if (project.lifecycleStatus === 'billed') return
+    const skip = new Set(project.autoChargeSkip || [])
+    const orders = matOrders || []
+    let next = project.materialEntries || []
+    const added = []
+    const miss = missingSlipCharges(orders, project).filter(m => !skip.has(m.key))
+    if (miss.length) {
+      const keys = new Set(miss.map(m => m.key))
+      const adds = [...new Set(miss.map(m => m.order))].flatMap(o => jobEntriesFromSlip(o, project.id, uid)).filter(e => keys.has(e.orderKey))
+      next = [...next, ...adds]; added.push(...adds.map(e => e.orderKey))
+    }
+    partsForJob(feedForCharges, project.name).forEach(p => {
+      const o = p.order
+      if (!o.poNumber || o.status === 'Closed' || o.pricingOnly || p.refs.length !== 1 || skip.has(p.key)) return
+      if (orders.some(m => m.feedKey === p.key)) return // opened in Materials — charged from there
+      const k = normPo(o.poNumber)
+      if (orders.some(m => slipKind(m) === 'order' && normPo(m.poNumber) === k)) return // slips are in — charged from the slips
+      if (next.some(e => belongsTo(e, p))) return
+      const src = [o.supplier, p.number && (/^order/i.test(p.number) ? p.number : `Quote ${p.number}`), `PO ${o.poNumber}`].filter(Boolean).join(' · ')
+      const adds = p.lines.length
+        ? p.lines.map(l => ({ id: uid(), kind: 'order', orderKey: lineKey(p, l), qty: l.qty || 1, uom: l.uom || '', partNo: l.partNo || '', item: l.desc || l.partNo || 'Material', price: Math.round((l.qty ? l.ext / l.qty : l.ext) * 10000) / 10000, source: src }))
+        : (Number(p.total) ? [{ id: uid(), kind: 'order', orderKey: p.key, qty: 1, uom: 'lot', partNo: p.number || '', item: [src, o.description].filter(Boolean).join(' — '), price: Number(p.total) || 0, source: src }] : [])
+      if (!adds.length) return
+      next = [...next, ...adds]; added.push(p.key)
+    })
+    if (!added.length) return
+    onUpdate({ materialEntries: next, actualMaterials: materialsTotal(next), autoChargeSkip: [...skip, ...added] })
+  }, [project.id, matOrders, feedForCharges, project.lifecycleStatus]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // Qty on a slip line changed here: the slip's line follows
   function setSlipQty(e, v) {
     const r = setSlipLineUse(matOrders || [], e, project.id, v, uid)

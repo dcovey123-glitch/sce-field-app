@@ -44,10 +44,18 @@ export function combinedChildren(project, jobs = liveJobs()) {
   return jobs.filter(j => j.relatedJobId === project.id && j.foldIntoParent && j.type === project.type)
 }
 
+// A job's actual material cost: always the sum of its material lines (the
+// saved actualMaterials can lag behind when lines are added from elsewhere).
+export function actualMaterialsOf(project) {
+  const entries = project && project.materialEntries
+  if (!Array.isArray(entries) || !entries.length) return Number(project && project.actualMaterials) || 0
+  return round2(entries.reduce((a, e) => a + (Number(e.qty) || 1) * (Number(e.price) || 0), 0))
+}
+
 // This job's own T&M total, not counting combined sub-jobs
 export function ownTmTotal(project) {
   const labor = Number(project.actualLabor) || 0
-  const mats = Number(project.actualMaterials) || 0
+  const mats = actualMaterialsOf(project)
   return round2(labor + mats * (1 + TM_MATERIAL_MARKUP))
 }
 

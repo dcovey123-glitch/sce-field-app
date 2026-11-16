@@ -6,7 +6,7 @@ import { poStatus } from '../api/billingCheck.js'
 import { groupMonthDist } from '../api/monthDist.js'
 import { FlagButton, FlagNote } from '../components/Flags.jsx'
 import { useFlags, readFlagJump } from '../api/flags.js'
-import { EXPORT_EXTRA_KEY, exportWeekKey, normPoKeyTs } from '../api/timesheetExport.js'
+import { EXPORT_EXTRA_KEY, exportWeekKey, slipsForPo, orderExportState } from '../api/timesheetExport.js'
 import { money, fmtDate as fmtDateShared } from '../api/format.js'
 import { useApiKey } from '../api/ai.js'
 
@@ -23,6 +23,8 @@ const STATUS_STYLE = {
   'PO requested': { bg: 'var(--purple-bg)',  fg: 'var(--purple)' },
   'Ordered':      { bg: 'var(--accent-bg)',  fg: 'var(--accent-dim)' },
   'Received':     { bg: 'var(--green-bg)',   fg: 'var(--green-dark)' },
+  'To Jonathan':  { bg: '#fff3d6',           fg: '#8a5d00' },
+  'Sent':         { bg: 'var(--gray-light)', fg: 'var(--green-dark)' },
   'Closed':       { bg: 'var(--gray-light)', fg: 'var(--text-light)' },
 }
 
@@ -206,7 +208,7 @@ function FiledChip({ o }) {
 }
 
 // Collapsed title bar for one PO / quote: status · date · supplier · PO · what · quick note · quoted
-function OrderTitleBar({ o, open, onToggle, onNote, bal }) {
+function OrderTitleBar({ o, status, open, onToggle, onNote, bal }) {
   const { flagOf } = useFlags()
   const flagged = flagOf('po:' + o.id)
   const [note, setNote] = useState(o.note || '')
@@ -220,7 +222,7 @@ function OrderTitleBar({ o, open, onToggle, onNote, bal }) {
       style={{ display: 'grid', gridTemplateColumns: '14px 24px 86px 86px 150px 92px minmax(120px, 1fr) minmax(160px, 1.3fr) 84px', gap: 8, alignItems: 'center', padding: '5px 10px', boxShadow: flagged ? 'inset 4px 0 0 #c0392b' : 'none', border: '1px solid ' + (open ? '#9fb8d6' : '#c9d7e8'), borderRadius: open ? '6px 6px 0 0' : 6, background: open ? '#d3e1f1' : '#e6eef8', cursor: 'pointer', opacity: done && !open ? 0.7 : 1, fontSize: 12.5 }}>
       <span style={{ fontSize: 10, color: 'var(--text-light)' }}>{open ? '▾' : '▸'}</span>
       <FlagButton refId={'po:' + o.id} info={{ kind: 'po', title: o.description || 'Material', sub: [o.supplier, o.poNumber ? 'PO ' + o.poNumber : 'no PO', o.quoteNumber ? 'Quote ' + o.quoteNumber : ''].filter(Boolean).join(' · '), q: o.poNumber || String(o.quoteNumber || '').split(/[,;]/)[0].trim(), date: o.date, archived: !!o.archived }} />
-      <span style={cell}><StatusPill status={o.status} /></span>
+      <span style={cell}><StatusPill status={status || o.status} /></span>
       <span style={{ ...cell, color: 'var(--text-mid)' }}>{o.date ? String(o.date).slice(0, 10) : '—'}</span>
       <span style={{ ...cell, fontWeight: 700 }} title={o.supplier || ''}>{o.supplier || '—'}</span>
       <span style={{ ...cell, fontWeight: 800, color: o.poNumber ? 'var(--navy)' : 'var(--text-light)' }}>{o.poNumber ? `PO ${o.poNumber}` : 'no PO'}{warn ? <span title={(bal.reasons || []).join('\n')} style={{ color: '#9a6610', marginLeft: 4 }}>⚠</span> : null}</span>
@@ -233,6 +235,10 @@ function OrderTitleBar({ o, open, onToggle, onNote, bal }) {
   )
 }
 
+// Received orders show where they stand with Jonathan
+const shownStatus = (o, exportStateOf) => o.status === 'Received' && exportStateOf && !o.archived
+  ? (exportStateOf(o).state === 'sent' ? 'Sent' : 'To Jonathan') : o.status
+
 function OrderRow(props) {
   const { o, isOpen, onToggleOpen, onSetNote, balanceOf } = props
   if (!onToggleOpen) return <OrderRowBody {...props} />
@@ -240,13 +246,13 @@ function OrderRow(props) {
   const bal = o.poNumber && balanceOf ? balanceOf(o) : null
   return (
     <div>
-      <OrderTitleBar o={o} open={open} bal={bal} onToggle={() => onToggleOpen(o.id)} onNote={n => onSetNote(o.id, n)} />
+      <OrderTitleBar o={o} status={shownStatus(o, props.exportStateOf)} open={open} bal={bal} onToggle={() => onToggleOpen(o.id)} onNote={n => onSetNote(o.id, n)} />
       {open && <div style={{ border: '1px solid #9fb8d6', borderTop: 'none', borderRadius: '0 0 6px 6px', overflow: 'hidden', marginBottom: 4 }}><OrderRowBody {...props} /></div>}
     </div>
   )
 }
 
-function OrderRowBody({ o, exportStateOf, onPushExport, onSetPricing, onSetStatus, onSetFiling, onForceReceived, onSetPo, balanceOf, refOptions, hideFiled, embedded, renderExtra, onFixReason }) {
+function OrderRowBody({ o, exportStateOf, onPushExport, onMarkSent, onMoveWeek, onSetPricing, onSetStatus, onSetFiling, onForceReceived, onSetPo, balanceOf, refOptions, hideFiled, embedded, renderExtra, onFixReason }) {
   const [editing, setEditing] = useState(false)
   const [poDraft, setPoDraft] = useState(null) // typing a PO # by hand
   const [forcing, setForcing] = useState(null) // reason text while the force box is open
@@ -305,7 +311,7 @@ function OrderRowBody({ o, exportStateOf, onPushExport, onSetPricing, onSetStatu
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 3 }}>
-            <StatusPill status={o.status} />
+            <StatusPill status={shownStatus(o, exportStateOf)} />
             {poDraft !== null ? (
               <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center' }}>
                 <input autoFocus value={poDraft} onChange={e => setPoDraft(e.target.value)} placeholder="PO #"
@@ -409,9 +415,24 @@ function OrderRowBody({ o, exportStateOf, onPushExport, onSetPricing, onSetStatu
             <button style={btn()} onClick={() => setEditing(true)} title="File under a quote or job, and add a note">{o.filedAs || o.note || Object.keys(o.partFilings || {}).length ? (o.filingSuggested ? 'Confirm filing' : 'Edit filing') : 'File / note'}</button>
             {o.status === 'Ordered' && <button style={btn('primary')} title={bal && !bal.balanced ? 'The quote and slips don\u2019t balance yet: you can force it' : undefined}
               onClick={() => (!bal || bal.balanced) ? onSetStatus(o.id, 'Received') : setForcing('')}>Mark received</button>}
-            {onPushExport && o.status === 'Received' && (exportStateOf(o) === 'on'
-              ? <button style={{ ...btn(), borderColor: '#1e7a34', color: '#1e7a34' }} onClick={() => onPushExport(o, false)} title="Take it back off this week's timesheet export">✓ On this week's export ✕</button>
-              : <button style={btn('primary')} onClick={() => onPushExport(o, true)} title="Put it on this week's timesheet (Received material) — you can edit it there">📤 Push to export</button>)}
+            {onPushExport && o.status === 'Received' && (() => {
+              const ex = exportStateOf(o)
+              const wkLabel = w => w ? new Date(w + 'T00:00:00').toLocaleDateString('en-CA', { month: 'short', day: 'numeric' }) : ''
+              if (ex.state === 'sent') return <>
+                <span style={{ ...btn(), cursor: 'default', borderColor: '#1e7a34', color: '#1e7a34' }} title="Gone to Jonathan">✓ Sent to Jonathan{ex.sentAt ? ' ' + fmtDate(ex.sentAt) : ''}</span>
+                {ex.manual && <button style={btn()} onClick={() => onMarkSent(o, false)} title="Undo — it goes back on the timesheet export">↺ Not sent</button>}
+              </>
+              if (ex.state === 'on') return <>
+                {onMoveWeek && <button style={btn()} onClick={() => onMoveWeek(o, -1)} title="Move to the week before's timesheet export">◀ Week</button>}
+                {onMoveWeek && ex.week && ex.week < exportWeekKey() && <button style={btn()} onClick={() => onMoveWeek(o, 1)} title="Move to the next week's timesheet export">Week ▶</button>}
+                <button style={{ ...btn(), borderColor: '#1e7a34', color: '#1e7a34' }} onClick={() => onPushExport(o, false)} title="Take it back off the timesheet export">✓ On export{ex.week ? ' (week of ' + wkLabel(ex.week) + ')' : ''} ✕</button>
+                <button style={btn()} onClick={() => onMarkSent(o, true)} title="Jonathan already has it (sent another way) — take it off the export for good">✓ Already sent</button>
+              </>
+              return <>
+                <button style={btn('primary')} onClick={() => onPushExport(o, true)} title="Put it on the timesheet export for the week it was received — it stays on until it goes out">📤 Push to export</button>
+                <button style={btn()} onClick={() => onMarkSent(o, true)} title="Jonathan already has it (sent another way)">✓ Already sent</button>
+              </>
+            })()}
             {onSetPricing && !o.poNumber && (o.pricingOnly
               ? <button style={btn()} onClick={() => onSetPricing(o.id, false)} title="Move back to Orders — waiting for a PO">→ Order (waiting for PO)</button>
               : <button style={btn()} onClick={() => onSetPricing(o.id, true)} title="Only for prices — moves to Pricing, checked against the Catalog">💲 Quote for Pricing</button>)}
@@ -425,7 +446,7 @@ function OrderRowBody({ o, exportStateOf, onPushExport, onSetPricing, onSetStatu
   )
 }
 
-function Section({ title, hint, rows, tone, collapsed, onToggle, ...rowProps }) {
+function Section({ title, hint, rows, tone, collapsed, onToggle, action, ...rowProps }) {
   if (rows.length === 0) return null
   return (
     <div style={{ marginBottom: rowProps.onToggleOpen ? 10 : 18, border: '1px solid var(--border)', borderRadius: 'var(--r)', overflow: 'hidden' }}>
@@ -435,7 +456,8 @@ function Section({ title, hint, rows, tone, collapsed, onToggle, ...rowProps }) 
       >
         <span style={{ fontFamily: 'var(--font-d)', fontSize: rowProps.onToggleOpen ? 14 : 16, fontWeight: 700, color: 'var(--text)' }}>{title} ({rows.length})</span>
         {hint && <span style={{ fontSize: 12, color: 'var(--text-light)' }}>{hint}</span>}
-        {onToggle && <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--text-light)' }}>{collapsed ? 'Show ▾' : 'Hide ▴'}</span>}
+        {action && <span style={{ marginLeft: 'auto' }} onClick={e => e.stopPropagation()}>{action}</span>}
+        {onToggle && <span style={{ marginLeft: action ? 8 : 'auto', fontSize: 12, color: 'var(--text-light)' }}>{collapsed ? 'Show ▾' : 'Hide ▴'}</span>}
       </div>
       {!collapsed && rowProps.onToggleOpen && (
         // one full-width tile per PO, newest first — click a tile to open it
@@ -594,6 +616,53 @@ export default function Orders({ onAttentionChange, embedded = false, query, ext
       .map(p => ({ value: p.name, label: p.co ? `CO/PO ${p.co}` : '' })),
   }
 
+  // Material-order slips in Materials, to check each PO's quote ↔ slips balance
+  const [matOrders, setMatOrders] = useLocalStore('material_orders', [])
+  const [exportExtra, setExportExtra] = useLocalStore(EXPORT_EXTRA_KEY, [])
+  // Where a received order stands with Jonathan: 'off' (not on any export),
+  // 'on' (on an export, not sent yet) or 'sent'
+  const exportStateOf = o => orderExportState(o, matOrders, exportExtra)
+  const isSentOrder = o => exportStateOf(o).state === 'sent'
+  // Put a received order on the timesheet export for the week it was received
+  // (or forced) — it stays on every export after that until it goes out.
+  // With slips: those slips. With no slips: one line for the PO itself.
+  function pushToExport(o, on) {
+    const when = o.receivedOn ? new Date(o.receivedOn) : new Date()
+    const wk = exportWeekKey(when)
+    const at = when.toISOString()
+    const sl = slipsForPo(o.poNumber, matOrders).filter(m => !m.sentAt)
+    if (sl.length) {
+      const ids = new Set(sl.map(m => m.id))
+      setMatOrders(list => list.map(m => !ids.has(m.id) ? m : on
+        ? { ...m, exportWeek: m.exportWeek || wk, ...(m.receivedAt ? {} : { receivedAt: at, receivedFromOrder: true }), sentManually: undefined, sentWithWeek: undefined, timesheetSkipWeeks: (m.timesheetSkipWeeks || []).filter(w => w !== wk && w !== exportWeekKey()) }
+        : { ...m, exportWeek: undefined, ...(m.receivedFromOrder ? { receivedAt: undefined, receivedFromOrder: undefined } : {}) }))
+      return
+    }
+    if (on) setExportExtra(list => [...(list || []).filter(x => !(x.feedId === o.id && !x.sentAt)), {
+      id: 'x:' + o.id + ':' + wk, feedId: o.id, week: wk, receivedAt: at, wholesaler: o.supplier || '',
+      invoiceNumber: (quoteNumbersOf(o)[0] || o.quoteNumber || ''), poNumber: o.poNumber || '', invoiceTotal: Number(o.quoteTotal) || 0,
+      jobs: (o.refs && o.refs.length ? o.refs : [o.ref || o.job]).filter(Boolean).map(name => ({ name })), description: o.description || '', timesheetNote: '',
+      ...(o.forcedReceived ? { forceReceivedAt: o.forcedReceived.at, forceReason: o.forcedReceived.reason || '' } : {}),
+    }])
+    else setExportExtra(list => (list || []).filter(x => !(x.feedId === o.id && !x.sentAt)))
+  }
+
+  // Move a received order to an earlier / later week's export (e.g. closed
+  // today but it belongs on last week's timesheet). Never past this week.
+  function moveExportWeek(o, delta) {
+    const from = exportStateOf(o).week || exportWeekKey()
+    const d = new Date(from + 'T00:00:00'); d.setDate(d.getDate() + 7 * delta)
+    const wk = exportWeekKey(d)
+    if (wk > exportWeekKey()) return
+    const sl = slipsForPo(o.poNumber, matOrders).filter(m => !m.sentAt)
+    if (sl.length) {
+      const ids = new Set(sl.map(m => m.id))
+      setMatOrders(list => list.map(m => !ids.has(m.id) ? m : { ...m, exportWeek: wk, receivedAt: m.receivedAt || new Date().toISOString(), timesheetSkipWeeks: (m.timesheetSkipWeeks || []).filter(w => w !== wk) }))
+      return
+    }
+    setExportExtra(list => (list || []).map(x => x.feedId === o.id && !x.sentAt ? { ...x, week: wk, timesheetSkipWeeks: (x.timesheetSkipWeeks || []).filter(w => w !== wk) } : x))
+  }
+
   const rows = state.feed ? mergeOrders(state.feed, state.local) : []
   const q = (embedded ? String(query || '') : search).trim().toLowerCase()
   const base = rowFilter ? rows.filter(rowFilter) : rows
@@ -601,7 +670,7 @@ export default function Orders({ onAttentionChange, embedded = false, query, ext
     ? base.filter(o => [o.supplier, o.contact, o.quoteNumber, o.poNumber, o.description, o.job, o.nextStep, o.note, o.ref, o.refLabel].join(' ').toLowerCase().includes(q) || (extraMatch && extraMatch(o)))
     : base
   useEffect(() => { if (onRows) onRows(rows) }, [state.feed, state.local]) // eslint-disable-line react-hooks/exhaustive-deps
-  const g = groupOrders(shown)
+  const g = groupOrders(shown, isSentOrder)
 
   useEffect(() => {
     if (onAttentionChange && state.feed) onAttentionChange(groupOrders(rows).decide.length)
@@ -623,6 +692,8 @@ export default function Orders({ onAttentionChange, embedded = false, query, ext
   }
 
   function setStatus(id, status) {
+    const row = rows.find(o => o.id === id)
+    if (row && row.status === 'Received' && status !== 'Received' && exportStateOf(row).state === 'on') pushToExport(row, false)
     saveLocal(ov => {
       const cur = { ...(ov[id] || {}) }
       if (status) { cur.status = status; cur.at = new Date().toISOString() } else { delete cur.status; delete cur.at; delete cur.forced; delete cur.balancedAt }
@@ -729,35 +800,39 @@ export default function Orders({ onAttentionChange, embedded = false, query, ext
     </div>
   )
 
-  // Material-order slips in Materials, to check each PO's quote ↔ slips balance
-  const [matOrders, setMatOrders] = useLocalStore('material_orders', [])
-  const [exportExtra, setExportExtra] = useLocalStore(EXPORT_EXTRA_KEY, [])
-  // Push a done order onto this week's timesheet export (its slips, or the PO itself)
-  const slipsOnPo = o => { const k = normPoKeyTs(o.poNumber); return k ? (matOrders || []).filter(m => normPoKeyTs(m.poNumber) === k && m.kind !== 'pricing' && !(m.docType === 'quote' && m.replacedAt)) : [] }
-  const exportStateOf = o => {
-    const wk = exportWeekKey()
-    const sl = slipsOnPo(o)
-    if (sl.length) return sl.some(m => m.exportWeek === wk) ? 'on' : 'off'
-    return (exportExtra || []).some(x => x.feedId === o.id && x.week === wk) ? 'on' : 'off'
-  }
-  function pushToExport(o, on) {
-    const wk = exportWeekKey()
-    const sl = slipsOnPo(o)
+  // "Already sent" by hand: off the export for good. Undo puts it back.
+  function markSent(o, on) {
+    const at = new Date().toISOString()
+    const sl = slipsForPo(o.poNumber, matOrders)
     if (sl.length) {
       const ids = new Set(sl.map(m => m.id))
-      const at = new Date().toISOString()
       setMatOrders(list => list.map(m => !ids.has(m.id) ? m : on
-        ? { ...m, exportWeek: wk, receivedAt: m.receivedAt || at, sentAt: undefined, sentManually: undefined, sentWithWeek: undefined, timesheetSkipWeeks: (m.timesheetSkipWeeks || []).filter(w => w !== wk) }
-        : { ...m, exportWeek: undefined }))
-      return
+        ? (m.sentAt ? m : { ...m, sentAt: at, sentManually: true, sentFromOrder: true })
+        : (m.sentFromOrder ? { ...m, sentAt: undefined, sentManually: undefined, sentFromOrder: undefined } : m)))
     }
-    if (on) setExportExtra(list => [...(list || []).filter(x => !(x.feedId === o.id && x.week === wk)), {
-      id: 'x:' + o.id + ':' + wk, feedId: o.id, week: wk, receivedAt: new Date().toISOString(), wholesaler: o.supplier || '',
-      invoiceNumber: (quoteNumbersOf(o)[0] || o.quoteNumber || ''), poNumber: o.poNumber || '', invoiceTotal: Number(o.quoteTotal) || 0,
-      jobs: (o.refs && o.refs.length ? o.refs : [o.ref || o.job]).filter(Boolean).map(name => ({ name })), description: o.description || '', timesheetNote: '',
-    }])
-    else setExportExtra(list => (list || []).filter(x => !(x.feedId === o.id && x.week === wk)))
+    setExportExtra(list => (list || []).map(x => x.feedId !== o.id ? x : on
+      ? (x.sentAt ? x : { ...x, sentAt: at, sentManually: true, sentFromOrder: true })
+      : (x.sentFromOrder ? { ...x, sentAt: undefined, sentManually: undefined, sentFromOrder: undefined } : x)))
+    saveLocal(ov => {
+      const cur = { ...(ov[o.id] || {}) }
+      if (on) cur.sentToJonathan = at; else delete cur.sentToJonathan
+      if (Object.keys(cur).length) ov[o.id] = cur; else delete ov[o.id]
+    })
   }
+
+  // Anything marked or forced received here goes straight onto the export for
+  // the week it was received (covers the last 5 weeks, so recent ones that
+  // were missed get picked up too).
+  const autoPushed = React.useRef(new Set())
+  useEffect(() => {
+    if (!state.feed) return
+    const cutoff = Date.now() - 35 * 86400000
+    rows.filter(o => o.status === 'Received' && !o.archived && o.receivedOn && Date.parse(o.receivedOn) >= cutoff
+      && !autoPushed.current.has(o.id) && exportStateOf(o).state === 'off')
+      .forEach(o => { autoPushed.current.add(o.id); pushToExport(o, true) })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.feed, state.local, matOrders, exportExtra])
+
   const balanceOf = o => poStatus(o.poNumber, matOrders, rows)
   // A PO whose quote and slips now balance gets marked Received
   const autoMarked = React.useRef(new Set())
@@ -803,7 +878,7 @@ export default function Orders({ onAttentionChange, embedded = false, query, ext
       if (Object.keys(cur).length) ov[id] = cur; else delete ov[id]
     })
   }
-  const rowProps = { exportStateOf, onPushExport: pushToExport, onSetPricing: embedded ? setPricing : null, onSetStatus: setStatus, onSetFiling: setFiling, onForceReceived: forceReceived, onSetPo: setPo, balanceOf, refOptions, embedded, renderExtra, onFixReason, isOpen: id => openRows.has(id), onToggleOpen: toggleOpen, onSetNote: setNote }
+  const rowProps = { exportStateOf, onPushExport: pushToExport, onMarkSent: markSent, onMoveWeek: moveExportWeek, onSetPricing: embedded ? setPricing : null, onSetStatus: setStatus, onSetFiling: setFiling, onForceReceived: forceReceived, onSetPo: setPo, balanceOf, refOptions, embedded, renderExtra, onFixReason, isOpen: id => openRows.has(id), onToggleOpen: toggleOpen, onSetNote: setNote }
   const nothing = shown.length === 0
 
   // just the tiles (a section inside Materials → Orders)
@@ -831,16 +906,24 @@ export default function Orders({ onAttentionChange, embedded = false, query, ext
         })()
       ) : view === 'status' ? (
         <>
+        <Section title="Received — not sent to Jonathan yet" hint="On the timesheet export for the week it was received; it goes when that export is sent" rows={g.toSend} tone="#fff3d6" {...rowProps}
+          action={g.toSend.some(o => exportStateOf(o).week === exportWeekKey()) && (
+            <button style={{ ...btn(), padding: '3px 10px', fontSize: 11.5 }} title="Everything here that's on this week's export moves to last week's"
+              onClick={() => g.toSend.filter(o => exportStateOf(o).week === exportWeekKey()).forEach(o => moveExportWeek(o, -1))}>◀ Move this week's to last week</button>
+          )} />
         <Section title="Needs a decision" hint={`Quotes with no PO after ${STALE_DAYS}+ days — order or close`} rows={g.decide} tone="var(--red-bg)" {...rowProps} />
         <Section title="Waiting" hint="Pricing asked for, quote in, or PO asked for" rows={g.waiting} {...rowProps} />
         <Section title="On order" hint="Jonathan has issued a PO — mark received when it's picked up or delivered" rows={g.ordered} tone="var(--accent-bg)" {...rowProps} />
         <Section title="Done" rows={g.done} collapsed={!showDone && !q} onToggle={() => setShowDone(v => !v)} {...rowProps} />
         </>
       ) : (
-        groupByFiling(shown.filter(o => showDone || q || (o.status !== 'Received' && o.status !== 'Closed'))).map(grp => (
+        <>
+        <Section title="Received — not sent to Jonathan yet" hint="On the timesheet export; it goes when that export is sent" rows={g.toSend} tone="#fff3d6" {...rowProps} />
+        {groupByFiling(shown.filter(o => !g.toSend.includes(o) && (showDone || q || (o.status !== 'Received' && o.status !== 'Closed')))).map(grp => (
           <Section key={grp.key} title={grp.title} hint={grp.subtitle} rows={grp.rows}
             tone={grp.type ? 'var(--blue-bg)' : undefined} {...rowProps} hideFiled={!!grp.type} />
-        ))
+        ))}
+        </>
       )}
       {view === 'filed' && g.done.length > 0 && !q && (
         <button style={{ ...btn(), marginTop: 4 }} onClick={() => setShowDone(v => !v)}>

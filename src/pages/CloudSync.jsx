@@ -3,6 +3,7 @@ import { ensureRoster } from '../api/crewRoster.js'
 import { useLocalStore } from '../api/useLocalStore.js'
 import { useHubStore } from '../api/useHubStore.js'
 import { effectiveLifecycleStatus } from './Jobs.jsx'
+import { actualMaterialsOf } from '../api/billing.js'
 import { quoteGrandTotal, quoteMaterialsTotal, quoteLaborTotal, normalizeQuote, scopeMaterialsMarked, scopeLabor, scopeLaborHours, allowancesTotal, adjustmentsTotal } from '../api/quoteMath.js'
 import { jobDeficiencies } from '../api/jobHealth.js'
 import { findProposal } from '../api/proposal.js'
@@ -67,7 +68,7 @@ export default function CloudSync({ background = false }) {
     } catch { issues = [] }
     return {
       value: r2(p.jobValue || p.coValue), progress: Number(p.progress) || 0, billedPct: Number(p.billedProgress ?? p.billingProgress) || 0, billed: r2(p.billedAmount),
-      hours: r2(hours), labor: r2(p.actualLabor), materials: r2(p.actualMaterials), qMat: r2(p.quotedMaterials), qLab: r2(p.quotedLabor),
+      hours: r2(hours), labor: r2(p.actualLabor), materials: r2(actualMaterialsOf(p)), qMat: r2(p.quotedMaterials), qLab: r2(p.quotedLabor),
       dateComplete: p.dateComplete || '', quotes: quoteNos,
       tasks: (p.tasks || []).filter(t => !t.done).slice(0, 8).map(t => ({ t: clip(t.text, 120), due: t.due || '', who: t.who || '' })),
       tasksDone: (p.tasks || []).filter(t => t.done).length, tasksAll: (p.tasks || []).length,

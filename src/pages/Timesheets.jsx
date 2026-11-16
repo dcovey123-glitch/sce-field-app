@@ -3,7 +3,7 @@ import { useHubStore } from '../api/useHubStore.js'
 import { clockEntriesInRange, pushClockTime } from '../api/timesheetFromClock.js'
 import { weekKeyOf, weekdayName } from '../api/weekStart.js'
 import { useLocalStore } from '../api/useLocalStore.js'
-import { EXPORT_EXTRA_KEY, normPoKeyTs, entryCustomer, weekMainCustomer, dayMainCustomer, billShares, dayByCustomer, MAIN_CUSTOMER, tsHours, orderTotalForReport, receivedInWeek } from '../api/timesheetExport.js'
+import { EXPORT_EXTRA_KEY, normPoKeyTs, entryCustomer, weekMainCustomer, dayMainCustomer, billShares, dayByCustomer, MAIN_CUSTOMER, tsHours, orderTotalForReport, receivedInWeek, itemExportWeek, shiftWeek } from '../api/timesheetExport.js'
 export { entryCustomer, weekMainCustomer, dayMainCustomer, billShares, dayByCustomer }
 import FileAttachments, { FileTile } from '../components/FileAttachments.jsx'
 import ConfirmDeleteButton from '../components/ConfirmDeleteButton.jsx'
@@ -450,7 +450,9 @@ function receivedMaterialHtml(list, links = {}) {
   </div>`
 }
 
-function ReceivedRow({ o, off, patch, skipW, unskipW, money, day, btn }) {
+function ReceivedRow({ o, off, patch, skipW, unskipW, money, day, btn, wk, moveTo }) {
+  const own = itemExportWeek(o)
+  const wkLabel = w => new Date(w + 'T00:00:00').toLocaleDateString('en-CA', { month: 'short', day: 'numeric' })
   const [note, setNote] = useState(o.timesheetNote || '')
   const jobs = (o.jobs || []).map(j => j.name).filter(Boolean).join(', ')
   return (
@@ -464,6 +466,11 @@ function ReceivedRow({ o, off, patch, skipW, unskipW, money, day, btn }) {
         {off
           ? <button style={{ ...btn, color: '#1a5fa0', borderColor: '#1a5fa0' }} onClick={() => patch(o.id, { timesheetSkipWeeks: unskipW(o) })}>↺ Put back</button>
           : <>
+              <button style={btn} title="Put it on the week before's timesheet instead (it stays listed here until that one is sent)" onClick={() => moveTo(o, shiftWeek(own || wk, -1))}>◀ Week</button>
+              {own && own < wk && <>
+                <span title="Belongs to an earlier week's timesheet; carried here until that one is sent" style={{ fontSize: 10.5, fontWeight: 700, color: '#8a5d00', background: '#fff3d6', borderRadius: 10, padding: '1px 8px' }}>week of {wkLabel(own)}</span>
+                <button style={btn} title="Move it a week later" onClick={() => moveTo(o, shiftWeek(own, 1))}>Week ▶</button>
+              </>}
               <button style={btn} title="Off this week's export — it comes back next week if it still isn't sent" onClick={() => patch(o.id, { timesheetSkipWeeks: skipW(o) })}>✕ Remove</button>
               {o.sentWithWeek && <span title="This slip went out with this week's timesheet export" style={{ fontSize: 10.5, fontWeight: 700, color: '#1e7a34', background: '#e6f4ea', borderRadius: 10, padding: '1px 8px' }}>sent with this timesheet</span>}
               <button style={btn} title="Jonathan already has it (sent another way) — take it off this timesheet for good" onClick={() => patch(o.id, { sentAt: o.sentAt || new Date().toISOString(), sentManually: true, sentWithWeek: undefined })}>✓ Already sent</button>
@@ -488,7 +495,11 @@ function ReceivedExportModal({ wk, orders, setOrders, included, onClose }) {
   const day = iso => fmtDate(iso)
   const btn = { fontSize: 11, fontWeight: 700, padding: '3px 9px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-mid)', cursor: 'pointer', whiteSpace: 'nowrap' }
   const total = list.reduce((a, o) => a + orderTotalForReport(o), 0)
-  const rp = { patch, skipW, unskipW, money, day, btn }
+  // Move a line to another week's export (slips: exportWeek; PO-only lines: week)
+  const moveTo = (o, to) => patch(o.id, { ...(String(o.id).startsWith('x:') ? { week: to } : { exportWeek: to }), timesheetSkipWeeks: (o.timesheetSkipWeeks || []).filter(w => w !== to) })
+  const rp = { patch, skipW, unskipW, money, day, btn, wk, moveTo }
+  const thisWeeks = list.filter(o => itemExportWeek(o) === wk)
+  const prevLabel = new Date(shiftWeek(wk, -1) + 'T00:00:00').toLocaleDateString('en-CA', { month: 'short', day: 'numeric' })
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', zIndex: 5000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '10vh 16px 4vh' }}>
       <div onClick={e => e.stopPropagation()} style={{ width: '100%', maxWidth: 820, maxHeight: '86vh', overflowY: 'auto', background: 'var(--surface)', borderRadius: 10, boxShadow: '0 10px 40px rgba(0,0,0,.3)', color: 'var(--text)' }}>
@@ -498,7 +509,11 @@ function ReceivedExportModal({ wk, orders, setOrders, included, onClose }) {
           <button onClick={onClose} style={{ background: 'rgba(255,255,255,.15)', border: 'none', color: '#fff', borderRadius: 6, padding: '4px 10px', cursor: 'pointer', fontWeight: 700 }}>Close</button>
         </div>
         {!included && <div style={{ padding: '8px 16px', fontSize: 12, background: '#fff3d6', color: '#8a5d00' }}>The Received material box is unticked, so none of this goes on the export right now.</div>}
-        <div style={{ padding: '6px 16px', fontSize: 11.5, color: 'var(--text-light)' }}>Received this week, plus anything received earlier that hasn't gone to Jonathan yet.</div>
+        <div style={{ padding: '6px 16px', fontSize: 11.5, color: 'var(--text-light)', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ flex: 1 }}>Received this week, plus anything received earlier that hasn't gone to Jonathan yet.</span>
+          {thisWeeks.length > 0 && <button style={{ ...btn, color: '#1a5fa0', borderColor: '#1a5fa0' }} title="Closed late? Put these on the week before's timesheet"
+            onClick={() => { const to = shiftWeek(wk, -1); thisWeeks.forEach(o => moveTo(o, to)) }}>◀ Move all {thisWeeks.length} to week of {prevLabel}</button>}
+        </div>
         {!list.length && <div style={{ padding: '14px 16px', fontSize: 13, color: 'var(--text-light)' }}>Nothing on this week's export.</div>}
         {list.map(o => <ReceivedRow key={o.id} o={o} {...rp} />)}
         {removed.length > 0 && (
