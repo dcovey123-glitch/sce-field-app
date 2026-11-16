@@ -1,8 +1,9 @@
 import { fmtDate } from './format.js'
+import { byPriority } from './priority.js'
 // Job tasks: what has to be done on a job, ticked off with the date and who.
 // Kept on the job itself (job.tasks), so it travels with the job's file.
 //
-// task: { id, text, who, due, notes, createdAt, createdBy, editedAt, done, doneAt, doneBy }
+// task: { id, text, who, due, notes, priority ('high' | '' | 'low'), createdAt, createdBy, editedAt, done, doneAt, doneBy }
 //
 // The phone sees open tasks (sync/tasks.json) and sends back small changes
 // (tasks/pending/*.json): { id, op: 'done'|'undo'|'add', jobId, taskId, text, by, at }
@@ -45,7 +46,8 @@ export const setDone = (id, done, by, at) => changeTask(id, done
   : { done: false, doneAt: null, doneBy: '' })
 export const moveTask = (id, dir) => job => {
   const list = [...tasksOf(job)]
-  const open = list.filter(t => !t.done)
+  // in the order they show (High first), so ▲▼ move within the same priority
+  const open = byPriority(list.filter(t => !t.done))
   const i = open.findIndex(t => t.id === id), j = i + dir
   if (i < 0 || j < 0 || j >= open.length) return {}
   ;[open[i], open[j]] = [open[j], open[i]]

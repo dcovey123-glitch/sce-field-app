@@ -6,6 +6,8 @@ import {
   TEMPLATES_KEY, uid, newTask, tasksOf, isOverdue, isDueToday, addTasks, changeTask, removeTask, setDone, moveTask,
   tasksFromQuote, fmtDay, daysSinceEdit,
 } from '../api/tasks.js'
+import PriorityFlag from './PriorityFlag.jsx'
+import { byPriority } from '../api/priority.js'
 
 const inp = { fontSize: 13, border: '1px solid var(--border)', borderRadius: 6, padding: '6px 9px', fontFamily: 'inherit', background: 'var(--surface)', color: 'var(--text)', boxSizing: 'border-box' }
 const btn = (primary) => ({ fontSize: 12, fontWeight: 700, padding: '6px 12px', borderRadius: 6, cursor: 'pointer', whiteSpace: 'nowrap',
@@ -23,6 +25,7 @@ export function TaskRow({ t, onPatch, onToggle, onRemove, onMove, people = [], j
         <input type="checkbox" checked={!!t.done} onChange={e => onToggle(e.target.checked)} style={{ width: 18, height: 18, cursor: 'pointer', flexShrink: 0 }} title={t.done ? 'Not done after all' : 'Done — records today and who'} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
+            {!t.done && <span style={{ paddingTop: 2 }}><PriorityFlag value={t.priority} onChange={p => onPatch({ priority: p })} /></span>}
             <InlineText value={t.text} done={t.done} onSave={v => onPatch({ text: v })} />
             {t.notes && !open && <span onClick={() => setOpen(true)} title="Has notes" style={{ ...small, cursor: 'pointer', paddingTop: 3 }}>📝</span>}
           </div>
@@ -116,7 +119,7 @@ export default function JobTasks({ project, onUpdate }) {
   const me = crew.meName
   const people = crew.active.map(p => p.name)
   const tasks = tasksOf(project)
-  const open = tasks.filter(t => !t.done)
+  const open = byPriority(tasks.filter(t => !t.done))
   const done = tasks.filter(t => t.done).sort((a, b) => String(b.doneAt).localeCompare(String(a.doneAt)))
   const [text, setText] = useState('')
   const [showDone, setShowDone] = useState(true)

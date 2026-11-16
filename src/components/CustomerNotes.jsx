@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { addTodo, setTodoDone, removeTodo, editTodo, clearDoneTodos, openTodos, doneTodos } from '../api/customerNotes.js'
+import { addTodo, setTodoDone, removeTodo, editTodo, clearDoneTodos, openTodos, doneTodos, setTodoPriority } from '../api/customerNotes.js'
+import PriorityFlag from './PriorityFlag.jsx'
 import { InlineText } from './JobTasks.jsx'
 import { daysSinceEdit, fmtDay } from '../api/tasks.js'
 
@@ -26,6 +27,7 @@ export default function CustomerNotes({ customer, updateCustomer }) {
     <div key={x.id} onMouseEnter={() => setHover(x.id)} onMouseLeave={() => setHover('')}
       style={{ display: 'flex', alignItems: 'flex-start', gap: 7, padding: '3px 0', fontSize: 13, lineHeight: 1.4 }}>
       <input type="checkbox" checked={isDone} onChange={e => { const d = e.target.checked; todos(l => setTodoDone(l, x.id, d)) }} style={{ marginTop: 3, cursor: 'pointer' }} />
+      {!isDone && <span style={{ paddingTop: 2 }}><PriorityFlag value={x.priority} onChange={p => todos(l => setTodoPriority(l, x.id, p))} /></span>}
       <InlineText value={x.text} done={isDone} fontSize={13} onSave={v => todos(l => editTodo(l, x.id, v))} />
       {isDone && x.doneAt && (
         <span title={`Checked off ${new Date(x.doneAt).toLocaleString()}`} style={{ fontSize: 11, whiteSpace: 'nowrap', paddingTop: 2, fontWeight: 600, color: '#1e7a34' }}>✓ {fmtDay(x.doneAt)}</span>

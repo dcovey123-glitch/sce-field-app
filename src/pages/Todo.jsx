@@ -5,6 +5,7 @@ import { effectiveLifecycleStatus } from './Jobs.jsx'
 import { TaskRow } from '../components/JobTasks.jsx'
 import NeedsYou, { useNeedsYou } from '../components/NeedsYou.jsx'
 import { useLocalStore } from '../api/useLocalStore.js'
+import { byPriority, priorityRank } from '../api/priority.js'
 import { tasksOf, isOverdue, isDueToday, newTask, addTasks, changeTask, removeTask, setDone, fmtDay } from '../api/tasks.js'
 
 const small = { fontSize: 11.5, color: 'var(--text-light)' }
@@ -39,7 +40,8 @@ export default function Todo({ navigate }) {
   const whoOk = t => who === 'all' || (who === 'mine' ? (!t.who || t.who === me) : t.who === who)
   const textOk = (t, j) => !q || `${t.text} ${t.notes} ${j.name} ${custName(j.customerId)} ${t.who}`.toLowerCase().includes(q.toLowerCase())
   const all = jobs.flatMap(j => tasksOf(j).map(t => ({ t, j })))
-  const open = all.filter(x => !x.t.done && whoOk(x.t) && textOk(x.t, x.j))
+  const open = byPriority(all.filter(x => !x.t.done && whoOk(x.t) && textOk(x.t, x.j)), x => x.t.priority)
+  const highN = open.filter(x => x.t.priority === 'high').length
   const overdue = open.filter(x => isOverdue(x.t))
   const dueToday = open.filter(x => isDueToday(x.t))
   const doneRecent = all.filter(x => x.t.done && textOk(x.t, x.j)).sort((a, b) => String(b.t.doneAt).localeCompare(String(a.t.doneAt))).slice(0, 80)
@@ -58,7 +60,7 @@ export default function Todo({ navigate }) {
   const byJob = new Map()
   open.forEach(x => { if (!byJob.has(x.j.id)) byJob.set(x.j.id, { j: x.j, items: [] }); byJob.get(x.j.id).items.push(x) })
   const groups = [...byJob.values()].sort((a, b) =>
-    (b.items.some(x => isOverdue(x.t)) - a.items.some(x => isOverdue(x.t))) || custName(a.j.customerId).localeCompare(custName(b.j.customerId)) || String(a.j.name).localeCompare(String(b.j.name)))
+    (b.items.some(x => isOverdue(x.t)) - a.items.some(x => isOverdue(x.t))) || (b.items.some(x => x.t.priority === 'high') - a.items.some(x => x.t.priority === 'high')) || custName(a.j.customerId).localeCompare(custName(b.j.customerId)) || String(a.j.name).localeCompare(String(b.j.name)))
 
   const quickAdd = () => {
     const j = jobs.find(x => x.id === addJob)
@@ -81,6 +83,7 @@ export default function Todo({ navigate }) {
         <span style={small}>{open.length} open on {byJob.size} job{byJob.size === 1 ? '' : 's'}</span>
         {overdue.length > 0 && <span style={{ fontSize: 12, fontWeight: 800, color: '#fff', background: '#c0392b', borderRadius: 10, padding: '2px 9px' }}>{overdue.length} overdue</span>}
         {dueToday.length > 0 && <span style={{ fontSize: 12, fontWeight: 800, color: '#7a5a00', background: '#fff3d6', borderRadius: 10, padding: '2px 9px' }}>{dueToday.length} due today</span>}
+        {highN > 0 && <span style={{ fontSize: 12, fontWeight: 800, color: '#c0392b', border: '1px solid #c0392b', borderRadius: 10, padding: '1px 9px' }}>{highN} high priority</span>}
       </div>
 
       {/* what needs you first */}
@@ -140,7 +143,7 @@ export default function Todo({ navigate }) {
       )}
 
       {view === 'due' && (() => {
-        const sorted = [...open].sort((a, b) => (a.t.due || '9999').localeCompare(b.t.due || '9999'))
+        const sorted = [...open].sort((a, b) => (a.t.due || '9999').localeCompare(b.t.due || '9999') || priorityRank(a.t.priority) - priorityRank(b.t.priority))
         return (
           <div style={{ border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
             {!sorted.length && <div style={{ ...small, padding: 14 }}>Nothing open.</div>}

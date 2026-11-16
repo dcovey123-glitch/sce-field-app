@@ -47,6 +47,7 @@ export const STORE = {
   // Calendar
   calendar_events: { file: true, what: 'Calendar events you added, or OK\'d from email' },
   hit_list: { file: true, what: 'Hit List — quick to-do list on Home' },
+  hit_list_sched_done: { file: true, what: 'Hit List — scheduled items you ticked off' },
   // Notes, tasks, flags
   general_notes: { file: true, what: 'General Notes' },
   daily_notes: { file: true, what: 'Daily Notes' },
