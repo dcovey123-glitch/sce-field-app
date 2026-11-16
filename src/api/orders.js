@@ -468,6 +468,49 @@ export async function checkPoEmails({ mode = readMode('po-emails') } = {}) {
   return res
 }
 
+// A job was renamed: orders filed to it by name (the email run files by job
+// name) follow it, so they don't drop off the job. Pure: → { local, changed }
+export function renameJobInOrderFilings(feed, local, oldName, newName) {
+  const from = normName(oldName), to = String(newName || '').trim()
+  const l = { version: 1, overrides: {}, ...(local || {}) }
+  if (!from || !to || from === normName(to)) return { local: l, changed: 0 }
+  const overrides = { ...(l.overrides || {}) }
+  const swap = list => list.map(r => normName(r) === from ? to : r)
+  const hit = f => f && f.filedAs === 'job' && refsOf(f).some(r => normName(r) === from)
+  let changed = 0
+  for (const o of mergeOrders(feed, l)) {
+    const cur = { ...(overrides[o.id] || {}) }
+    let touched = false
+    if (hit(o)) {
+      const refs = swap(refsOf(o))
+      Object.assign(cur, { filedAs: 'job', ref: refs[0] || '', refs: refs.length > 1 ? refs : [], refLabel: normName(o.refLabel) === from ? to : (o.refLabel || '') })
+      touched = true
+    }
+    const parts = { ...(cur.parts || {}) }
+    Object.entries(parts).forEach(([k, f]) => {
+      if (!hit(f)) return
+      const refs = swap(refsOf(f))
+      parts[k] = { ...f, ref: refs[0] || '', refs: refs.length > 1 ? refs : [], refLabel: normName(f.refLabel) === from ? to : (f.refLabel || '') }
+      touched = true
+    })
+    if (touched) { overrides[o.id] = { ...cur, ...(Object.keys(parts).length ? { parts } : {}) }; changed++ }
+  }
+  return { local: { ...l, overrides }, changed }
+}
+export async function renameJobInOrders(oldName, newName) {
+  if (typeof window === 'undefined' || !window.desktop?.ordersLoad) return 0
+  try {
+    const res = await window.desktop.ordersLoad()
+    if (!res || !res.feed) return 0
+    const { local, changed } = renameJobInOrderFilings(res.feed, res.local, oldName, newName)
+    if (!changed) return 0
+    await window.desktop.ordersSaveLocal(local)
+    await refreshFeed(true)
+    try { window.dispatchEvent(new Event('orders-local-changed')) } catch { /* ignore */ }
+    return changed
+  } catch { return 0 }
+}
+
 // PO-email matches waiting for your OK → apply (keys chosen) or skip them.
 // → the new local object
 export function resolvePoEmailsPending(local, keys, apply) {

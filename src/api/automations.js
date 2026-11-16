@@ -9,6 +9,7 @@
 // Default is ask for everything that changes money, status, Stock or which
 // job something is charged to.
 
+import { useMemo } from 'react'
 import { useLocalStore } from './useLocalStore.js'
 import { readValue } from './fileStore.js'
 
@@ -81,7 +82,9 @@ export function useAutoMode(id) {
 }
 export function useAllAutoModes() {
   const [modes, setModes] = useLocalStore(AUTO_MODES_KEY, {})
-  return [id => modeOf(modes, id), (id, m) => setModes(x => ({ ...(x || {}), [id]: m }))]
+  // the getter only changes when a switch does (safe to use in memo deps)
+  const get = useMemo(() => id => modeOf(modes, id), [modes])
+  return [get, (id, m) => setModes(x => ({ ...(x || {}), [id]: m }))]
 }
 
 // Changes you skipped, per automation, so they aren't offered again

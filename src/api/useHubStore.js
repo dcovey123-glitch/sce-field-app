@@ -203,6 +203,10 @@ function makeDesktopApi(hub, recordFileName, getRecordFolderName) {
       const updated = { ...merged, folder, customerFolder: customer.folder }
       await window.desktop.saveRecord(hub, customer.folder, updated, recordFileName)
       setHub(hub, { records: d().records.map(r => r.id === id ? updated : r) })
+      // a job renamed: things filed to it by name (Orders & POs) follow it — App listens
+      if (hub === 'jobs' && merged.name && existing.name && merged.name !== existing.name) {
+        try { window.dispatchEvent(new CustomEvent('fieldapp-job-renamed', { detail: { id, from: existing.name, to: merged.name } })) } catch { /* ignore */ }
+      }
       return updated
     }),
 

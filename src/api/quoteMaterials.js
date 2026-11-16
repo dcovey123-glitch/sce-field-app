@@ -13,6 +13,8 @@
 // line's key (delete the line there and the quote line shows open again).
 // Only "Not needed" is kept on the job itself (job.quoteLineState).
 
+import { sameItem, slipKind, isQuoteDoc, lineJobsOf, lineUse } from './slips.js'
+
 const n = v => Number(v) || 0
 const lc = s => String(s || '').trim().toLowerCase()
 
@@ -46,7 +48,7 @@ const isPricingItem = i => i.tag === 'pricing'
 const isPricingReq = r => !!r.pricing
 
 // Where one quote line is at → { chips: [{ id, label, tone }], done: bool, qtyOut }
-export function quoteLineStatus(job, line, { orderList = [], requests = [], legacy = legacyKeys(job) } = {}) {
+export function quoteLineStatus(job, line, { orderList = [], requests = [], orders = [], legacy = legacyKeys(job) } = {}) {
   const st = (job.quoteLineState || {})[line.key] || {}
   const hit = refHits(job, line, legacy)
   const chips = []
@@ -57,7 +59,7 @@ export function quoteLineStatus(job, line, { orderList = [], requests = [], lega
     const q = refs.reduce((a, p) => a + n(p.qty), 0)
     const day = String(r.sentAt || '').slice(5, 10).replace('-', '/')
     if (isPricingReq(r)) chips.push({ id: 'pricing-sent', tone: 'info', label: `💲 Pricing ${r.matchedFeedId || r.matchedSlipId ? 'back' : 'asked'} — ${r.wholesaler || 'supplier'} ${day}` })
-    else { qtyOrdered += q; chips.push({ id: 'ordered', tone: 'ok', label: `🛒 Ordered ${q} — ${r.wholesaler || 'supplier'} ${day}${r.phoned ? ' 📞' : ''}` }) }
+    else { qtyOrdered += q; chips.push({ id: 'ordered', tone: 'info', label: `🛒 Ordered ${q} — ${r.wholesaler || 'supplier'} ${day}${r.phoned ? ' 📞' : ''}` }) }
   }
   for (const i of orderList || []) {
     const refs = (i.planRefs || []).filter(hit)
@@ -66,13 +68,22 @@ export function quoteLineStatus(job, line, { orderList = [], requests = [], lega
     chips.push({ id: isPricingItem(i) ? 'sheet-pricing' : 'sheet-order', tone: 'muted', label: `📝 On order sheet — ${isPricingItem(i) ? '💲 Pricing' : '🛒 Order'} (${q})` })
   }
   const actualQty = (job.materialEntries || []).filter(e => e.quoteLineKey === line.key || (e.sourceQuoteId && e.sourceLineId && `${e.sourceQuoteId}:${e.sourceLineId}` === line.key)).reduce((a, e) => a + n(e.qty), 0)
-  if (actualQty > 0) chips.push({ id: 'actual', tone: 'ok', label: `✓ To Actual (${actualQty})` })
+  if (actualQty > 0) chips.push({ id: 'actual', tone: 'ok', label: `✓ From Stock (${actualQty})` })
+  // What came in for this job on packing slips, and what's charged to it
+  const item = { partNo: line.partNo, name: line.desc }
+  const receivedQty = (orders || []).filter(o => slipKind(o) === 'order' && !isQuoteDoc(o) && !o.archivedNote)
+    .flatMap(o => (o.lineItems || []).filter(li => li.received && !li.movedTo && lineJobsOf(o, li).includes(job.id) && sameItem({ partNo: li.partNo, name: li.name }, item)).map(li => n(lineUse(o, li)[job.id])))
+    .reduce((a, v) => a + v, 0)
+  const chargedQty = (job.materialEntries || []).filter(e => e.kind === 'order' && sameItem({ partNo: e.partNo, name: e.item }, item)).reduce((a, e) => a + n(e.qty), 0)
+  if (receivedQty > 0 && chargedQty < receivedQty) chips.push({ id: 'received', tone: 'info', label: `📥 Received ${receivedQty} — not charged yet` })
+  if (chargedQty > 0) chips.push({ id: 'charged', tone: 'ok', label: `✓ Charged to job (${chargedQty})` })
   if (st.notNeeded) chips.push({ id: 'notneeded', tone: 'muted', label: '✕ Not needed' })
-  const covered = qtyOrdered + actualQty
+  // asked for = ordered + taken from Stock; done = charged to the job (or from Stock)
+  const covered = Math.max(qtyOrdered, chargedQty) + actualQty
   if (!st.notNeeded && covered > 0 && covered < line.qty) chips.push({ id: 'short', tone: 'warn', label: `${line.qty - covered} of ${line.qty} not ordered` })
-  const done = !!st.notNeeded || covered >= line.qty
+  const done = !!st.notNeeded || chargedQty + actualQty >= line.qty
   if (!chips.length) chips.push({ id: 'none', tone: 'warn', label: 'Not ordered' })
-  return { chips, done, qtyOrdered, notNeeded: !!st.notNeeded, actualQty }
+  return { chips, done, qtyOrdered: Math.max(qtyOrdered, chargedQty), notNeeded: !!st.notNeeded, actualQty, receivedQty, chargedQty }
 }
 
 export function quoteLinesSummary(statuses) {
@@ -81,6 +92,7 @@ export function quoteLinesSummary(statuses) {
     total: statuses.length,
     open: statuses.filter(s => !s.done).length,
     ordered: has('ordered'), pricing: has('pricing-sent'), onSheet: has('sheet-order') + has('sheet-pricing'),
+    received: has('received'), charged: has('charged'),
     actual: has('actual'), notNeeded: has('notneeded'), notOrdered: has('none'),
   }
 }

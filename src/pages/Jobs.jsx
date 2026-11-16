@@ -4042,11 +4042,12 @@ function QuoteMaterialsView({ quote, project, onUpdate, customer }) {
   const [orderList, setOrderList] = useLocalStore(ORDER_LIST_KEY, [])
   const [requests] = useLocalStore(PLAN_REQUESTS_KEY, [])
   const [stock, setStock] = useLocalStore('material_stock', [])
+  const [matOrders] = useLocalStore('material_orders', [])
   const [selectedIds, setSelectedIds] = useState(() => new Set())
   const [msg, setMsg] = useState('')
   const [hideDone, setHideDone] = useState(false)
   const legacy = legacyKeys(project)
-  const ctx = { orderList: orderList || [], requests: requests || [], legacy }
+  const ctx = { orderList: orderList || [], requests: requests || [], orders: matOrders || [], legacy }
   const statuses = lines.map(l => quoteLineStatus(project, l, ctx))
   const sum = quoteLinesSummary(statuses)
 
@@ -4138,9 +4139,11 @@ function QuoteMaterialsView({ quote, project, onUpdate, customer }) {
         <span style={{ fontSize: 13, fontWeight: 800 }}>{sum.total} quote line{sum.total === 1 ? '' : 's'}</span>
         {chip('not ordered', sum.notOrdered, 'warn')}
         {chip('on order sheet', sum.onSheet, 'muted')}
-        {chip('ordered', sum.ordered, 'ok')}
+        {chip('ordered', sum.ordered, 'info')}
+        {chip('received, not charged', sum.received, 'warn')}
+        {chip('charged', sum.charged, 'ok')}
         {chip('pricing', sum.pricing, 'info')}
-        {chip('to Actual', sum.actual, 'ok')}
+        {chip('from Stock', sum.actual, 'ok')}
         {chip('not needed', sum.notNeeded, 'muted')}
         <span style={{ flex: 1 }} />
         <label style={{ fontSize: 11.5, color: 'var(--text-light)', display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' }}>

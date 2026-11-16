@@ -18,7 +18,7 @@ import Notes, { useMoveMiscNotesToDaily } from './pages/Notes.jsx'
 import Billing from './pages/Billing.jsx'
 import Photos from './pages/Photos.jsx'
 import Orders from './pages/Orders.jsx'
-import { loadOrdersAttentionCount, checkPoEmails } from './api/orders.js'
+import { loadOrdersAttentionCount, checkPoEmails, renameJobInOrders } from './api/orders.js'
 import MorningReview, { loadReviewCount } from './pages/MorningReview.jsx'
 import Snapshot from './pages/Snapshot.jsx'
 import CustomerJobsWindow from './pages/CustomerJobsWindow.jsx'
@@ -104,6 +104,12 @@ const HUB_ROOT = {
 export default function App() {
   useMoveMiscNotesToDaily()
   const windowRoute = useWindowRoute()
+  // A job renamed (in this window): its Orders & POs filings follow the new name
+  useEffect(() => {
+    const on = e => { const d = e.detail || {}; renameJobInOrders(d.from, d.to) }
+    window.addEventListener('fieldapp-job-renamed', on)
+    return () => window.removeEventListener('fieldapp-job-renamed', on)
+  }, [])
   // The Materials window's screen object must stay the same between renders —
   // a new one each render made Materials jump back to its starting tab
   // (e.g. Orders & Slips) whenever anything in the app updated

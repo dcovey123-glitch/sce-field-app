@@ -14,6 +14,10 @@ import { tasksOf, isOverdue, isDueToday, today, fmtDay, uid } from '../api/tasks
 import { materialFindings } from '../api/materialsAudit.js'
 import { openLaborFlags } from '../api/jobHealth.js'
 import { adjustStockDraw } from '../api/stockDraw.js'
+import { useAllAutoModes, AUTO_SKIP_KEY, changedSlipLines } from '../api/automations.js'
+import { missingSlipCharges } from '../api/materialsAudit.js'
+import { moveQuoteChargesToSlips, moveFeedChargesToSlips, leftoverLinesForJob } from '../api/slips.js'
+import { tagSlipsFromRequests } from '../api/materialPlan.js'
 import { moneyWholeOrBlank as money } from '../api/format.js'
 
 // "What needs me today": one list built from everything the app already
@@ -36,6 +40,8 @@ export function useNeedsYou(navigate) {
   const [catPending] = useLocalStore('materials_catalog_pending', [])
   const [snoozed, setSnoozed] = useLocalStore('today_snoozed', {})
   const { active: flags } = useFlags()
+  const [modeOf] = useAllAutoModes()
+  const [autoSkips] = useLocalStore(AUTO_SKIP_KEY, {})
 
   const go = s => () => navigate && navigate(s)
   const custName = id => (jobsHub.customers.find(c => c.id === id) || {}).name || ''
@@ -108,6 +114,57 @@ export function useNeedsYou(navigate) {
   const catLines = approvalLineCount(catPending)
   if (catLines) inbox.push({ key: 'catalog', tone: 'info', text: `${catLines} catalog count${catLines === 1 ? '' : 's'} / new part${catLines === 1 ? '' : 's'} to approve`, detail: 'Sent from the phone', action: 'Catalog', onGo: go({ hub: 'materials', view: 'catalog' }) })
   add('material', '📦 Material', [...matItems, ...inbox])
+
+  // 3a. Automatic changes waiting for your OK (⚙ Ask first) — one place to see
+  // them, even for a job you haven't opened. Each opens where you OK it.
+  // (worked out only when the data behind it changes — this runs for the top-bar count too)
+  const autoWaiting = React.useMemo(() => {
+    const autoWaiting = []
+    const skipOf = id => new Set((autoSkips && autoSkips[id]) || [])
+    const orderList = Array.isArray(orders) ? orders : []
+    const closed = j => ['deficiencies', 'unbilled', 'billed'].includes(j.lifecycleStatus)
+    if (modeOf('job-auto-charge') === 'ask') {
+      jobs.filter(j => effectiveLifecycleStatus(j) !== 'billed').forEach(j => {
+        const skip = new Set(j.autoChargeSkip || [])
+        const n = missingSlipCharges(orderList, j).filter(m => !skip.has(m.key)).length
+        if (n) autoWaiting.push({ key: `auto-charge:${j.id}:${n}`, tone: 'info', text: `${label(j)}: ${n} ordered line${n === 1 ? '' : 's'} to charge to the job`, detail: '⚙ Charge ordered material to the job — waiting for ✓ Apply', action: 'Review', onGo: jobGo(j, 'materials') })
+      })
+    }
+    if (modeOf('quote-to-slips') === 'ask') {
+      const skip = skipOf('quote-to-slips')
+      jobs.filter(j => effectiveLifecycleStatus(j) !== 'billed').forEach(j => {
+        let job = j, any = false
+        for (const step of [o => moveQuoteChargesToSlips(o, job, uid), o => moveFeedChargesToSlips(o, job, feed || [], uid)]) {
+          const r = step(orderList)
+          if (r) { job = { ...job, materialEntries: r.entries }; any = true }
+        }
+        if (!any) return
+        const now = new Set((job.materialEntries || []).map(e => e.id))
+        const moved = (j.materialEntries || []).filter(e => !now.has(e.id))
+        if (skip.has(`${j.id}:${moved.map(e => e.id).sort().join(',')}`)) return
+        autoWaiting.push({ key: `auto-move:${j.id}:${moved.length}`, tone: 'info', text: `${label(j)}: quote charges to move to their packing slips`, detail: '⚙ Move quote charges to the packing slips — waiting for ✓ Apply', action: 'Review', onGo: jobGo(j, 'materials') })
+      })
+    }
+    if (modeOf('slip-tag') === 'ask') {
+      const next = tagSlipsFromRequests(orderList, Array.isArray(requests) ? requests : [], feed || [])
+      const skip = skipOf('slip-tag')
+      const n = next ? changedSlipLines(orderList, next).filter(c => !skip.has(c.key)).length : 0
+      if (n) autoWaiting.push({ key: `auto-tag:${n}`, tone: 'info', text: `${n} returned slip line${n === 1 ? '' : 's'} to tag to the jobs that asked`, detail: '⚙ Tag returned quotes / slips — waiting for ✓ Apply', action: 'Review', onGo: go({ hub: 'materials', view: 'ordered' }) })
+    }
+    if (modeOf('closeout-deficiency') === 'ask') {
+      const skip = skipOf('closeout-deficiency')
+      const n = jobs.filter(j => closed(j)).filter(j => {
+        const left = leftoverLinesForJob(orderList, j)
+        const open = (j.deficiencies || []).find(d => d.kind === 'material-closeout' && !d.resolved)
+        if (left.length && !open) return !skip.has(`${j.id}:open:${left.map(x => x.order.id).sort().join(',')}`)
+        if (!left.length && open) return !skip.has(`${j.id}:clear:${open.id}`)
+        return false
+      }).length
+      if (n) autoWaiting.push({ key: `auto-closeout:${n}`, tone: 'warn', text: `${n} closed job${n === 1 ? '' : 's'} with material to close out`, detail: '⚙ Re-open closed jobs with material not closed out — waiting for ✓ Apply', action: 'Review', onGo: go({ hub: 'materials', view: 'ordered' }) })
+    }
+    return autoWaiting
+  }, [orders, jobsHub.records, feed, requests, autoSkips, modeOf, navigate]) // eslint-disable-line react-hooks/exhaustive-deps
+  add('auto', '⚙ Waiting for your OK', autoWaiting)
 
   // 3b. Material checks: slips vs jobs vs Stock, most with a one-click fix
   const ctx = { updateJob: (id, patch) => jobsHub.updateRecord(id, patch), setStock, setOrders, uid, adjustStockDraw }

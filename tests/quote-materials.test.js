@@ -50,7 +50,20 @@ describe('quote as the reference for a job\'s material', () => {
     const j = { ...job, plannedMaterials: [{ id: 'p9', sourceQuoteId: 'Q1', sourceLineId: 'm1' }] }
     expect(legacyKeys(j)).toEqual({ p9: 'Q1:m1' })
     const req = { wholesaler: 'Nedco', items: [{ planRefs: [{ jobId: 'J1', lineId: 'p9', qty: 10 }] }] }
-    expect(quoteLineStatus(j, lines[0], { requests: [req] }).done).toBe(true)
+    const st = quoteLineStatus(j, lines[0], { requests: [req] })
+    expect(st.chips.map(c => c.id)).toEqual(['ordered'])
+    expect(st.done).toBe(false) // ordered isn't done until it's charged to the job
+  })
+  it('ordered → received on a slip → charged to the job (then done)', () => {
+    const req = { wholesaler: 'Nedco', items: [{ planRefs: [{ jobId: 'J1', lineId: 'Q1:m1', qty: 10 }] }] }
+    const slip = { id: 'o1', kind: 'order', lineItems: [{ partNo: 'LED4', name: '4ft LED strip', qty: 10, received: true, jobIds: ['J1'], usedBy: { J1: 10 } }] }
+    const recd = quoteLineStatus(job, lines[0], { requests: [req], orders: [slip] })
+    expect(recd.chips.map(c => c.id)).toEqual(['ordered', 'received'])
+    expect(recd.done).toBe(false)
+    const j = { ...job, materialEntries: [{ kind: 'order', slipOrderId: 'o1', partNo: 'LED4', item: '4ft LED strip', qty: 10 }] }
+    const charged = quoteLineStatus(j, lines[0], { requests: [req], orders: [slip] })
+    expect(charged.chips.map(c => c.id)).toEqual(['ordered', 'charged'])
+    expect(charged.done).toBe(true)
   })
   it('a pricing purchase knows which of our quotes it belongs to', () => {
     expect(purchaseQuoteRef({ requests: [{ quote: { id: 'Q1', number: 'Q-RDP-2026-100', title: 'Gym lights' } }], slips: [] }).number).toBe('Q-RDP-2026-100')
@@ -76,5 +89,27 @@ describe('material orders close only when every line is assigned', () => {
     const s = slip({ sentAt: '2026-11-12' })
     s.lineItems[1].movedTo = 'Stock'
     expect(buildPurchases({ slips: [s] })[0].stage).toBe('closed')
+  })
+})
+
+import { renameJobInOrderFilings, mergeOrders } from '../src/api/orders.js'
+describe('renaming a job keeps its orders', () => {
+  const feed = { orders: [
+    { id: 'r1', supplier: 'Nedco', quoteNumber: 'QT1', filedAs: 'job', ref: 'Gym retrofit' },
+    { id: 'r2', supplier: 'Gescan', quoteNumber: 'QT2', filedAs: 'job', refs: ['Gym retrofit', 'Lab lights'] },
+    { id: 'r3', supplier: 'Nedco', quoteNumber: 'QT3', filedAs: 'job', ref: 'Other job' },
+  ] }
+  it('moves every filing to the new name, leaves the rest alone', () => {
+    const { local, changed } = renameJobInOrderFilings(feed, {}, 'Gym Retrofit', 'Gym retrofit - Phase 1')
+    expect(changed).toBe(2)
+    const rows = mergeOrders(feed, local)
+    expect(rows.find(r => r.id === 'r1').ref).toBe('Gym retrofit - Phase 1')
+    expect(rows.find(r => r.id === 'r2').refs).toEqual(['Gym retrofit - Phase 1', 'Lab lights'])
+    expect(rows.find(r => r.id === 'r3').ref).toBe('Other job')
+  })
+  it('a split quote # filed to the job follows too', () => {
+    const local = { overrides: { r3: { parts: { QT3: { filedAs: 'job', ref: 'Gym retrofit' } } } } }
+    const out = renameJobInOrderFilings(feed, local, 'Gym retrofit', 'Gym')
+    expect(out.local.overrides.r3.parts.QT3.ref).toBe('Gym')
   })
 })
