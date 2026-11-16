@@ -33,6 +33,10 @@ export default function HitList({ full = false }) {
   const [hover, setHover] = useState('')
   const [editing, setEditing] = useState(null) // { id, text }
   const [forCustomer, setForCustomer] = useState('') // full: add onto this customer
+  // Group headers fold; everything starts folded each time the list opens
+  const [openG, setOpenG] = useState(() => new Set())
+  const isOpen = k => openG.has(k)
+  const toggle = k => setOpenG(prev => { const n = new Set(prev); n.has(k) ? n.delete(k) : n.add(k); return n })
   const jobsHub = useHubStore({
     hub: 'jobs', recordFileName: 'project.json', getRecordFolderName: p => p.name,
     customersKey: 'job_customers', recordsKey: 'job_projects',
@@ -180,39 +184,38 @@ export default function HitList({ full = false }) {
             </div>
             {sched.overdue.length > 0 && (
               <>
-                <div style={{ fontSize: 12.5, fontWeight: 800, color: '#c0392b', margin: '6px 0 2px' }}>Past due</div>
-                {sched.overdue.map(schedRow)}
+                <Fold open={isOpen('overdue')} onToggle={() => toggle('overdue')} count={sched.overdue.length} style={{ color: '#c0392b' }}>Past due</Fold>
+                {isOpen('overdue') && sched.overdue.map(schedRow)}
               </>
             )}
             {sched.weeks.map((w, i) => (w.items.length || i === 0) && (
               <div key={w.key}>
-                <div style={{ fontSize: 12.5, fontWeight: 800, color: i === 0 ? 'var(--text)' : 'var(--text-mid)', margin: '8px 0 2px' }}>
+                <Fold open={isOpen('w:' + w.key)} onToggle={() => toggle('w:' + w.key)} count={w.items.length} style={{ color: i === 0 ? 'var(--text)' : 'var(--text-mid)' }}>
                   {w.label} <span style={{ fontWeight: 600, color: 'var(--text-light)' }}>· {fmtDate(w.from, 'short')} – {fmtDate(w.to, 'short')}</span>
-                </div>
-                {w.items.map(schedRow)}
-                {!w.items.length && <div style={{ fontSize: 13, color: 'var(--text-light)', padding: '4px 4px' }}>Nothing scheduled.</div>}
+                </Fold>
+                {isOpen('w:' + w.key) && w.items.map(schedRow)}
+                {isOpen('w:' + w.key) && !w.items.length && <div style={{ fontSize: 13, color: 'var(--text-light)', padding: '4px 4px 4px 22px' }}>Nothing scheduled.</div>}
               </div>
             ))}
 
-            <div style={head}>Mine</div>
-            {open.map(x => row(x, false))}
-            {!open.length && <div style={{ fontSize: 13, color: 'var(--text-light)', padding: '6px 4px' }}>Nothing of yours on the list.</div>}
+            <Fold open={isOpen('mine')} onToggle={() => toggle('mine')} count={open.length} high={open.filter(x => x.priority === 'high').length} style={{ ...head, margin: '18px 0 4px' }}>Mine</Fold>
+            {isOpen('mine') && open.map(x => row(x, false))}
+            {isOpen('mine') && !open.length && <div style={{ fontSize: 13, color: 'var(--text-light)', padding: '6px 4px' }}>Nothing of yours on the list.</div>}
 
             {groups.map(([id, g]) => (
               <div key={id}>
-                <div style={{ ...head, display: 'flex', gap: 8, alignItems: 'baseline' }}>
-                  <span onClick={() => openCustomer(id)} title={`Open ${g.name}`} style={{ color: '#1a5fa0', cursor: 'pointer', textTransform: 'none', letterSpacing: 0, fontSize: 14 }}>{g.name} →</span>
-                  <span style={{ textTransform: 'none', letterSpacing: 0, fontWeight: 600 }}>{g.items.length} to do</span>
-                </div>
-                {g.items.map(t => custRow(t, false))}
+                <Fold open={isOpen('c:' + id)} onToggle={() => toggle('c:' + id)} count={g.items.length} high={g.items.filter(t => t.priority === 'high').length} style={{ margin: '14px 0 4px' }}>
+                  <span onClick={e => { e.stopPropagation(); openCustomer(id) }} title={`Open ${g.name}`} style={{ color: '#1a5fa0', cursor: 'pointer', fontSize: 14 }}>{g.name} →</span>
+                </Fold>
+                {isOpen('c:' + id) && g.items.map(t => custRow(t, false))}
               </div>
             ))}
 
             {done.length > 0 && (
               <>
-                <div style={head}>Done</div>
-                {done.map(x => row(x, true))}
-                {clearDone}
+                <Fold open={isOpen('done')} onToggle={() => toggle('done')} count={done.length} style={{ ...head, margin: '18px 0 4px' }}>Done</Fold>
+                {isOpen('done') && done.map(x => row(x, true))}
+                {isOpen('done') && clearDone}
               </>
             )}
           </div>
@@ -241,9 +244,10 @@ export default function HitList({ full = false }) {
       <div style={{ maxHeight: 300, overflowY: 'auto' }}>
         {(sched.overdue.length > 0 || thisWeek.length > 0) && (
           <div style={{ marginBottom: 4, paddingBottom: 4, borderBottom: '1px solid var(--surface-2)' }}>
-            <div style={{ fontSize: 10.5, fontWeight: 800, color: 'var(--text-light)', textTransform: 'uppercase', letterSpacing: '.05em', margin: '2px 0' }}>This week</div>
-            {sched.overdue.map(schedRow)}
-            {thisWeek.map(schedRow)}
+            <Fold small open={isOpen('week')} onToggle={() => toggle('week')} count={sched.overdue.length + thisWeek.length} late={sched.overdue.length}
+              style={{ fontSize: 10.5, color: 'var(--text-light)', textTransform: 'uppercase', letterSpacing: '.05em', margin: '2px 0' }}>This week</Fold>
+            {isOpen('week') && sched.overdue.map(schedRow)}
+            {isOpen('week') && thisWeek.map(schedRow)}
           </div>
         )}
         {open.map(x => row(x, false))}
@@ -252,6 +256,21 @@ export default function HitList({ full = false }) {
         {done.map(x => row(x, true))}
       </div>
       <div style={{ display: 'flex', gap: 10 }}>{clearDone}{restoreSched}</div>
+    </div>
+  )
+}
+
+// A group header that folds: ▸ closed / ▾ open, with how many are in it
+// (and how many are High priority or past due) so a closed group still tells you.
+function Fold({ open, onToggle, count, high = 0, late = 0, small, style, children }) {
+  return (
+    <div onClick={onToggle} role="button" title={open ? 'Fold up' : 'Show'}
+      style={{ display: 'flex', alignItems: 'baseline', gap: 6, cursor: 'pointer', userSelect: 'none', fontSize: 12.5, fontWeight: 800, margin: '8px 0 2px', ...style }}>
+      <span style={{ width: small ? 10 : 12, flexShrink: 0, color: 'var(--text-light)', fontSize: small ? 9 : 10, textTransform: 'none' }}>{open ? '▾' : '▸'}</span>
+      <span style={{ flex: 1, minWidth: 0 }}>{children}</span>
+      {late > 0 && <span style={{ fontSize: small ? 9.5 : 11, fontWeight: 800, color: '#fff', background: '#c0392b', borderRadius: 8, padding: '0 6px', textTransform: 'none', letterSpacing: 0 }}>{late} past due</span>}
+      {high > 0 && <span style={{ fontSize: small ? 9.5 : 11, fontWeight: 800, color: '#c0392b', border: '1px solid #c0392b', borderRadius: 8, padding: '0 5px', textTransform: 'none', letterSpacing: 0 }}>{high} high</span>}
+      <span style={{ fontSize: small ? 10 : 11.5, fontWeight: 600, color: 'var(--text-light)', textTransform: 'none', letterSpacing: 0 }}>{count}</span>
     </div>
   )
 }
