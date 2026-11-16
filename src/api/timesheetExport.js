@@ -150,6 +150,7 @@ export function receivedInWeek(orders, wk, { skipped = false } = {}) {
     .map(o => { const at = effReceived(o); return at === o.receivedAt ? o : { ...o, receivedAt: at || undefined, slipReceivedAt: o.receivedAt } })
     // a quote whose packing slips came in is listed through those slips
     // pushed to this week's export from Orders → Done: on it (unless marked already sent)
+    .filter(o => !o.expenseAt) // a receipt sent to the timesheet as an expense isn't material received
     .filter(o => ((o.exportWeek === wk || o.week === wk) && !o.sentManually) || (!o.recordOnly && o.kind !== 'pricing' && o.receivedAt && !(o.docType === 'quote' && o.replacedAt) && (() => {
       // marked sent by hand = off the export; sent with this week's timesheet stays on it (re-export)
       // the week it was put on (moved there from Orders, or pushed) wins over the received date

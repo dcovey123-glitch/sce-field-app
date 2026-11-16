@@ -74,8 +74,20 @@ export function slipKind(o) {
 const slipOnJobsOrReceived = o => !!o.receivedAt || (o.jobs || []).length > 0 || (o.lineItems || []).some(li => li.received || (li.jobIds || []).length || (li.usedBy && Object.keys(li.usedBy).length))
 // An order with no PO: 'waiting' (a recent quote, nothing done with it yet)
 // or 'none' (picked up / on jobs / older than 30 days — find the PO later)
+// What a slip is: 'quote' | 'packing_slip' | 'invoice' | 'receipt'
+// (receipt = a card / charge-account purchase: parsed and assigned like any
+// order, but never has a PO)
+export const DOC_TAGS = [
+  { id: 'quote', label: 'Quote', icon: '📄', hint: 'The wholesaler\'s quote — what will be ordered (waits for a PO)' },
+  { id: 'packing_slip', label: 'Packing slip', icon: '📦', hint: 'A pickup against an order — received line by line, priced from the quote if blank' },
+  { id: 'invoice', label: 'Invoice', icon: '🧾', hint: 'A counter pickup / bill, usually with a PO' },
+  { id: 'receipt', label: 'Receipt', icon: '💳', hint: 'A card or charge-account purchase — no PO; assign it like any order, or send it to the timesheet as an expense' },
+]
+export const docTagOf = o => (o && o.docType) || 'packing_slip'
+export const isReceipt = o => !!o && o.docType === 'receipt'
 export function noPoState(o) {
   if (hasPoNumber(o) || slipKind(o) !== 'order') return null
+  if (isReceipt(o)) return 'none' // a receipt never gets a PO
   const age = Date.now() - Date.parse(o.orderDate || o.createdAt || 0)
   return !slipOnJobsOrReceived(o) && !(age > 30 * 86400000) ? 'waiting' : 'none'
 }

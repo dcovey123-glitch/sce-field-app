@@ -10,7 +10,7 @@ import CatalogCompare from '../components/CatalogCompare.jsx'
 import CatalogPricingRequest from '../components/CatalogPricingRequest.jsx'
 import { openCatalogRequests, applyToCatalog } from '../api/catalogPricing.js'
 import { sourceFromSlip, sourcesFromFeedRow, sourceRef } from '../api/quoteCompare.js'
-import { hasPoNumber, noPoState, slipKind, isArchived, isStockOnlyLine, lineIsAllocated, jobEntriesFromSlip, leftoverLinesForJob, slipSearchText, mergeIntoStock, feedPartLines , slipLineKey, lineJobsOf, lineUse, initialUse, lineRemaining, jobsOnSlip, lineWithRestInStock, isQuoteDoc, packingSlipsForQuote, isReplacedQuote, sameOrder, orderBaseKey, orderBaseLabel, moveQuoteChargesToSlips, moveFeedChargesToSlips, takeFromStock, slipPreTax } from '../api/slips.js'
+import { DOC_TAGS, docTagOf, isReceipt, hasPoNumber, noPoState, slipKind, isArchived, isStockOnlyLine, lineIsAllocated, jobEntriesFromSlip, leftoverLinesForJob, slipSearchText, mergeIntoStock, feedPartLines , slipLineKey, lineJobsOf, lineUse, initialUse, lineRemaining, jobsOnSlip, lineWithRestInStock, isQuoteDoc, packingSlipsForQuote, isReplacedQuote, sameOrder, orderBaseKey, orderBaseLabel, moveQuoteChargesToSlips, moveFeedChargesToSlips, takeFromStock, slipPreTax } from '../api/slips.js'
 import { orderParts, jobNamesOf, numKey } from '../api/orders.js'
 import { billingCheck, poStatus, orderedOnPo, orderStatus } from '../api/billingCheck.js'
 import { markReceivedByPo } from '../api/orders.js'
@@ -1646,7 +1646,7 @@ export async function parseOrderPdf(base64, apiKey, mediaType = 'application/pdf
             : { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } },
           {
             type: 'text',
-            text: 'First decide what kind of document this is and return it as "docType": "quote" if it is a QUOTE / QUOTATION / price quote (what will be ordered), "packing_slip" if it is a PACKING SLIP / PICKING TICKET / PICK-UP or DELIVERY slip (what was picked up — often with no prices), or "invoice" if it is an INVOICE / bill. This is a wholesaler document (quote, packing slip or invoice). Carefully identify the WHOLESALER/SUPPLIER company name — it is usually the largest or most prominent name on the page, often in a logo or letterhead at the top (this is the company that sent the document, not the customer it was sent to). Also extract the invoice or order number (sometimes labeled "Invoice #", "Order #", "Reference", etc.), any PURCHASE ORDER number if one is printed on the document (often labeled "PO #", "P.O.", "Purchase Order", or similar — this is separate from the invoice number and may not be present), the invoice/order date (YYYY-MM-DD), every line item with its part number (if shown), description, unit of measure exactly as printed (e.g. EA, FT, M, KM, ROLL, BOX, PKG, CASE, LOT — use whatever abbreviation is actually printed, do NOT guess or substitute a different unit, and NEVER convert or rescale the quantity to a different unit — e.g. if the document shows 500 M, output qty 500 and uom \'M\', do not convert to 0.5 KM or vice versa), quantity, unit price, and the line\'s total price exactly as printed (do not calculate it yourself — read the printed number; if unit price × quantity does not match the printed line total, the printed total is correct, e.g. due to a discount). For each line item also determine whether it is BACKORDERED — wholesalers mark this in different ways: a "B/O", "Backorder", or "BO" label or column, a quantity SHIPPED that is less than the quantity ORDERED (in which case treat the shipped/available amount as the real qty, and flag the line as backordered if any amount was held back), a separate "Backordered Items" section further down the document, or a note like "to follow" / "on order". If a line is fully backordered with nothing shipped, still include it with whatever quantity was ordered, but set backordered to true so it\'s clear nothing arrived yet. For every line also return orderedQty (quantity ordered), shippedQty (quantity shipped on THIS document) and backorderQty (quantity still to follow), as printed (0 if a column is blank). RELEASES: an order number with a suffix like -01, -02, -03 is one shipment (release) of a bigger order, and its slip often lists every line of the order. A line shipped on an EARLIER release that ships nothing on this one and has nothing backordered (shipped 0, B/O 0, or marked "previously shipped") must have previouslyShipped set to true — it is not part of this shipment. Then find the document\'s own printed SUBTOTAL (the pre-tax total of all line items, sometimes labeled "Subtotal" or "Merchandise Total" — this should match the sum of the line items), the TAX amount printed on the document (GST/PST/HST/sales tax — a single combined number is fine if that\'s how it\'s printed; use 0 if no tax line appears), and the final GRAND TOTAL actually charged (subtotal + tax, sometimes labeled "Total", "Amount Due", or "Balance Due"). Respond with ONLY raw JSON, no markdown fences, no explanation before or after, in this exact shape: {"docType":"packing_slip","wholesaler":"","invoiceNumber":"","poNumber":"","orderDate":"","subtotal":0,"tax":0,"invoiceTotal":0,"lineItems":[{"partNo":"","name":"","uom":"","qty":0,"cost":0,"totalPrice":0,"backordered":false,"orderedQty":0,"shippedQty":0,"backorderQty":0,"previouslyShipped":false}]}',
+            text: 'First decide what kind of document this is and return it as "docType": "quote" if it is a QUOTE / QUOTATION / price quote (what will be ordered), "packing_slip" if it is a PACKING SLIP / PICKING TICKET / PICK-UP or DELIVERY slip (what was picked up — often with no prices), "invoice" if it is an INVOICE / bill, or "receipt" if it is a store / point-of-sale RECEIPT paid at the till by card, cash or charge account (e.g. Home Depot, Princess Auto — usually shows a payment method or "TOTAL" with tender, and has no PO). This is a wholesaler document (quote, packing slip or invoice). Carefully identify the WHOLESALER/SUPPLIER company name — it is usually the largest or most prominent name on the page, often in a logo or letterhead at the top (this is the company that sent the document, not the customer it was sent to). Also extract the invoice or order number (sometimes labeled "Invoice #", "Order #", "Reference", etc.), any PURCHASE ORDER number if one is printed on the document (often labeled "PO #", "P.O.", "Purchase Order", or similar — this is separate from the invoice number and may not be present), the invoice/order date (YYYY-MM-DD), every line item with its part number (if shown), description, unit of measure exactly as printed (e.g. EA, FT, M, KM, ROLL, BOX, PKG, CASE, LOT — use whatever abbreviation is actually printed, do NOT guess or substitute a different unit, and NEVER convert or rescale the quantity to a different unit — e.g. if the document shows 500 M, output qty 500 and uom \'M\', do not convert to 0.5 KM or vice versa), quantity, unit price, and the line\'s total price exactly as printed (do not calculate it yourself — read the printed number; if unit price × quantity does not match the printed line total, the printed total is correct, e.g. due to a discount). For each line item also determine whether it is BACKORDERED — wholesalers mark this in different ways: a "B/O", "Backorder", or "BO" label or column, a quantity SHIPPED that is less than the quantity ORDERED (in which case treat the shipped/available amount as the real qty, and flag the line as backordered if any amount was held back), a separate "Backordered Items" section further down the document, or a note like "to follow" / "on order". If a line is fully backordered with nothing shipped, still include it with whatever quantity was ordered, but set backordered to true so it\'s clear nothing arrived yet. For every line also return orderedQty (quantity ordered), shippedQty (quantity shipped on THIS document) and backorderQty (quantity still to follow), as printed (0 if a column is blank). RELEASES: an order number with a suffix like -01, -02, -03 is one shipment (release) of a bigger order, and its slip often lists every line of the order. A line shipped on an EARLIER release that ships nothing on this one and has nothing backordered (shipped 0, B/O 0, or marked "previously shipped") must have previouslyShipped set to true — it is not part of this shipment. Then find the document\'s own printed SUBTOTAL (the pre-tax total of all line items, sometimes labeled "Subtotal" or "Merchandise Total" — this should match the sum of the line items), the TAX amount printed on the document (GST/PST/HST/sales tax — a single combined number is fine if that\'s how it\'s printed; use 0 if no tax line appears), and the final GRAND TOTAL actually charged (subtotal + tax, sometimes labeled "Total", "Amount Due", or "Balance Due"). Respond with ONLY raw JSON, no markdown fences, no explanation before or after, in this exact shape: {"docType":"packing_slip","wholesaler":"","invoiceNumber":"","poNumber":"","orderDate":"","subtotal":0,"tax":0,"invoiceTotal":0,"lineItems":[{"partNo":"","name":"","uom":"","qty":0,"cost":0,"totalPrice":0,"backordered":false,"orderedQty":0,"shippedQty":0,"backorderQty":0,"previouslyShipped":false}]}',
           },
         ],
       }],
@@ -2025,7 +2025,8 @@ function UploadOrderFlow({ apiKey, onCommit, preloadedFile, onDismissPreloaded, 
               title="A quote is what was ordered; packing slips are what you picked up — they're checked against the quote">
               <option value="packing_slip">Packing slip</option>
               <option value="quote">Quote (what was ordered)</option>
-              <option value="invoice">Invoice</option>
+              <option value="invoice">Invoice (counter pickup)</option>
+              <option value="receipt">Receipt (card / charge account — no PO)</option>
             </select>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 3, flex: 1 }}>
@@ -2665,6 +2666,27 @@ function OrderedTab({ onClearFromJobs = () => {}, onLinkFeedPart = async () => n
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orders, feedRows])
+  // 💳 A receipt paid on your own card: off Materials (and its jobs), onto the
+  // timesheet's receipts waiting to be assigned — like a phone receipt.
+  const [pendingExpenses, setPendingExpenses] = useLocalStore('timesheets_pending_expenses', [])
+  // ↺ Back to Materials — only while it's still waiting on the timesheet (not put on a week yet)
+  const expenseWaiting = o => (Array.isArray(pendingExpenses) ? pendingExpenses : []).some(x => x.fromSlipId === o.id)
+  function expenseBack(o) {
+    setPendingExpenses(list => (Array.isArray(list) ? list : []).filter(x => x.fromSlipId !== o.id))
+    onUpdateOrder(o.id, { expenseAt: null, archivedAt: null, archivedNote: null })
+    onWriteToJobs({ ...o, expenseAt: null, archivedAt: null, archivedNote: null })
+  }
+  function receiptToExpense(o) {
+    const amount = Number(o.invoiceTotal) || slipPreTax(o) || ''
+    if (!window.confirm(`Send ${o.wholesaler || 'this receipt'}${o.invoiceNumber ? ' #' + o.invoiceNumber : ''}${amount ? ' (' + money(amount) + ')' : ''} to the timesheet as an expense?\n\nIt comes off Materials and off any jobs, and waits on the timesheet to be put on a week.`)) return
+    const at = new Date().toISOString()
+    setPendingExpenses(list => [...(Array.isArray(list) ? list : []).filter(x => x.fromSlipId !== o.id), {
+      id: uid(), fileName: (o.slipPath && String(o.slipPath).split(/[\\/]/).pop()) || o.fileName || `${o.wholesaler || 'Receipt'} ${o.invoiceNumber || ''}`.trim(), filePath: o.slipPath || '',
+      amount: amount ? String(amount) : '', desc: [o.wholesaler, o.invoiceNumber && '#' + o.invoiceNumber, o.orderDate].filter(Boolean).join(' · '), pulledAt: at, fromSlipId: o.id,
+    }])
+    onClearFromJobs(o)
+    onUpdateOrder(o.id, { expenseAt: at, archivedAt: at, archivedNote: 'Sent to the timesheet as an expense (paid on your card)' })
+  }
   // Mark a document as the quote (what was ordered) or a packing slip
   function setDocType(o, docType) {
     onUpdateOrder(o.id, { docType })
@@ -2937,7 +2959,8 @@ function OrderedTab({ onClearFromJobs = () => {}, onLinkFeedPart = async () => n
       <div key={o.id} style={dimmed ? { opacity: 0.8 } : undefined}>
         {!bare && <SlipTitleBar o={o} open={isOpen} onToggle={() => toggleSlip(o.id)} onNote={note => onUpdateOrder(o.id, { note })}
           onSetPo={!hasPoNumber(o) ? po => onUpdateOrder(o.id, { poNumber: po, ...(slipKind(o) === 'order' && !o.docType ? { docType: 'quote' } : {}) }) : undefined}
-          onSetKind={k => onUpdateOrder(o.id, { kind: k, recordOnly: k === 'pricing' })} />}
+          onSetKind={k => onUpdateOrder(o.id, { kind: k, recordOnly: k === 'pricing' })}
+          onSetDocType={t => setDocType(o, t)} onExpense={() => receiptToExpense(o)} onExpenseBack={o.expenseAt && expenseWaiting(o) ? () => expenseBack(o) : null} />}
         {isOpen && (
           <div style={{ borderLeft: '3px solid var(--accent)', marginLeft: 6 }}>
             <div style={{ padding: '0 16px' }}><FlagNote refId={'slip:' + o.id} /></div>
@@ -3438,7 +3461,8 @@ function OrderedTab({ onClearFromJobs = () => {}, onLinkFeedPart = async () => n
 }
 
 // ── Slip title bar (collapsed view) ──
-function SlipTitleBar({ o, open, onToggle, onNote, onSetPo, onSetKind }) {
+const TAG_COLOR = { quote: '#1a5fa0', packing_slip: '#1e7a34', invoice: '#6b4bb3', receipt: '#8a5d00' }
+function SlipTitleBar({ o, open, onToggle, onNote, onSetPo, onSetKind, onSetDocType, onExpense, onExpenseBack }) {
   const { flagOf } = useFlags()
   const flagged = flagOf('slip:' + o.id)
   const [note, setNote] = useState(o.note || '')
@@ -3458,10 +3482,23 @@ function SlipTitleBar({ o, open, onToggle, onNote, onSetPo, onSetKind }) {
       <span title={full ? 'Received' : rec ? `${rec} of ${lines.length} received` : 'Not received'} style={{ width: 8, height: 8, borderRadius: '50%', background: dot, flexShrink: 0 }} />
       <span style={{ width: 82, flexShrink: 0, color: 'var(--text-mid)', fontVariantNumeric: 'tabular-nums' }}>{o.orderDate || '—'}</span>
       <span style={{ flex: '0 1 260px', minWidth: 120, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-        {o.wholesaler || '—'}{isQuoteDoc(o) ? <span style={{ fontSize: 10, fontWeight: 800, color: '#1a5fa0', marginLeft: 6 }}>📄 QUOTE</span> : null}
+        {o.wholesaler || '—'}
         <span style={{ fontWeight: 400, color: 'var(--text-light)', fontSize: 11 }}>{o.invoiceNumber ? ` · #${o.invoiceNumber}` : ''}</span>
       </span>
-      {po || !onSetPo
+      {slipKind(o) === 'pricing'
+        ? <span title="Prices only — never ordered or received" style={{ flexShrink: 0, fontSize: 10.5, fontWeight: 800, padding: '2px 8px', borderRadius: 10, background: '#e8f0fb', color: '#1a5fa0' }}>💲 Pricing quote</span>
+        : onSetDocType
+          ? <select value={docTagOf(o)} onClick={e => e.stopPropagation()} onChange={e => onSetDocType(e.target.value)} title={(DOC_TAGS.find(t => t.id === docTagOf(o)) || {}).hint}
+              style={{ flexShrink: 0, fontSize: 11, fontWeight: 800, padding: '2px 4px', borderRadius: 10, border: '1px solid ' + TAG_COLOR[docTagOf(o)], color: TAG_COLOR[docTagOf(o)], background: '#fff', cursor: 'pointer' }}>
+              {DOC_TAGS.map(t => <option key={t.id} value={t.id}>{t.icon} {t.label}</option>)}
+            </select>
+          : <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 800, color: TAG_COLOR[docTagOf(o)] }}>{(DOC_TAGS.find(t => t.id === docTagOf(o)) || {}).icon} {(DOC_TAGS.find(t => t.id === docTagOf(o)) || {}).label}</span>}
+      {isReceipt(o) && onExpense && !o.expenseAt && (
+        <button onClick={e => { e.stopPropagation(); onExpense() }} title="Paid on your own card — send it to the timesheet as an expense instead"
+          style={{ flexShrink: 0, fontSize: 10.5, fontWeight: 700, padding: '2px 7px', borderRadius: 10, border: '1px solid #8a5d00', background: '#fff8e6', color: '#8a5d00', cursor: 'pointer' }}>→ Timesheet expense</button>
+      )}
+      {o.expenseAt && <span style={{ flexShrink: 0, fontSize: 10.5, fontWeight: 700, color: '#8a5d00' }}>On the timesheet as an expense{onExpenseBack && <button onClick={e => { e.stopPropagation(); onExpenseBack() }} title="Not an expense after all — back to Materials (only while it's not on a week yet)" style={{ marginLeft: 6, fontSize: 10.5, fontWeight: 700, padding: '1px 6px', borderRadius: 8, border: '1px solid #8a5d00', background: '#fff', color: '#8a5d00', cursor: 'pointer' }}>↺ Back to Materials</button>}</span>}
+      {isReceipt(o) ? null : po || !onSetPo
         ? <span style={{ width: 92, flexShrink: 0, color: po ? 'var(--text)' : 'var(--text-light)' }}>{po ? `PO ${po}` : 'no PO'}</span>
         : <PoBox onSave={onSetPo} />}
       {onSetKind && !po && (slipKind(o) === 'pricing'

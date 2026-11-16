@@ -133,3 +133,22 @@ describe('an order goes to Jonathan in one piece', () => {
     expect(receivedInWeek([{ id: 'c', kind: 'order', receivedAt: '2026-11-11T15:00:00Z', lineItems: [{ received: true }] }], wk).length).toBe(1)
   })
 })
+
+import { noPoState, docTagOf, DOC_TAGS } from '../src/api/slips.js'
+describe('slip tags: Quote, Packing slip, Invoice, Receipt', () => {
+  it('has the four tags; an untagged slip is a packing slip', () => {
+    expect(DOC_TAGS.map(t => t.id)).toEqual(['quote', 'packing_slip', 'invoice', 'receipt'])
+    expect(docTagOf({})).toBe('packing_slip')
+  })
+  it('a receipt never waits for a PO and is never flagged "No PO"', () => {
+    const r = { id: 'r', kind: 'order', docType: 'receipt', orderDate: new Date().toISOString().slice(0, 10), lineItems: [{ name: 'Wire nuts', qty: 1, cost: 9, totalPrice: 9 }] }
+    expect(noPoState(r)).toBe('none')
+    const p = buildPurchases({ slips: [r] })[0]
+    expect(p.flags.some(f => f.id === 'nopo')).toBe(false)
+  })
+  it('a receipt sent to the timesheet as an expense is not material received', () => {
+    const wk = exportWeekKey(new Date('2026-11-12T12:00:00'))
+    const r = { id: 'r', kind: 'order', docType: 'receipt', receivedAt: '2026-11-11T15:00:00Z', expenseAt: '2026-11-11T16:00:00Z', lineItems: [{ received: true }] }
+    expect(receivedInWeek([r], wk)).toEqual([])
+  })
+})

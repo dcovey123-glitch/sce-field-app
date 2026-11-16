@@ -151,7 +151,7 @@ function finish(p, mark, billingFlag) {
   const missing = po && stage !== 'pricing' ? slips.filter(o => !hasPoNumber(o)) : []
   if (missing.length) flags.push({ id: 'slipnopo', text: `Slip missing PO ${po}`, tone: 'fix', fix: { kind: 'applyPo', po, ids: missing.map(o => o.id) } })
   if (stage !== 'closed' && stage !== 'pricing') {
-    if (!po && stage !== 'waiting') flags.push({ id: 'nopo', text: 'No PO', tone: 'warn' })
+    if (!po && stage !== 'waiting' && !(slips.length && slips.every(o => o.docType === 'receipt'))) flags.push({ id: 'nopo', text: 'No PO', tone: 'warn' })
     if (quoteIn && !allLinesIn) flags.push({ id: 'psnotrec', text: 'Packing slip not ticked received (the quote was)', tone: 'warn' })
     if (unused && received && !quoteIn) flags.push({ id: 'unused', text: `${unused} line${unused === 1 ? '' : 's'} not on a job/Stock`, tone: 'warn' })
     if (billed) flags.push({ id: 'billed', text: 'Billed differently than quoted', tone: 'bad' })

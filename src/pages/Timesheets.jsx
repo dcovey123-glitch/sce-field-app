@@ -671,16 +671,19 @@ export default function Timesheets() {
       try {
         const base64 = await window.desktop.readFileBytes(receipt.filePath)
         await window.desktop.saveFile(`Timesheets/Receipts/${expenseId}/Files`, receipt.fileName, base64)
-        await window.desktop.removeFile(receipt.filePath)
+        // a receipt sent over from Materials keeps its original slip file — only phone uploads are moved
+        if (!receipt.fromSlipId) await window.desktop.removeFile(receipt.filePath)
       } catch { /* expense is already saved either way — just missing the receipt copy if this failed */ }
     }
     setPendingExpenses(list => list.filter(r => r.id !== receipt.id))
   }
   function dismissPendingExpense(receipt) {
-    if (isDesktop && receipt.filePath) {
+    if (isDesktop && receipt.filePath && !receipt.fromSlipId) {
       window.desktop.removeFile(receipt.filePath).catch(() => {})
     }
     setPendingExpenses(list => list.filter(r => r.id !== receipt.id))
+    // dismissed a receipt that came from Materials: it goes back there (not an expense after all)
+    if (receipt.fromSlipId) setMaterialOrdersRaw(list => (list || []).map(o => o.id === receipt.fromSlipId ? { ...o, expenseAt: null, archivedAt: null, archivedNote: null } : o))
   }
 
   async function exportWeek() {
