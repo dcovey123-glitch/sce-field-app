@@ -955,10 +955,45 @@ function CombineQuotesModal({ customer, quotes, onClose, onCombine }) {
   )
 }
 
+// Open quotes split in two: Working On (not sent yet) and Sent (waiting on
+// the customer — status yellow). Working On starts open, Sent folded.
+export const isSentQuote = q => q.status === 'yellow' && !q.approved
+export function splitSentWorking(list) {
+  return { working: (list || []).filter(q => !isSentQuote(q)), sent: (list || []).filter(isSentQuote) }
+}
+export function QuoteGroupHeader({ label, count, open, onToggle, indent = 0, total = 0 }) {
+  return (
+    <button onClick={onToggle}
+      style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', padding: `7px 16px 7px ${16 + indent}px`, background: open ? '#f3f6fa' : 'var(--surface-2)', border: 'none', borderTop: '1px solid var(--border)', cursor: 'pointer', fontSize: 11, fontWeight: 800, color: 'var(--text-mid)', textTransform: 'uppercase', letterSpacing: '.06em' }}>
+      <svg width="9" height="9" viewBox="0 0 18 18" fill="none" style={{ transform: open ? 'rotate(90deg)' : 'none', transition: 'transform .15s' }}>
+        <path d="M6.5 4L11.5 9L6.5 14" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+      <span style={{ flex: 1, textAlign: 'left' }}>{label} ({count})</span>
+      {total > 0 && <span style={{ textTransform: 'none', letterSpacing: 0, fontWeight: 700, color: 'var(--blue)' }}>{money(total)}</span>}
+    </button>
+  )
+}
+
 function CustomerBlock({ customer, quotes, expanded, onToggle, onRename, onEdit,
                           onAddQuote, onUpdateQuote, onDeleteQuote, onOpenQuote, onRequestApprove, onRequestBack, onCombineQuotes }) {
   const totalValue = quotes.reduce((s, q) => s + quoteGrandTotal(q), 0)
   const [combining, setCombining] = useState(false)
+  const [openWorking, setOpenWorking] = useState(true)
+  const [openSent, setOpenSent] = useState(false)
+  const { working, sent } = splitSentWorking(quotes)
+  const sumOf = l => l.reduce((a, q) => a + quoteGrandTotal(q), 0)
+  const rowFor = q => (
+    <QuoteRow
+      key={q.id}
+      quote={q}
+      indent={18}
+      onUpdate={patch => onUpdateQuote(q.id, patch)}
+      onDelete={() => onDeleteQuote(q.id)}
+      onOpen={() => onOpenQuote(q.id)}
+      onRequestApprove={onRequestApprove}
+      onRequestBack={onRequestBack}
+    />
+  )
 
   return (
     <div>
@@ -1003,25 +1038,23 @@ function CustomerBlock({ customer, quotes, expanded, onToggle, onRename, onEdit,
       )}
       {expanded && (
         <div>
-          {quotes.length > 0 && <QuoteColumnHeader indent={18} />}
           {quotes.length === 0 && (
             <div style={{ padding: '8px 16px 8px 34px', color: 'var(--text-light)', fontSize: 13, background: 'var(--surface-2)' }}>
               No quotes yet — add one below.
             </div>
           )}
-          {quotes.map(q => (
-            <QuoteRow
-              key={q.id}
-              quote={q}
-              indent={18}
-              onUpdate={patch => onUpdateQuote(q.id, patch)}
-              onDelete={() => onDeleteQuote(q.id)}
-              onOpen={() => onOpenQuote(q.id)}
-              onRequestApprove={onRequestApprove}
-              onRequestBack={onRequestBack}
-            />
-          ))}
-          <QuoteAddRow indent={18} onAdd={data => onAddQuote(data)} />
+          {quotes.length > 0 && (
+            <>
+              <QuoteGroupHeader label="Working on" count={working.length} total={sumOf(working)} open={openWorking} onToggle={() => setOpenWorking(o => !o)} indent={18} />
+              {openWorking && working.length > 0 && <QuoteColumnHeader indent={18} />}
+              {openWorking && working.map(rowFor)}
+              {openWorking && <QuoteAddRow indent={18} onAdd={data => onAddQuote(data)} />}
+              <QuoteGroupHeader label="Sent — waiting on the customer" count={sent.length} total={sumOf(sent)} open={openSent} onToggle={() => setOpenSent(o => !o)} indent={18} />
+              {openSent && sent.length > 0 && <QuoteColumnHeader indent={18} />}
+              {openSent && sent.map(rowFor)}
+            </>
+          )}
+          {quotes.length === 0 && <QuoteAddRow indent={18} onAdd={data => onAddQuote(data)} />}
         </div>
       )}
     </div>

@@ -4,7 +4,7 @@ import CustomerNotes from '../components/CustomerNotes.jsx'
 import { linkedQuotesCustomer, sharedKey, useSharedCustomerLinks } from '../api/sharedCustomer.js'
 import { useHubStore } from '../api/useHubStore.js'
 import { SectionPage, ProjectBlock, ProjectColumnHeader, effectiveLifecycleStatus, topLevelJobs } from './Jobs.jsx'
-import { quoteGrandTotal, QuoteAddRow, nextQuoteNumber, sortByQuoteNumber, EditableField, QuoteDetailPage, ApprovalDot, ApprovalModal, SimpleApprovalConfirm, InvalidateQuoteModal, restoreQuotePatch } from './Quotes.jsx'
+import { splitSentWorking, QuoteGroupHeader, quoteGrandTotal, QuoteAddRow, nextQuoteNumber, sortByQuoteNumber, EditableField, QuoteDetailPage, ApprovalDot, ApprovalModal, SimpleApprovalConfirm, InvalidateQuoteModal, restoreQuotePatch } from './Quotes.jsx'
 import { generateQuoteDocxBase64, quoteExportFileName } from '../api/exportQuote.js'
 import { money, fmtDate } from '../api/format.js'
 import { useLocalStore } from '../api/useLocalStore.js'
@@ -291,7 +291,12 @@ function QuoteRowSimple({ q, onRestore, customerFolder, onOpen, onUpdateNotes, o
 function QuotesSection({ quotes, onRestoreQuote, customerFolder, onAdd, onOpenQuote, updateQuoteNotes, updateQuoteReason, onRequestApprove, onRequestBack, onInvalidateQuote, onDuplicate, updateQuoteTitle }) {
   const [showApproved, setShowApproved] = useState(false)
   const [showInvalidated, setShowInvalidated] = useState(false)
+  const [openWorking, setOpenWorking] = useState(true)
+  const [openSent, setOpenSent] = useState(false)
   const active = sortByQuoteNumber(quotes.filter(q => !q.approved && !q.invalidated))
+  const { working, sent } = splitSentWorking(active)
+  const sumOf = l => l.reduce((a, q) => a + quoteGrandTotal(q), 0)
+  const rowFor = q => <QuoteRowSimple key={q.id} q={q} customerFolder={customerFolder} onOpen={() => onOpenQuote(q.id)} onUpdateNotes={v => updateQuoteNotes(q.id, v)} onUpdateReason={v => updateQuoteReason(q.id, v)} onRequestApprove={onRequestApprove} onRequestBack={onRequestBack} onInvalidate={reason => onInvalidateQuote(q.id, reason)} onDuplicate={onDuplicate} onUpdateTitle={v => updateQuoteTitle(q.id, v)} />
   const approved = sortByQuoteNumber(quotes.filter(q => q.approved && !q.invalidated))
   const invalidated = sortByQuoteNumber(quotes.filter(q => q.invalidated))
 
@@ -300,8 +305,16 @@ function QuotesSection({ quotes, onRestoreQuote, customerFolder, onAdd, onOpenQu
       {active.length === 0 && (
         <div style={{ padding: '14px 18px', color: 'var(--text-light)', fontSize: 13 }}>No active quotes for this customer.</div>
       )}
-      {active.map(q => <QuoteRowSimple key={q.id} q={q} customerFolder={customerFolder} onOpen={() => onOpenQuote(q.id)} onUpdateNotes={v => updateQuoteNotes(q.id, v)} onUpdateReason={v => updateQuoteReason(q.id, v)} onRequestApprove={onRequestApprove} onRequestBack={onRequestBack} onInvalidate={reason => onInvalidateQuote(q.id, reason)} onDuplicate={onDuplicate} onUpdateTitle={v => updateQuoteTitle(q.id, v)} />)}
-      <QuoteAddRow onAdd={onAdd} indent={0} />
+      {active.length > 0 && (
+        <>
+          <QuoteGroupHeader label="Working on" count={working.length} total={sumOf(working)} open={openWorking} onToggle={() => setOpenWorking(o => !o)} />
+          {openWorking && working.map(rowFor)}
+          {openWorking && <QuoteAddRow onAdd={onAdd} indent={0} />}
+          <QuoteGroupHeader label="Sent — waiting on the customer" count={sent.length} total={sumOf(sent)} open={openSent} onToggle={() => setOpenSent(o => !o)} />
+          {openSent && sent.map(rowFor)}
+        </>
+      )}
+      {active.length === 0 && <QuoteAddRow onAdd={onAdd} indent={0} />}
 
       {approved.length > 0 && (
         <div style={{ borderTop: '1px solid var(--border)' }}>
