@@ -5,6 +5,7 @@ import { effectiveLifecycleStatus } from '../pages/Jobs.jsx'
 import { useCrewRoster } from '../api/crewRoster.js'
 import CrewDayReview from './CrewDayReview.jsx'
 import { setDone } from '../api/tasks.js'
+import { isLiveQuote } from '../api/timePool.js'
 
 export const TIME_BUCKETS = {
   planning: 'Project planning / helping',
@@ -31,7 +32,7 @@ export function roundHours(h, step) {
 
 const inputStyle = { padding: '6px 8px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 13, fontFamily: 'var(--font)' }
 
-function ReviewRow({ item, jobs, customers, workers, meName, onAddWorker, rounding, onAssign, onDiscard }) {
+function ReviewRow({ item, jobs, customers, quotes = [], workers, meName, onAddWorker, rounding, onAssign, onDiscard }) {
   const initialTarget = item.jobId ? `job:${item.jobId}` : item.bucket ? `bucket:${item.bucket}` : ''
   const recorded = item.seconds ? (item.seconds || 0) / 3600 : 0
   // One entry can be split across several jobs/buckets — each line gets its own hours
@@ -83,6 +84,11 @@ function ReviewRow({ item, jobs, customers, workers, meName, onAddWorker, roundi
       <optgroup label="Non-job time">
         {Object.entries(TIME_BUCKETS).map(([id, label]) => <option key={id} value={`bucket:${id}`}>{label}</option>)}
       </optgroup>
+      {quotes.length > 0 && (
+        <optgroup label="Quoting — for a quote">
+          {quotes.map(q => <option key={q.id} value={`quote:${q.id}`}>{q.quoteNumber}{q.title ? ' — ' + q.title : ''}</option>)}
+        </optgroup>
+      )}
       {customers.map(c => {
         const list = jobs.filter(j => j.customerId === c.id)
         if (list.length === 0) return null
@@ -183,6 +189,12 @@ export default function TimeReview({ day, allowManual }) {
     customersKey: 'job_customers', recordsKey: 'job_projects', reloadOnFocus: true,
   })
 
+  // Quoting time can be put on a quote (Admin / quoting, kept for that quote's ⏱ banner)
+  const quotesStore = useHubStore({
+    hub: 'quotes', recordFileName: 'quote.json', getRecordFolderName: q => q.title ? `${q.quoteNumber} - ${q.title}` : q.quoteNumber,
+    customersKey: 'quote_customers', recordsKey: 'quote_quotes',
+  })
+  const openQuotes = (quotesStore.records || []).filter(q => isLiveQuote(q) && !q.approved).sort((a, b) => String(b.quoteNumber || '').localeCompare(String(a.quoteNumber || '')))
   const customers = jobsStore.customers.filter(c => !c.trashedAt && !c.sleepingAt)
   const jobs = jobsStore.records.filter(j => !j.trashedAt && ['onGoing', 'deficiencies'].includes(effectiveLifecycleStatus(j)))
   const allJobs = jobsStore.records.filter(j => !j.trashedAt)
@@ -211,6 +223,9 @@ export default function TimeReview({ day, allowManual }) {
       await jobsStore.updateRecord(job.id, current => ({
         trackedTime: [...(current.trackedTime || []).filter(e => e.id !== entry.id), entry],
       }))
+    } else if (target.startsWith('quote:')) {
+      const q = (quotesStore.records || []).find(x => x.id === target.slice(6))
+      setNonJobLog(log => [...log, { ...entry, bucket: 'admin', label: TIME_BUCKETS.admin, ...(q ? { quoteId: q.id, quoteNumber: q.quoteNumber || '', quoteTitle: q.title || '' } : {}) }])
     } else {
       setNonJobLog(log => [...log, { ...entry, bucket: target.slice(7), label: TIME_BUCKETS[target.slice(7)] || target.slice(7) }])
     }
@@ -275,14 +290,14 @@ export default function TimeReview({ day, allowManual }) {
       {items.length === 0 && <div style={{ fontSize: 12, color: '#8a5d00' }}>Nothing waiting. Anything you forgot to clock today can be added with “Add missed time”.</div>}
       {sorted.map(item => item.type === 'crewDay' ? (
         <CrewDayReview
-          key={item.id} item={item} jobs={selectable} allJobs={allJobs} customers={customers}
+          key={item.id} item={item} jobs={selectable} allJobs={allJobs} customers={customers} quotes={openQuotes}
           crew={crew} rounding={rounding} writeEntry={writeEntry}
           onChange={updateItem} onDone={() => removeItem(item)} onDiscard={() => removeItem(item)}
           onTask={(jobId, taskId, on, at) => jobsStore.updateRecord(jobId, setDone(taskId, on, crew.meName, at))}
         />
       ) : (
         <ReviewRow
-          key={item.id} item={item} jobs={selectable} customers={customers}
+          key={item.id} item={item} jobs={selectable} customers={customers} quotes={openQuotes}
           workers={workers} meName={crew.meName} onAddWorker={crew.addPerson} rounding={rounding}
           onAssign={opts => assign(item, opts)}
           onDiscard={() => removeItem(item)}

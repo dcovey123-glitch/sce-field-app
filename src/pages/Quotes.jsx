@@ -5,6 +5,7 @@ import { linkedJobsCustomer } from '../api/sharedCustomer.js'
 import { addCustomerPair, renameCustomerPair, trashCustomerPair } from '../api/customers.js'
 import { useLocalStore } from '../api/useLocalStore.js'
 import { useHubStore } from '../api/useHubStore.js'
+import { timePoolSummary, poolLaborLine, POOL_BUCKETS, POOL_LINE_TEXT } from '../api/timePool.js'
 import FileAttachments from '../components/FileAttachments.jsx'
 import ConfirmDeleteButton from '../components/ConfirmDeleteButton.jsx'
 import WholesalerExportBar from '../components/WholesalerExportBar.jsx'
@@ -2733,6 +2734,93 @@ function formatRevDate(iso) {
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
+// ⏱ Un-billed helping / quoting time — shown at the top of a quote so you can
+// bill a piece of it in as a labor line on a scope (see api/timePool.js).
+function TimePoolBanner({ quote, scopes, onAddLabor, onAddScope }) {
+  const [log] = useLocalStore('time_nonjob_log', [])
+  const quotesHub = useHubStore({
+    hub: 'quotes', recordFileName: 'quote.json', getRecordFolderName: q => q.title ? `${q.quoteNumber} - ${q.title}` : q.quoteNumber,
+    customersKey: 'quote_customers', recordsKey: 'quote_quotes',
+  })
+  const [hidden, setHidden] = useState(false)
+  const [form, setForm] = useState(null) // { bucket, from, hours, scopeId, desc }
+  if (quote.invalidated || quotesHub.loading) return null
+  const all = [...(quotesHub.records || []).filter(q => q.id !== quote.id), quote]
+  const sum = timePoolSummary(log, all, quote.id)
+  const fq = sum.forQuote
+  const flagged = Object.keys(POOL_BUCKETS).filter(b => fq.toApply[b] > 0)
+  const onQuote = fq.lines.reduce((a, l) => a + l.hours, 0)
+  const anyPool = sum.pool.planning > 0 || sum.pool.admin > 0
+  if (!anyPool && !flagged.length && !onQuote) return null
+  const h = v => `${Math.round(v * 100) / 100} h`
+  const open = (bucket, from) => setForm({
+    bucket, from, hours: String(from === 'quote' ? fq.toApply[bucket] : ''), scopeId: (scopes[0] || {}).id || '__new',
+    desc: POOL_LINE_TEXT[bucket],
+  })
+  const max = form ? (form.from === 'quote' ? fq.toApply[form.bucket] + Math.max(0, sum.pool[form.bucket]) : Math.max(0, sum.pool[form.bucket])) : 0
+  const hrs = form ? Number(form.hours) || 0 : 0
+  const ok = form && hrs > 0 && form.desc.trim()
+  const add = () => {
+    if (!ok) return
+    const line = poolLaborLine({ bucket: form.bucket, from: form.from, hours: hrs, rate: quote.rate || 90, desc: form.desc.trim() })
+    if (form.scopeId === '__new') onAddScope({ name: 'Project coordination', labor: [line] })
+    else onAddLabor(form.scopeId, line)
+    setForm(null)
+  }
+  const btnS = { fontSize: 11.5, fontWeight: 700, padding: '3px 10px', borderRadius: 6, border: '1px solid #c9a227', background: '#fff', color: '#6b5300', cursor: 'pointer', whiteSpace: 'nowrap' }
+  const inS = { fontSize: 12.5, padding: '4px 7px', border: '1px solid var(--border)', borderRadius: 5, fontFamily: 'var(--font)' }
+  if (hidden) {
+    return (
+      <div style={{ padding: '4px 16px', background: '#fffaf0', borderBottom: '1px solid #f0e2b6' }}>
+        <button onClick={() => setHidden(false)} style={{ ...btnS, border: 'none', background: 'none', padding: 0 }}>⏱ Un-billed time{flagged.length ? ' · 📌 to apply' : ''} ▸</button>
+      </div>
+    )
+  }
+  return (
+    <div style={{ padding: '9px 16px', background: '#fffaf0', borderBottom: '1px solid #f0e2b6', fontSize: 13 }}>
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+        <span style={{ fontWeight: 800 }}>⏱ You have</span>
+        <span><b>{h(Math.max(0, sum.pool.planning))}</b> un-billed helping time</span>
+        <span style={{ color: 'var(--text-light)' }}>·</span>
+        <span><b>{h(Math.max(0, sum.pool.admin))}</b> quoting</span>
+        {(sum.pool.planning < 0 || sum.pool.admin < 0) && <span style={{ fontSize: 11.5, color: '#a12a1e' }}>(more billed into quotes than logged)</span>}
+        <span style={{ flex: 1 }} />
+        {anyPool && Object.keys(POOL_BUCKETS).map(b => sum.pool[b] > 0 && (
+          <button key={b} onClick={() => open(b, 'pool')} style={btnS}>+ Bill {POOL_BUCKETS[b].toLowerCase()} time in</button>
+        ))}
+        <button onClick={() => { setHidden(true); setForm(null) }} title="Hide for now" style={{ border: 'none', background: 'none', color: 'var(--text-light)', cursor: 'pointer', fontSize: 14 }}>✕</button>
+      </div>
+      {flagged.map(b => (
+        <div key={b} style={{ marginTop: 6, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', padding: '5px 9px', borderRadius: 6, background: '#fff3d6', color: '#7a5a00' }}>
+          <b>📌 {h(fq.toApply[b])} {POOL_BUCKETS[b].toLowerCase()} logged to this quote</b> — not on it yet
+          <button onClick={() => open(b, 'quote')} style={{ ...btnS, borderColor: '#7a5a00' }}>Apply</button>
+        </div>
+      ))}
+      {onQuote > 0 && (
+        <div style={{ marginTop: 4, fontSize: 11.5, color: 'var(--text-mid)' }}>
+          Already on this quote: {fq.lines.map(l => `${h(l.hours)} ${POOL_BUCKETS[l.bucket].toLowerCase()}${l.scopeName ? ' (' + l.scopeName + ')' : ''}`).join(' · ')} — edit or delete that labor line and the hours go back to the pool.
+        </div>
+      )}
+      {form && (
+        <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', padding: '8px 10px', background: '#fff', border: '1px solid #f0e2b6', borderRadius: 8 }}>
+          <span style={{ fontWeight: 700 }}>{form.from === 'quote' ? 'Apply' : 'Bill'}</span>
+          <input type="number" min="0" step="0.25" value={form.hours} autoFocus onChange={e => setForm(f => ({ ...f, hours: e.target.value }))} placeholder="hrs" style={{ ...inS, width: 70 }} />
+          <span>h of {POOL_BUCKETS[form.bucket].toLowerCase()} time as</span>
+          <input value={form.desc} onChange={e => setForm(f => ({ ...f, desc: e.target.value }))} style={{ ...inS, flex: 1, minWidth: 180 }} />
+          <span>@ ${Number(quote.rate || 90).toFixed(0)}/h in</span>
+          <select value={form.scopeId} onChange={e => setForm(f => ({ ...f, scopeId: e.target.value }))} style={inS}>
+            {scopes.map((sc, i) => <option key={sc.id} value={sc.id}>{sc.name || `Scope ${i + 1}`}</option>)}
+            <option value="__new">+ New scope "Project coordination"</option>
+          </select>
+          {hrs > max && <span style={{ fontSize: 11.5, color: '#a12a1e' }}>only {h(max)} available</span>}
+          <button disabled={!ok} onClick={add} style={{ ...btnS, background: ok ? 'var(--accent)' : '#fff', borderColor: 'var(--accent)', color: 'var(--navy)', opacity: ok ? 1 : 0.5 }}>Add labor line</button>
+          <button onClick={() => setForm(null)} style={{ ...btnS, borderColor: 'var(--border)', color: 'var(--text-mid)' }}>Cancel</button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function QuoteDetailPage({ customer, quote: rawQuote, onUpdate, linkedJob, onOpenJob, onExport }) {
   // Older quotes are moved to the new layout the first time they're opened
   // (same total, see api/quoteMath.js). Until that save lands, show them the new way.
@@ -2882,6 +2970,10 @@ export function QuoteDetailPage({ customer, quote: rawQuote, onUpdate, linkedJob
       <div style={{ padding: '0 16px 8px', fontSize: 10, color: 'var(--text-light)' }}>
         Export uses the Complete Quote tab. It opens automatically and is also saved in this quote's Files.
       </div>
+
+      <TimePoolBanner quote={quote} scopes={scopes}
+        onAddLabor={(scopeId, line) => addLine(scopeId, 'labor', line)}
+        onAddScope={sc => { const s2 = { id: uid(), name: sc.name, scopeText: '', materials: [], labor: sc.labor.map(l => ({ id: uid(), ...l })) }; onUpdate({ scopes: [...scopes, s2] }) }} />
 
       <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', background: 'var(--surface)' }}>
         <button style={tabBtn('pricing')} onClick={() => setTab('pricing')}>Pricing</button>

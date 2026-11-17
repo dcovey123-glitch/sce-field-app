@@ -37,7 +37,7 @@ export function allocateHours(msByTarget, step) {
   return Object.fromEntries(base.map(b => [b.t, Math.round(b.u * step * 100) / 100]))
 }
 
-export default function CrewDayReview({ item, jobs, allJobs, customers, crew, rounding, writeEntry, onChange, onDone, onDiscard, onTask }) {
+export default function CrewDayReview({ item, jobs, allJobs, customers, crew, rounding, writeEntry, onChange, onDone, onDiscard, onTask, quotes }) {
   const [history, setHistory] = useLocalStore('time_crew_days', [])
   const [saving, setSaving] = useState(false)
   const [, setSheets] = useLocalStore('timesheets', {})
@@ -64,10 +64,12 @@ export default function CrewDayReview({ item, jobs, allJobs, customers, crew, ro
   // Targets: job / bucket / still-unassigned new job from the phone
   const jobById = id => (allJobs || jobs).find(j => j.id === id)
   const custName = id => customers.find(c => c.id === id)?.name || ''
-  const isMapped = t => t && (t.startsWith('bucket:') || (t.startsWith('job:') && !!jobById(t.slice(4))))
+  // quote:<id> = Admin / quoting time for that quote (it waits on the quote to be billed in)
+  const isMapped = t => t && (t.startsWith('bucket:') || t.startsWith('quote:') || (t.startsWith('job:') && !!jobById(t.slice(4))))
   const targetName = (t, s) => {
     if (!t) return 'Not assigned'
     if (t.startsWith('bucket:')) return BUCKET_NAMES[t.slice(7)] || t.slice(7)
+    if (t.startsWith('quote:')) return BUCKET_NAMES.admin
     if (t.startsWith('job:')) { const j = jobById(t.slice(4)); return j ? `${custName(j.customerId)} — ${j.name || 'Untitled'}` : (s?.label || 'Unknown job') }
     return s?.label || t
   }
@@ -203,6 +205,11 @@ export default function CrewDayReview({ item, jobs, allJobs, customers, crew, ro
       <optgroup label="Non-job time">
         {Object.entries(BUCKET_NAMES).map(([id, l]) => <option key={id} value={`bucket:${id}`}>{l}</option>)}
       </optgroup>
+      {(quotes || []).length > 0 && (
+        <optgroup label="Quoting — for a quote">
+          {quotes.map(q => <option key={q.id} value={`quote:${q.id}`}>{q.quoteNumber}{q.title ? ' — ' + q.title : ''}</option>)}
+        </optgroup>
+      )}
       {customers.map(c => {
         const list = jobs.filter(j => j.customerId === c.id)
         const extra = seg.target?.startsWith('job:') && jobById(seg.target.slice(4))?.customerId === c.id && !list.some(j => 'job:' + j.id === seg.target) ? [jobById(seg.target.slice(4))] : []

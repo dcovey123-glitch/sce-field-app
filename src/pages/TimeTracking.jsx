@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { useLocalStore } from '../api/useLocalStore.js'
 import { useHubStore } from '../api/useHubStore.js'
+import { isLiveQuote, POOL_BUCKETS } from '../api/timePool.js'
 import TimeReview, { TIME_BUCKETS, localDate } from '../components/TimeReview.jsx'
 import NoteEdit from '../components/NoteEdit.jsx'
 import TimeEntryEditor from '../components/TimeEntryEditor.jsx'
@@ -161,6 +162,21 @@ export default function TimeTracking({ embedded = false }) {
   const heading = t => <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-light)', textTransform: 'uppercase', letterSpacing: '.07em', margin: '16px 0 8px' }}>{t}</div>
 
   // Notes can be added or edited any time after an entry is confirmed
+  // Helping / quoting time can be kept for one quote (its ⏱ banner flags it to apply)
+  const quotesStore = useHubStore({
+    hub: 'quotes', recordFileName: 'quote.json', getRecordFolderName: q => q.title ? `${q.quoteNumber} - ${q.title}` : q.quoteNumber,
+    customersKey: 'quote_customers', recordsKey: 'quote_quotes',
+  })
+  const liveQuotes = (quotesStore.records || []).filter(isLiveQuote).sort((a, b) => String(b.quoteNumber || '').localeCompare(String(a.quoteNumber || '')))
+  function setEntryQuote(e, quoteId) {
+    const q = liveQuotes.find(x => x.id === quoteId)
+    setNonJob(l => l.map(x => {
+      if (x.id !== e.id) return x
+      const { quoteId: _a, quoteNumber: _b, quoteTitle: _c, ...rest } = x
+      return q ? { ...rest, quoteId: q.id, quoteNumber: q.quoteNumber || '', quoteTitle: q.title || '' } : rest
+    }))
+  }
+
   function saveNote(e, note) {
     if (e.kind === 'job') {
       jobsStore.updateRecord(e.jobId, cur => ({ trackedTime: (cur.trackedTime || []).map(x => x.id === e.id ? { ...x, note } : x) }))
@@ -442,6 +458,14 @@ export default function TimeTracking({ embedded = false }) {
                 <span style={{ width: 80, color: 'var(--text-mid)' }}>{e.date}</span>
                 <span style={{ flex: 1 }}>{e.label} — {(e.workers?.length || 1)} × {e.hoursEach} h
                   <div><NoteEdit value={e.note} onSave={v => saveNote({ ...e, kind: 'bucket' }, v)} /></div>
+                  {POOL_BUCKETS[e.bucket] && (
+                    <select value={liveQuotes.some(q => q.id === e.quoteId) ? e.quoteId : ''} onChange={ev => setEntryQuote(e, ev.target.value)}
+                      title="Keep this time for one quote — that quote's ⏱ banner flags it to apply. Otherwise it's in the un-billed pool for any quote."
+                      style={{ marginTop: 3, fontSize: 11.5, padding: '2px 5px', border: '1px solid var(--border)', borderRadius: 5, maxWidth: 280, color: e.quoteId ? '#7a5a00' : 'var(--text-light)', background: e.quoteId ? '#fff3d6' : '#fff' }}>
+                      <option value="">⏱ Un-billed pool (any quote)</option>
+                      {liveQuotes.map(q => <option key={q.id} value={q.id}>📌 For {q.quoteNumber}{q.title ? ' — ' + q.title : ''}</option>)}
+                    </select>
+                  )}
                 </span>
                 <b>{fmt(e.totalHours)} h</b>
                 {editBtn({ ...e, kind: 'bucket' })}
