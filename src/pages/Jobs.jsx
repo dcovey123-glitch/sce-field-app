@@ -10,6 +10,7 @@ import FlagBanner from '../components/FlagBanner.jsx'
 import { quoteMaterialsTotal, quoteLaborTotal, quoteGrandTotal, normalizeQuote, scopeTotal, allowancesTotal, splitLines } from '../api/quoteMath.js'
 import { quoteLines, legacyKeys, quoteLineStatus, quoteLinesSummary, addQuoteLinesToOrderList } from '../api/quoteMaterials.js'
 import { poolLinesToPost, POOL_BUCKETS } from '../api/timePool.js'
+import { duplicateLabor, moveLabor, moveTargets } from '../api/laborMove.js'
 import { ensureRoster } from '../api/crewRoster.js'
 import { STOCK_CHECKS_KEY, makeStockCheck, checkProgress, removeCheckFromOrderSheet, clearSetAsidePatch } from '../api/stockCheck.js'
 import { useLocalStore } from '../api/useLocalStore.js'
@@ -2930,8 +2931,31 @@ function LaborActual({ project, onUpdate }) {
     .filter(r => r.hours > 0)
 
   const flagged = openLaborFlags(project)
+  // Typed in by hand AND posted from the clock — the same hours twice
+  const dupes = duplicateLabor(project)
+  const dupeIds = Object.keys(dupes)
+  const dupeHours = entries.filter(e => dupes[e.id]).reduce((s, e) => s + (Number(e.hours) || 0), 0)
+  function removeDupes() {
+    if (!window.confirm(`Remove ${dupeIds.length} hand-typed entr${dupeIds.length === 1 ? 'y' : 'ies'} (${dupeHours} h) that duplicate clock time already posted? The clock-posted ones stay.`)) return
+    const drop = new Set(dupeIds)
+    const next = entries.filter(e => !drop.has(e.id))
+    onUpdate({ laborEntries: next, actualLabor: laborTotals(next, rates).cost })
+  }
+  const [moving, setMoving] = useState(false)
   return (
     <div>
+      {dupeIds.length > 0 && (
+        <div style={{ margin: '10px 16px 4px', padding: '8px 12px', border: '1px solid #e0a716', background: '#fff8e6', borderRadius: 8, fontSize: 12.5, color: '#6b4e00', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <span style={{ flex: 1, minWidth: 220 }}><b>⚠ {dupeIds.length} entr{dupeIds.length === 1 ? 'y looks' : 'ies look'} doubled</b> — typed in by hand and also posted from the clock (same day, worker and hours): {dupeHours} h counted twice.</span>
+          <button onClick={removeDupes} style={{ fontSize: 12, fontWeight: 700, padding: '4px 11px', borderRadius: 6, border: '1px solid #a12a1e', background: '#fff', color: '#a12a1e', cursor: 'pointer', whiteSpace: 'nowrap' }}>Remove the {dupeIds.length} typed cop{dupeIds.length === 1 ? 'y' : 'ies'}</button>
+        </div>
+      )}
+      {entries.length > 0 && (
+        <div style={{ padding: '6px 16px 0', display: 'flex', justifyContent: 'flex-end' }}>
+          <button onClick={() => setMoving(m => !m)} style={{ fontSize: 11.5, fontWeight: 700, padding: '3px 10px', borderRadius: 6, border: '1px solid var(--border)', background: moving ? 'var(--navy)' : '#fff', color: moving ? '#fff' : 'var(--navy)', cursor: 'pointer' }}>⇄ Move entries to another job</button>
+        </div>
+      )}
+      {moving && <MoveLaborPanel project={project} rates={rates} dupes={dupes} onUpdate={onUpdate} onClose={() => setMoving(false)} />}
       {flagged.length > 0 && (
         <div style={{ margin: '10px 16px 4px', padding: '8px 12px', border: '1px solid #e3a49c', background: '#fdf3f1', borderRadius: 8, fontSize: 12.5, color: '#7a2a1e' }}>
           <b style={{ color: '#a12a1e' }}>⚑ {flagged.length} labor entr{flagged.length === 1 ? 'y' : 'ies'} flagged</b> — this job can't be closed until {flagged.length === 1 ? "it's" : "they're"} resolved.
@@ -2965,6 +2989,86 @@ function LaborActual({ project, onUpdate }) {
           )}
         </div>
       )}
+    </div>
+  )
+}
+
+// ⇄ Pick labor entries and move them to another job (api/laborMove.js).
+// The clock time behind them moves too, so neither job asks to post it again.
+function MoveLaborPanel({ project, rates, dupes = {}, onUpdate, onClose }) {
+  const jobsHub = useHubStore({
+    hub: 'jobs', recordFileName: 'project.json', getRecordFolderName: p => p.name,
+    customersKey: 'job_customers', recordsKey: 'job_projects',
+  })
+  const [picked, setPicked] = useState(() => new Set())
+  const [targetId, setTargetId] = useState('')
+  const [msg, setMsg] = useState('')
+  const entries = (project.laborEntries || []).slice().sort((a, b) => (b.date || '').localeCompare(a.date || ''))
+  const targets = jobsHub.loading ? [] : moveTargets(jobsHub.records, project)
+  // a sub-job (or the main job) is the usual place — pick it to start
+  const firstFamily = targets.length && targets[0].family ? targets[0].job.id : ''
+  useEffect(() => { if (firstFamily) setTargetId(t => t || firstFamily) }, [firstFamily])
+  const target = targets.find(t => t.job.id === targetId)?.job
+  const custName = id => (jobsHub.customers.find(c => c.id === id) || {}).name || ''
+  const rateOf = e => (rates.find(r => r.id === e.rateId) || {}).rate || 0
+  const sel = entries.filter(e => picked.has(e.id))
+  const selH = sel.reduce((a, e) => a + (Number(e.hours) || 0), 0)
+  const selCost = sel.reduce((a, e) => a + (Number(e.hours) || 0) * rateOf(e), 0)
+  const toggle = id => setPicked(p => { const n2 = new Set(p); n2.has(id) ? n2.delete(id) : n2.add(id); return n2 })
+  async function move() {
+    if (!target || !sel.length) return
+    if (!window.confirm(`Move ${sel.length} entr${sel.length === 1 ? 'y' : 'ies'} (${selH} h, ${money(selCost)}) from "${project.name}" to "${target.name}"?`)) return
+    const res = moveLabor({ source: project, target, ids: [...picked], sourceRates: rates, targetRates: getLaborRates(target) })
+    if (!res) return
+    await jobsHub.updateRecord(target.id, cur => {
+      const r2 = moveLabor({ source: project, target: cur, ids: [...picked], sourceRates: rates, targetRates: getLaborRates(cur) })
+      return { ...r2.target, actualLabor: laborTotals(r2.target.laborEntries, r2.targetRates).cost }
+    })
+    onUpdate({ ...res.source, actualLabor: laborTotals(res.source.laborEntries, rates).cost })
+    setMsg(`Moved ${sel.length} entr${sel.length === 1 ? 'y' : 'ies'} (${selH} h) to ${target.name}.`)
+    setPicked(new Set())
+  }
+  const cb = { width: 15, height: 15, cursor: 'pointer', flexShrink: 0 }
+  return (
+    <div style={{ margin: '8px 16px', border: '1px solid #c9dbef', borderRadius: 8, background: '#f7fafd', fontSize: 12.5 }}>
+      <div style={{ padding: '8px 12px', borderBottom: '1px solid #c9dbef', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <b>⇄ Move labor to</b>
+        <select value={targetId} onChange={e => setTargetId(e.target.value)} style={{ flex: 1, minWidth: 220, fontSize: 12.5, padding: '4px 6px', border: '1px solid var(--border)', borderRadius: 5 }}>
+          <option value="">{jobsHub.loading ? 'Loading jobs…' : 'Pick a job…'}</option>
+          {['family', 'same', 'other'].map(g => {
+            const list = targets.filter(t => (g === 'family' ? t.family : g === 'same' ? !t.family && t.sameCustomer : !t.family && !t.sameCustomer))
+            if (!list.length) return null
+            return (
+              <optgroup key={g} label={g === 'family' ? 'Same job (main / sub-jobs)' : g === 'same' ? 'Same customer' : 'Other customers'}>
+                {list.map(t => <option key={t.job.id} value={t.job.id}>{t.job.name || 'Untitled'}{t.job.co ? ` · CO ${t.job.co}` : ''}{g === 'other' ? ` · ${custName(t.job.customerId)}` : ''}</option>)}
+              </optgroup>
+            )
+          })}
+        </select>
+        <button onClick={onClose} style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'var(--text-light)', fontSize: 14 }}>✕</button>
+      </div>
+      <div style={{ maxHeight: 260, overflowY: 'auto' }}>
+        {entries.map(e => (
+          <label key={e.id} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '5px 12px', borderBottom: '1px solid #e3ecf6', cursor: 'pointer', background: picked.has(e.id) ? '#e8f2fc' : undefined }}>
+            <input type="checkbox" checked={picked.has(e.id)} onChange={() => toggle(e.id)} style={cb} />
+            <span style={{ width: 82, color: 'var(--text-mid)' }}>{e.date || '—'}</span>
+            <span style={{ width: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.worker || '—'}</span>
+            <span style={{ width: 44, textAlign: 'right', fontWeight: 700 }}>{Number(e.hours) || 0} h</span>
+            <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.workCompleted || ''}</span>
+            {e.fromTracked && <span title="Posted from the crew clock — the clock time moves with it" style={{ fontSize: 10.5, fontWeight: 700, color: '#1a5fa0' }}>⏱ clock</span>}
+            {dupes[e.id] && <span title="Same day, worker and hours as an entry posted from the clock" style={{ fontSize: 10.5, fontWeight: 700, color: '#a12a1e' }}>⚠ doubled</span>}
+          </label>
+        ))}
+      </div>
+      <div style={{ padding: '8px 12px', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+        <span style={{ color: 'var(--text-mid)' }}>{sel.length ? `${sel.length} checked · ${selH} h · ${money(selCost)}` : 'Check the entries to move'}</span>
+        <span style={{ flex: 1 }} />
+        {msg && <span style={{ color: '#1e7a34', fontWeight: 700 }}>✓ {msg}</span>}
+        <button disabled={!sel.length || !target} onClick={move}
+          style={{ fontSize: 12, fontWeight: 700, padding: '5px 13px', borderRadius: 6, border: 'none', background: sel.length && target ? 'var(--accent)' : 'var(--gray-light)', color: 'var(--navy)', cursor: sel.length && target ? 'pointer' : 'default' }}>
+          Move {sel.length || ''} to {target ? target.name : '…'}
+        </button>
+      </div>
     </div>
   )
 }
