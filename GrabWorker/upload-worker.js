@@ -166,8 +166,9 @@ export default {
 
     // ── GET / — the mobile companion page ──────────────────────────
     if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) {
+      // no-cache: the phone always checks for a newer page (so a deploy shows up straight away)
       return new Response(MOBILE_PAGE_HTML, {
-        headers: { 'Content-Type': 'text/html; charset=utf-8' },
+        headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache, no-store, must-revalidate' },
       })
     }
 
