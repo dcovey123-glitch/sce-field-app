@@ -5,6 +5,7 @@ import { linkedJobsCustomer } from '../api/sharedCustomer.js'
 import { addCustomerPair, renameCustomerPair, trashCustomerPair } from '../api/customers.js'
 import { useLocalStore } from '../api/useLocalStore.js'
 import { useHubStore } from '../api/useHubStore.js'
+import { bringInWorkPatch, unlinkWorkPatch, workToDate, jobsToBringIn, becomeQuotedJobPatch } from '../api/quoteFromJob.js'
 import { timePoolSummary, poolLaborLine, patchPoolLine, POOL_BUCKETS, POOL_LINE_TEXT, POOL_START_KEY, POOL_START_DEFAULT, PENDING_DAYS } from '../api/timePool.js'
 import FileAttachments from '../components/FileAttachments.jsx'
 import ConfirmDeleteButton from '../components/ConfirmDeleteButton.jsx'
@@ -1758,10 +1759,26 @@ export function ApprovalModal({ quote, quoteCustomerName, quoteCustomer, jobsSto
         quotedMaterials: alreadyCounted ? previousMaterials : previousMaterials + quoteMaterialsTotal(quote),
         quotedLabor: alreadyCounted ? previousLabor : previousLabor + quoteLaborTotal(quote),
         // (the job's material list is the quote itself — Materials → 📄 Quoted)
+        ...(job && job.pendingQuoteId === quote.id ? { pendingQuoteId: null } : {}), // the quote it was waiting on is decided
       })
       await onDone({ approved: true, linkedJobId: projectId, linkType: type })
     } catch (err) {
       setError(err.message || 'Something went wrong linking this job.')
+      setBusy(false)
+    }
+  }
+
+  // The quote carries work already done on a T&M job: that job becomes the quoted job
+  const fromJob = quote.fromJob && quote.fromJob.jobId ? jobsStore.records.find(p => p.id === quote.fromJob.jobId && !p.trashedAt) : null
+  async function approveAsQuotedJob() {
+    if (!fromJob) return
+    setBusy(true)
+    setError('')
+    try {
+      await jobsStore.updateRecord(fromJob.id, cur => becomeQuotedJobPatch(cur, quote, quoteGrandTotal(quote)))
+      await approveWithLink(fromJob.id, 'primary')
+    } catch (err) {
+      setError(err.message || 'Something went wrong switching the job.')
       setBusy(false)
     }
   }
@@ -1839,10 +1856,36 @@ export function ApprovalModal({ quote, quoteCustomerName, quoteCustomer, jobsSto
               Is this for an existing job?
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
+              {fromJob && (
+                <button style={{ ...modalBtnStyle(true), textAlign: 'left' }} onClick={() => setStep('becomeQuoted')}>
+                  Make "{fromJob.name || 'the T&M job'}" the quoted job
+                  <div style={{ fontSize: 11.5, fontWeight: 500, marginTop: 2 }}>This quote already includes the work done on it so far</div>
+                </button>
+              )}
               <button style={modalBtnStyle(false)} onClick={() => setStep('pickExisting')}>Yes, link to an existing job</button>
               <button style={modalBtnStyle(false)} onClick={() => setStep('createNew')}>No, create a new job</button>
             </div>
             <button style={{ ...modalBtnStyle(false), border: 'none', color: 'var(--text-light)' }} onClick={onClose}>Cancel</button>
+          </>
+        )}
+
+        {step === 'becomeQuoted' && fromJob && (
+          <>
+            <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)', marginBottom: 10 }}>
+              Make "{fromJob.name || 'the job'}" the quoted job?
+            </div>
+            <div style={{ fontSize: 13, color: 'var(--text-mid)', lineHeight: 1.6, marginBottom: 14 }}>
+              <div>• Job type: <b>{fromJob.type === 'tm' ? 'T&M' : fromJob.type || 'not set'}</b> → <b>Quoted</b> (billed by progress)</div>
+              <div>• CO / job value: <b>{money(quoteGrandTotal(quote))}</b> (this quote's total)</div>
+              <div>• This quote is linked as the job's quote{fromJob.co ? ` · CO ${fromJob.co} stays` : ''}</div>
+              <div>• Hours and materials already logged ({workToDate(fromJob).hours} h, {money(workToDate(fromJob).matCost)}) stay on the job as actual cost</div>
+              {(fromJob.billingHistory || []).length > 0 && <div style={{ color: '#a12a1e' }}>• It already has T&M billing recorded — check the billed amounts afterwards</div>}
+            </div>
+            {error && <div style={{ fontSize: 12, color: 'var(--red)', marginBottom: 8 }}>{error}</div>}
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button style={modalBtnStyle(false)} onClick={() => setStep('choose')} disabled={busy}>Back</button>
+              <button style={modalBtnStyle(true)} disabled={busy} onClick={approveAsQuotedJob}>{busy ? 'Approving…' : 'Approve & switch the job'}</button>
+            </div>
           </>
         )}
 
@@ -2768,6 +2811,69 @@ function formatRevDate(iso) {
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
+// ⇣ Work already done on a T&M job, carried into this quote (api/quoteFromJob.js).
+// The job shows "quote pending" and holds T&M billing until the quote is decided.
+function WorkToDateBar({ quote, customer, onUpdate }) {
+  const jobsHub = useHubStore({
+    hub: 'jobs', recordFileName: 'project.json', getRecordFolderName: p => p.name,
+    customersKey: 'job_customers', recordsKey: 'job_projects',
+  })
+  const [picking, setPicking] = useState(false)
+  const [jobId, setJobId] = useState('')
+  if (quote.invalidated || jobsHub.loading) return null
+  const shared = customer.sharedId || customer.id
+  const jobCust = (jobsHub.customers || []).find(c => (c.sharedId || c.id) === shared)
+  const linked = quote.fromJob && quote.fromJob.jobId ? (jobsHub.records || []).find(j => j.id === quote.fromJob.jobId) : null
+  const choices = jobCust ? jobsToBringIn(jobsHub.records, jobCust.id) : []
+  const btnS = { fontSize: 11.5, fontWeight: 700, padding: '3px 10px', borderRadius: 6, border: '1px solid #9fc0e3', background: '#fff', color: '#1a5fa0', cursor: 'pointer', whiteSpace: 'nowrap' }
+  const bring = async job => {
+    onUpdate(bringInWorkPatch(quote, job, uid))
+    await jobsHub.updateRecord(job.id, { pendingQuoteId: quote.id })
+    setPicking(false)
+  }
+  const unlink = async () => {
+    if (!window.confirm(`Take the "Work completed to date" scope off this quote and release ${quote.fromJob.jobName || 'the job'} (it goes back to normal T&M billing)?`)) return
+    onUpdate(unlinkWorkPatch(quote))
+    if (linked && linked.pendingQuoteId === quote.id) await jobsHub.updateRecord(linked.id, { pendingQuoteId: null })
+  }
+  if (quote.fromJob && quote.fromJob.jobId) {
+    const now = linked ? workToDate(linked) : null
+    const changed = now && (now.hours !== quote.fromJob.hours || now.matCost !== quote.fromJob.matCost)
+    return (
+      <div style={{ padding: '7px 16px', background: '#eef5fc', borderBottom: '1px solid #c9dbef', fontSize: 12.5, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+        <span style={{ flex: 1, minWidth: 240 }}>
+          <b>⇣ Includes work done on {quote.fromJob.jobName || 'a job'}</b> — {quote.fromJob.hours} h and {money(quote.fromJob.matCost)} materials (at cost), as of {fmtDate(quote.fromJob.at, 'short')}.
+          {quote.approved ? ' The job became this quote\'s job when it was approved.' : ' That job\'s T&M billing is on hold while this quote is out.'}
+          {changed && !quote.approved && <span style={{ color: '#7a5a00', fontWeight: 700 }}> More has been logged since ({now.hours} h, {money(now.matCost)}).</span>}
+        </span>
+        {!quote.approved && linked && <button onClick={() => bring(linked)} style={btnS} title="Re-read the job's hours and materials into the Work completed to date scope">↻ Update from job</button>}
+        {!quote.approved && <button onClick={unlink} style={{ ...btnS, color: 'var(--text-mid)', borderColor: 'var(--border)' }}>Unlink</button>}
+      </div>
+    )
+  }
+  if (quote.approved || !choices.length) return null
+  return (
+    <div style={{ padding: '6px 16px', background: '#f7fafd', borderBottom: '1px solid var(--border)', fontSize: 12.5, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+      {!picking ? (
+        <>
+          <span style={{ color: 'var(--text-mid)' }}>Already started this work as T&M?</span>
+          <button onClick={() => setPicking(true)} style={btnS}>⇣ Bring in work done so far</button>
+        </>
+      ) : (
+        <>
+          <span style={{ fontWeight: 700 }}>From job</span>
+          <select value={jobId} onChange={e => setJobId(e.target.value)} style={{ flex: 1, minWidth: 220, fontSize: 12.5, padding: '3px 6px', border: '1px solid var(--border)', borderRadius: 5 }}>
+            <option value="">Pick the T&M job…</option>
+            {choices.map(j => { const w = workToDate(j); return <option key={j.id} value={j.id}>{j.name || 'Untitled'}{j.co ? ` · CO ${j.co}` : ''} — {w.hours} h, {money(w.matCost)}</option> })}
+          </select>
+          <button disabled={!jobId} onClick={() => bring(choices.find(j => j.id === jobId))} style={{ ...btnS, opacity: jobId ? 1 : 0.5 }}>Add as "Work completed to date"</button>
+          <button onClick={() => setPicking(false)} style={{ ...btnS, color: 'var(--text-mid)', borderColor: 'var(--border)' }}>Cancel</button>
+        </>
+      )}
+    </div>
+  )
+}
+
 // ⏱ Un-billed helping / quoting time — shown at the top of a quote so you can
 // bill a piece of it in as a labor line on a scope (see api/timePool.js).
 function TimePoolBanner({ quote, scopes, onAddLabor, onAddScope, onUpdate }) {
@@ -3026,6 +3132,7 @@ export function QuoteDetailPage({ customer, quote: rawQuote, onUpdate, linkedJob
         Export uses the Complete Quote tab. It opens automatically and is also saved in this quote's Files.
       </div>
 
+      <WorkToDateBar quote={quote} customer={customer} onUpdate={onUpdate} />
       <TimePoolBanner quote={quote} scopes={scopes} onUpdate={onUpdate}
         onAddLabor={(scopeId, line) => addLine(scopeId, 'labor', line)}
         onAddScope={sc => { const s2 = { id: uid(), name: sc.name, scopeText: '', materials: [], labor: sc.labor.map(l => ({ id: uid(), ...l })) }; onUpdate({ scopes: [...scopes, s2] }) }} />

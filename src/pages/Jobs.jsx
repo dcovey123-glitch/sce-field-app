@@ -11,6 +11,7 @@ import { quoteMaterialsTotal, quoteLaborTotal, quoteGrandTotal, normalizeQuote, 
 import { quoteLines, legacyKeys, quoteLineStatus, quoteLinesSummary, addQuoteLinesToOrderList } from '../api/quoteMaterials.js'
 import { poolLinesToPost, POOL_BUCKETS } from '../api/timePool.js'
 import { duplicateLabor, moveLabor, moveTargets } from '../api/laborMove.js'
+import { pendingQuoteFor } from '../api/quoteFromJob.js'
 import { ensureRoster } from '../api/crewRoster.js'
 import { STOCK_CHECKS_KEY, makeStockCheck, checkProgress, removeCheckFromOrderSheet, clearSetAsidePatch } from '../api/stockCheck.js'
 import { useLocalStore } from '../api/useLocalStore.js'
@@ -626,13 +627,16 @@ export function ProjectBlock({ project, customer, expanded, onToggle, onUpdate, 
           placeholder="Project name"
           onSave={v => onUpdate({ name: v })}
           onToggle={onToggle}
-          suffix={(combinedKids.length > 0 || badge) && (
+          suffix={(combinedKids.length > 0 || badge || (project.pendingQuoteId && project.type === 'tm')) && (
             <>
               {combinedKids.length > 0 && (
                 <span title={`Combined: ${combinedKids.map(k => k.name || 'Sub-job').join(', ')}`}
                   style={{ fontSize: 10, fontWeight: 700, color: '#1a5fa0', background: '#e8f2fc', borderRadius: 20, padding: '2px 7px', whiteSpace: 'nowrap', flexShrink: 0 }}>
                   +{combinedKids.length} combined
                 </span>
+              )}
+              {project.pendingQuoteId && project.type === 'tm' && (
+                <span title="A quote is out for this work — T&M billing is on hold" style={{ fontSize: 10, fontWeight: 700, color: '#7a5a00', background: '#fff3d6', borderRadius: 20, padding: '2px 7px', whiteSpace: 'nowrap', flexShrink: 0 }}>⏳ quote pending</span>
               )}
               {badge}
             </>
@@ -2505,9 +2509,21 @@ function GeneralInfoSection({ project, customer, onUpdate, navigate }) {
     if (patch) onUpdate(patch)
   }
 
+  // A quote that's out for this job's work (api/quoteFromJob.js)
+  const quotesForPending = useHubStore({
+    hub: 'quotes', recordFileName: 'quote.json', getRecordFolderName: q => q.title ? `${q.quoteNumber} - ${q.title}` : q.quoteNumber,
+    customersKey: 'quote_customers', recordsKey: 'quote_quotes',
+  })
+  const pendingQuote = quotesForPending.loading ? null : pendingQuoteFor(project, quotesForPending.records)
+  // the quote was invalidated / deleted: the job is plain T&M again
+  const staleHold = !!project.pendingQuoteId && !quotesForPending.loading && !pendingQuote
+    && !(quotesForPending.records || []).some(q => q.id === project.pendingQuoteId && q.approved)
+  useEffect(() => { if (staleHold) onUpdate({ pendingQuoteId: null }) }, [staleHold]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // T&M: send everything done so far (hours + materials with markup) that
   // hasn't been sent for billing yet — monthly or at the end of the job.
   function billTM(monthKey) {
+    if (pendingQuote && !window.confirm(`Quote ${pendingQuote.quoteNumber} is out for this work and already includes what's been done so far. Bill it as T&M anyway? (It would be billed twice if the quote is approved.)`)) return
     const patch = tmBillPatch(project, monthKey)
     if (patch) onUpdate(patch)
   }
@@ -2531,6 +2547,12 @@ function GeneralInfoSection({ project, customer, onUpdate, navigate }) {
   return (
     <div>
       <TypeBanner project={project} />
+      {pendingQuote && (
+        <div style={{ margin: '10px 16px 0', padding: '8px 12px', borderRadius: 8, background: '#fff8e6', border: '1px solid #e0a716', fontSize: 12.5, color: '#6b4e00' }}>
+          <b>⏳ Quote {pendingQuote.quoteNumber}{pendingQuote.title ? ` — ${pendingQuote.title}` : ''} is out for this work.</b> It includes what's been done here so far, so T&M billing is on hold.
+          When it's approved, approve it as this job and it becomes the quoted job (hours logged here stay as actual cost).
+        </div>
+      )}
       <RelatedJobBanner project={project} navigate={navigate} />
       <MoveToCustomerButton project={project} navigate={navigate} />
       <SubJobButton project={project} />
