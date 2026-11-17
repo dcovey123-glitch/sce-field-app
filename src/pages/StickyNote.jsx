@@ -28,6 +28,11 @@ export default function StickyNote() {
     window.desktop?.stickyGetState?.().then(st => { if (st) setOpen(!!st.open) })
   }, [])
   useEffect(() => { if (open && area.current) area.current.focus() }, [open, page])
+  // Make sure this window has the keyboard (Windows can leave it with the main window)
+  const takeKeyboard = () => {
+    if (document.hasFocus()) return
+    window.desktop?.stickyFocus?.().then(() => { if (area.current && document.activeElement !== area.current) area.current.focus() })
+  }
 
   // Drag by hand (a frameless window); a press that doesn't move is a click
   const drag = useRef(null)
@@ -98,7 +103,7 @@ export default function StickyNote() {
 
   const btn = { border: 'none', background: 'none', cursor: 'pointer', color: INK, fontSize: 14, fontWeight: 800, padding: '0 4px', lineHeight: 1 }
   return (
-    <div style={{ position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column', background: YELLOW, border: `2px solid ${EDGE}`, borderRadius: 10, boxSizing: 'border-box', overflow: 'hidden', fontFamily: 'var(--font)' }}>
+    <div onPointerDownCapture={takeKeyboard} style={{ position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column', background: YELLOW, border: `2px solid ${EDGE}`, borderRadius: 10, boxSizing: 'border-box', overflow: 'hidden', fontFamily: 'var(--font)' }}>
       <div onPointerDown={onDown} onPointerMove={onMove} onPointerUp={e => onUp(e)}
         title="Drag to move"
         style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '5px 6px 5px 10px', background: '#ffe97a', borderBottom: `1px solid ${EDGE}`, cursor: 'grab', userSelect: 'none' }}>

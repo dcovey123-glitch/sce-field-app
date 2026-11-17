@@ -463,9 +463,20 @@ ipcMain.handle('sticky:setOpen', (e, open) => {
   const st = saveStickyState({ open: !!open })
   const b = stickyBounds(st)
   stickyWin.setBounds(b)
-  if (open) stickyWin.focus()
+  if (open) focusSticky()
   return { open: !!open }
 })
+// Windows doesn't always hand the keyboard to a window that was shown without
+// focus (showInactive) — take it explicitly when you click into the note.
+function focusSticky() {
+  if (!stickyWin || stickyWin.isDestroyed()) return
+  if (!stickyWin.isVisible()) stickyWin.show()
+  stickyWin.setFocusable(true)
+  stickyWin.focus()
+  stickyWin.webContents.focus()
+  stickyWin.setAlwaysOnTop(true, 'floating')
+}
+ipcMain.handle('sticky:focus', () => { focusSticky(); return true })
 ipcMain.handle('sticky:getState', () => ({ open: !!stickyState().open, hidden: !!stickyState().hidden }))
 // dragging: the page tells us where the window's top-left should go
 ipcMain.on('sticky:moveTo', (e, x, y) => {

@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld('desktop', {
   // 📝 Sticky note window
   stickySetOpen: (open) => ipcRenderer.invoke('sticky:setOpen', open),
   stickyGetState: () => ipcRenderer.invoke('sticky:getState'),
+  stickyFocus: () => ipcRenderer.invoke('sticky:focus'),
   stickyMoveTo: (x, y) => ipcRenderer.send('sticky:moveTo', x, y),
   stickyDragEnd: () => ipcRenderer.invoke('sticky:dragEnd'),
   stickyResizeTo: (w, h) => ipcRenderer.send('sticky:resizeTo', w, h),
