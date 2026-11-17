@@ -2,11 +2,11 @@ import { describe, it, expect } from 'vitest'
 import { timePoolSummary, poolLaborLine, isLiveQuote, patchPoolLine, poolByMonth, PENDING_DAYS } from '../src/api/timePool.js'
 
 const log = [
-  { date: '2026-11-05', id: 'a', bucket: 'planning', totalHours: 3.5 },
-  { date: '2026-11-05', id: 'b', bucket: 'admin', totalHours: 2 },
-  { date: '2026-11-05', id: 'c', bucket: 'admin', hoursEach: 1, workers: ['Dustin', 'Brandon'] }, // 2 man-hours
-  { date: '2026-11-05', id: 'd', bucket: 'shop', totalHours: 5 }, // overhead — never in the pool
-  { date: '2026-11-05', id: 'e', bucket: 'admin', totalHours: 3, quoteId: 'q1' }, // logged to quote q1
+  { date: '2026-11-17', id: 'a', bucket: 'planning', totalHours: 3.5 },
+  { date: '2026-11-17', id: 'b', bucket: 'admin', totalHours: 2 },
+  { date: '2026-11-17', id: 'c', bucket: 'admin', hoursEach: 1, workers: ['Dustin', 'Brandon'] }, // 2 man-hours
+  { date: '2026-11-17', id: 'd', bucket: 'shop', totalHours: 5 }, // overhead — never in the pool
+  { date: '2026-11-17', id: 'e', bucket: 'admin', totalHours: 3, quoteId: 'q1' }, // logged to quote q1
 ]
 const withLine = (q, line, scope = 's1') => ({ ...q, scopes: [{ id: scope, name: 'Lighting', labor: [{ id: 'L' + Math.random(), ...line }] }] })
 
@@ -55,7 +55,7 @@ describe('Pool start date', () => {
       { bucket: 'planning', totalHours: 1, date: '2026-11-03' },
       { bucket: 'admin', totalHours: 4, date: '2026-10-25', quoteId: 'q1' },
     ]
-    const s = timePoolSummary(dated, [{ id: 'q1' }], 'q1')
+    const s = timePoolSummary(dated, [{ id: 'q1' }], 'q1', '2026-11-01')
     expect(s.pool).toMatchObject({ planning: 1, admin: 2 })
     expect(s.forQuote.toApply.admin).toBe(4)
     expect(timePoolSummary(dated, [{ id: 'q1' }], null, '2026-10-01').pool.admin).toBe(7)

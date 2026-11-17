@@ -23,7 +23,7 @@ export const POOL_BUCKETS = { planning: 'Helping', admin: 'Quoting', prep: 'Orde
 // The pool counts time from this day on (earlier time was before it started).
 // Time logged straight to a quote counts whatever its date.
 export const POOL_START_KEY = 'time_pool_start'
-export const POOL_START_DEFAULT = '2026-11-01'
+export const POOL_START_DEFAULT = '2026-11-16'
 export const POOL_LINE_TEXT = { planning: 'Project planning & coordination', admin: 'Estimating & quoting', prep: 'Material ordering & job preparation' }
 
 const n = v => Number(v) || 0
