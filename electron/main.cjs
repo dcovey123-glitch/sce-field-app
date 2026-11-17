@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, Menu } = require('electron')
+const { app, BrowserWindow, ipcMain, dialog, shell, Menu, screen } = require('electron')
 const path = require('path')
 const fs = require('fs')
 
@@ -394,9 +394,103 @@ ipcMain.handle('window:openHitList', () => {
   createHitListWindow()
 })
 
+// ── 📝 Sticky note ────────────────────────────────────────────────
+// One small frameless window that floats above the app's windows: a yellow
+// icon until clicked, then a note. It shows while any app window is in use
+// and hides when you switch to another program. Where it sits, whether it's
+// open and whether you've hidden it are kept in sticky-window.json; the notes
+// themselves are in the app's data (sticky_notes).
+let stickyWin = null
+const STICKY_ICON = 46
+const STICKY_OPEN = { w: 320, h: 340 }
+const stickyFile = () => path.join(app.getPath('userData'), 'sticky-window.json')
+function stickyState() { try { return JSON.parse(fs.readFileSync(stickyFile(), 'utf8')) || {} } catch { return {} } }
+function saveStickyState(patch) {
+  const next = { ...stickyState(), ...patch }
+  try { fs.writeFileSync(stickyFile(), JSON.stringify(next)) } catch { /* not important */ }
+  return next
+}
+// keep a rectangle on the screen it's mostly on
+function stickyFit(x, y, w, h) {
+  const d = screen.getDisplayNearestPoint({ x: Math.round(x + w / 2), y: Math.round(y + h / 2) }).workArea
+  return {
+    x: Math.round(Math.min(Math.max(x, d.x), d.x + d.width - w)),
+    y: Math.round(Math.min(Math.max(y, d.y), d.y + d.height - h)),
+  }
+}
+function stickyBounds(st = stickyState()) {
+  const wa = screen.getPrimaryDisplay().workArea
+  const ix = Number.isFinite(st.x) ? st.x : wa.x + wa.width - STICKY_ICON - 24
+  const iy = Number.isFinite(st.y) ? st.y : wa.y + 140
+  const w = st.open ? STICKY_OPEN.w : STICKY_ICON
+  const h = st.open ? STICKY_OPEN.h : STICKY_ICON
+  return { ...stickyFit(ix, iy, w, h), width: w, height: h }
+}
+function createStickyWindow() {
+  if (stickyWin && !stickyWin.isDestroyed()) return stickyWin
+  const win = new BrowserWindow({
+    ...stickyBounds(),
+    frame: false, transparent: true, resizable: false, maximizable: false, minimizable: false, fullscreenable: false,
+    skipTaskbar: true, alwaysOnTop: true, hasShadow: false, show: false, title: 'Sticky note',
+    webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false },
+  })
+  win.setAlwaysOnTop(true, 'floating')
+  setupEditingSupport(win)
+  if (isDev) win.loadURL('http://localhost:5173/#/sticky')
+  else win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'), { hash: '/sticky' })
+  win.once('ready-to-show', () => { if (!stickyState().hidden) win.showInactive() })
+  stickyWin = win
+  win.on('closed', () => { stickyWin = null })
+  return win
+}
+// Show while you're in the app; hide when another program has focus
+function appHasFocus() { return BrowserWindow.getAllWindows().some(w => !w.isDestroyed() && w.isFocused()) }
+app.on('browser-window-focus', () => {
+  if (stickyWin && !stickyWin.isDestroyed() && !stickyState().hidden && !stickyWin.isVisible()) stickyWin.showInactive()
+})
+app.on('browser-window-blur', () => {
+  setTimeout(() => {
+    if (stickyWin && !stickyWin.isDestroyed() && stickyWin.isVisible() && !appHasFocus()) stickyWin.hide()
+  }, 200)
+})
+ipcMain.handle('sticky:setOpen', (e, open) => {
+  if (!stickyWin || stickyWin.isDestroyed()) return null
+  const st = saveStickyState({ open: !!open })
+  const b = stickyBounds(st)
+  stickyWin.setBounds(b)
+  if (open) stickyWin.focus()
+  return { open: !!open }
+})
+ipcMain.handle('sticky:getState', () => ({ open: !!stickyState().open, hidden: !!stickyState().hidden }))
+// dragging: the page tells us where the window's top-left should go
+ipcMain.on('sticky:moveTo', (e, x, y) => {
+  if (!stickyWin || stickyWin.isDestroyed()) return
+  const [w, h] = stickyWin.getSize()
+  const p = stickyFit(Number(x) || 0, Number(y) || 0, w, h)
+  stickyWin.setPosition(p.x, p.y)
+})
+ipcMain.handle('sticky:dragEnd', () => {
+  if (!stickyWin || stickyWin.isDestroyed()) return null
+  const [x, y] = stickyWin.getPosition()
+  saveStickyState({ x, y })
+  return { x, y }
+})
+// 📝 in the main window's header: hide / show the sticky
+ipcMain.handle('sticky:toggle', () => {
+  const hidden = !stickyState().hidden
+  saveStickyState({ hidden })
+  const win = createStickyWindow()
+  if (hidden) win.hide()
+  else { win.showInactive() }
+  return { hidden }
+})
+
 app.whenReady().then(() => {
   initDataRoot()
   createWindow()
+  createStickyWindow()
+  // the sticky goes when the main window does (so the app can still quit)
+  mainWindow.on('closed', () => { if (stickyWin && !stickyWin.isDestroyed()) stickyWin.destroy() })
   setTimeout(writeOrdersIndex, 3000)
   setTimeout(() => { runOnlineBackup().catch(() => {}) }, 60 * 1000)
   setInterval(() => { runOnlineBackup().catch(() => {}) }, 3 * 60 * 60 * 1000)

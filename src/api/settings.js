@@ -11,6 +11,7 @@ export const STORE = {
   material_requests: { file: true, what: 'Orders and pricing requests sent to suppliers' },
   materials_order_list: { file: true, what: 'The Material Order List being put together' },
   time_pool_start: { file: true, what: 'Un-billed helping / quoting time counts from this day' },
+  sticky_notes: { file: true, what: 'Sticky note pages' },
   stock_checks: { file: true, what: 'Stock Check lists for the phone (Have / Don\'t have from the basement)' },
   materials_catalog_pending: { what: 'Catalog prices waiting for approval' },
   materials_pending_slips: { what: 'Slips read but not filed yet' },

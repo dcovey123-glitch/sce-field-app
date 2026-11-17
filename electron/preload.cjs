@@ -16,6 +16,12 @@ contextBridge.exposeInMainWorld('desktop', {
   openFilesWindow: (customerId, kind) => ipcRenderer.invoke('window:openFiles', { customerId, kind }),
   openDeficienciesWindow: (customerId) => ipcRenderer.invoke('window:openDeficiencies', customerId),
   openHitListWindow: () => ipcRenderer.invoke('window:openHitList'),
+  // 📝 Sticky note window
+  stickySetOpen: (open) => ipcRenderer.invoke('sticky:setOpen', open),
+  stickyGetState: () => ipcRenderer.invoke('sticky:getState'),
+  stickyMoveTo: (x, y) => ipcRenderer.send('sticky:moveTo', x, y),
+  stickyDragEnd: () => ipcRenderer.invoke('sticky:dragEnd'),
+  stickyToggle: () => ipcRenderer.invoke('sticky:toggle'),
 
   saveCustomer: (hub, customer) => ipcRenderer.invoke('data:saveCustomer', { hub, customer }),
   renameCustomerFolder: (hub, oldFolder, newName) => ipcRenderer.invoke('data:renameCustomerFolder', { hub, oldFolder, newName }),

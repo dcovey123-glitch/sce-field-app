@@ -2,6 +2,7 @@ import './api/albertaTime.js' // Alberta Time (UTC-6) for every date shown — m
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App.jsx'
+import StickyNote from './pages/StickyNote.jsx'
 import './styles/global.css'
 import { initLocalSnapshot, refreshLocalSnapshot } from './api/localSnapshot.js'
 import { initFileStore } from './api/fileStore.js'
@@ -102,7 +103,7 @@ initLocalSnapshot().then(() => initFileStore()).then(() => refreshLocalSnapshot(
   ReactDOM.createRoot(document.getElementById('root')).render(
     <React.StrictMode>
       <ErrorBoundary>
-        <App />
+        {window.location.hash === '#/sticky' ? <StickyNote /> : <App />}
       </ErrorBoundary>
     </React.StrictMode>
   )

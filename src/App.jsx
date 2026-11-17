@@ -283,6 +283,12 @@ export default function App() {
               )}
             </button>
           ))}
+          {window.desktop?.stickyToggle && (
+            <button className={styles.navBtn} onClick={() => window.desktop.stickyToggle()} title="Show / hide the sticky note (it floats over every app window)">
+              <span className={styles.navIcon}>📝</span>
+              <span className={styles.navLbl}>Sticky</span>
+            </button>
+          )}
         </div>
       </header>
       {/* Background helpers: phone sync every 10 min, and slip reading/grabbing */}
