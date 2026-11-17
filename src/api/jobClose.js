@@ -13,6 +13,12 @@ import { effectiveJobTotal, unbilledAmount, combinedParent } from './billing.js'
 export const CLOSED_STATUSES = ['deficiencies', 'unbilled', 'billed']
 export const isClosingStatus = value => CLOSED_STATUSES.includes(value)
 
+// Warranty / deficiency work is our cost: no CO or PO, nothing to bill. When
+// it's done it's filed as Complete (Billed) — so every list treats it as done —
+// and shown under its own heading, "Closed Warranty Work".
+export const WARRANTY_CLOSED_LABEL = 'Closed Warranty Work'
+export const isClosedWarranty = p => !!p && p.type === 'warranty' && (p.lifecycleStatus === 'billed' || p.lifecycleStatus === 'unbilled')
+
 // What stops this job closing right now
 export function closeBlockers(project, orders) {
   const laborFlags = openLaborFlags(project)
@@ -61,7 +67,7 @@ export function closeoutChecks(project, value, { more = [], jobs } = {}) {
 
   // The basics
   if (!p.type) out.push({ id: 'type', text: 'Job type not set (Quoted / T&M / Warranty)', fix: 'type' })
-  if (!combined && !filled(p.co)) out.push({ id: 'co', text: 'No CO / PO #', fix: 'co' })
+  if (!combined && p.type !== 'warranty' && !filled(p.co)) out.push({ id: 'co', text: 'No CO / PO #', fix: 'co' })
   if (!p.dateStart) out.push({ id: 'dateStart', text: 'No start date', fix: 'dateStart' })
   if (quoted && !p.dateApproved) out.push({ id: 'dateApproved', text: 'No date approved', fix: 'dateApproved' })
 

@@ -8,7 +8,7 @@ import { splitSentWorking, QuoteGroupHeader, quoteGrandTotal, QuoteAddRow, nextQ
 import { generateQuoteDocxBase64, quoteExportFileName } from '../api/exportQuote.js'
 import { money, fmtDate } from '../api/format.js'
 import { useLocalStore } from '../api/useLocalStore.js'
-import { closeBlockers, statusPatch } from '../api/jobClose.js'
+import { closeBlockers, statusPatch, isClosedWarranty, WARRANTY_CLOSED_LABEL } from '../api/jobClose.js'
 
 // Blank-last date sort, newest first among the ones that have a date.
 // Complete (Billed): by CO / PO # (CANA CO numbers, RDP PO numbers — the
@@ -169,12 +169,20 @@ function NeedsReviewSection({ projects, updateProject }) {
         <button onClick={() => assign(p, 'deficiencies')} style={{ fontSize: 11, fontWeight: 700, color: '#9a6610', background: '#fff8e6', border: 'none', borderRadius: 20, padding: '5px 10px', cursor: 'pointer' }}>
           Deficiencies
         </button>
-        <button onClick={() => assign(p, 'unbilled')} style={{ fontSize: 11, fontWeight: 700, color: '#1a5fa0', background: '#e8f2fc', border: 'none', borderRadius: 20, padding: '5px 10px', cursor: 'pointer' }}>
-          Unbilled
-        </button>
-        <button onClick={() => assign(p, 'billed')} style={{ fontSize: 11, fontWeight: 700, color: '#1e7a34', background: '#e6f4ea', border: 'none', borderRadius: 20, padding: '5px 10px', cursor: 'pointer' }}>
-          Billed
-        </button>
+        {p.type === 'warranty' ? (
+          <button onClick={() => assign(p, 'billed')} style={{ fontSize: 11, fontWeight: 700, color: '#a12a1e', background: '#fdecea', border: 'none', borderRadius: 20, padding: '5px 10px', cursor: 'pointer' }}>
+            {WARRANTY_CLOSED_LABEL}
+          </button>
+        ) : (
+          <>
+            <button onClick={() => assign(p, 'unbilled')} style={{ fontSize: 11, fontWeight: 700, color: '#1a5fa0', background: '#e8f2fc', border: 'none', borderRadius: 20, padding: '5px 10px', cursor: 'pointer' }}>
+              Unbilled
+            </button>
+            <button onClick={() => assign(p, 'billed')} style={{ fontSize: 11, fontWeight: 700, color: '#1e7a34', background: '#e6f4ea', border: 'none', borderRadius: 20, padding: '5px 10px', cursor: 'pointer' }}>
+              Billed
+            </button>
+          </>
+        )}
       </div>
     </div>
   ))
@@ -430,8 +438,10 @@ export default function CustomerJobsWindow({ customerId, initialProjectId = null
   const listed = topLevelJobs(allProjects)
   const active = listed.filter(p => effectiveLifecycleStatus(p) === 'onGoing')
   const deficient = listed.filter(p => effectiveLifecycleStatus(p) === 'deficiencies')
-  const unbilled = listed.filter(p => effectiveLifecycleStatus(p) === 'unbilled')
-  const billed = listed.filter(p => effectiveLifecycleStatus(p) === 'billed')
+  // Closed warranty work has its own heading (nothing billed, no CO)
+  const warrantyClosed = listed.filter(isClosedWarranty)
+  const unbilled = listed.filter(p => effectiveLifecycleStatus(p) === 'unbilled' && !isClosedWarranty(p))
+  const billed = listed.filter(p => effectiveLifecycleStatus(p) === 'billed' && !isClosedWarranty(p))
   const needsReview = listed.filter(p => effectiveLifecycleStatus(p) === null)
 
   // Jobs and Quotes keep separate customer records, tied together by a shared id
@@ -572,6 +582,7 @@ export default function CustomerJobsWindow({ customerId, initialProjectId = null
     { id: 'deficiencies', label: 'Completed w/ Deficiencies', count: deficient.length, color: '#9a6610', bg: '#fff8e6' },
     { id: 'unbilled', label: 'Complete (Unbilled)', count: unbilled.length, color: '#1a5fa0', bg: '#e8f2fc' },
     { id: 'billed', label: 'Complete (Billed)', count: billed.length, color: '#1e7a34', bg: '#e6f4ea' },
+    ...(warrantyClosed.length > 0 ? [{ id: 'warrantyClosed', label: WARRANTY_CLOSED_LABEL, count: warrantyClosed.length, color: '#a12a1e', bg: '#fdecea' }] : []),
     { id: 'quotes', label: 'Quotes', count: quotes.length, color: '#4a5568', bg: '#eef1f4' },
     // One button: the window it opens has Photos / Documents tabs (opens on Photos)
     { id: 'photos', label: 'Photos & Documents', color: '#4a5568', bg: '#eef1f4', opensWindow: true },
@@ -639,6 +650,9 @@ export default function CustomerJobsWindow({ customerId, initialProjectId = null
         )}
         {activeTab === 'billed' && (
           <ProjectListSection projects={billed} billedView customer={customer} updateProject={updateProject} deleteProject={deleteProject} navigate={navigate} emptyText="Nothing here." />
+        )}
+        {activeTab === 'warrantyClosed' && (
+          <ProjectListSection projects={warrantyClosed} sortKey="dateComplete" customer={customer} updateProject={updateProject} deleteProject={deleteProject} navigate={navigate} emptyText="No closed warranty work." />
         )}
         {activeTab === 'quotes' && (
           <QuotesSection

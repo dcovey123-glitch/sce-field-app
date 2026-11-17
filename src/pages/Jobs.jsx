@@ -28,7 +28,7 @@ import { removePlanLinesFromOrderList, findStockFor, ORDER_LIST_KEY, REQUESTS_KE
 import { useOrdersFeed, partsForJob, openQuotePdf } from '../api/orders.js'
 import PostTimeToLabor, { unpostedCount } from '../components/PostTimeToLabor.jsx'
 import { jobDeficiencies, openLaborFlags, LABOR_FLAG_KINDS } from '../api/jobHealth.js'
-import { closeBlockers, statusPatch } from '../api/jobClose.js'
+import { closeBlockers, statusPatch, WARRANTY_CLOSED_LABEL } from '../api/jobClose.js'
 import SlipLinesForJob from '../components/SlipLinesForJob.jsx'
 import CloseoutChecklist from '../components/CloseoutChecklist.jsx'
 import { drawFromStock, adjustStockDraw, chargesFullStock, stockLinePrice } from '../api/stockDraw.js'
@@ -492,7 +492,8 @@ function StatusDot({ status, onCycle }) {
 // Full confirmation gate before a job moves to Completed — mirrors the Quotes approval modal
 function CompletionModal({ project, onConfirm, onClose, onUpdate }) {
   const [jobDone, setJobDone] = useState(false)
-  const [billed, setBilled] = useState('unbilled')
+  const warranty = project.type === 'warranty'
+  const [billed, setBilled] = useState(warranty ? 'billed' : 'unbilled')
   const [orders] = useLocalStore('material_orders', [])
   // same rules as the status dropdown (api/jobClose.js)
   const { laborFlags, leftovers } = closeBlockers(project, orders)
@@ -508,7 +509,8 @@ function CompletionModal({ project, onConfirm, onClose, onUpdate }) {
           <input type="checkbox" checked={jobDone} onChange={e => setJobDone(e.target.checked)} style={{ marginTop: 2 }} />
           This job is fully complete
         </label>
-        <div style={{ display: 'flex', gap: 14, marginBottom: 16, fontSize: 13, color: 'var(--text-mid)' }}>
+        {warranty && <div style={{ marginBottom: 16, fontSize: 13, color: 'var(--text-mid)' }}>Warranty work — no CO and nothing to bill. It's filed under <b>{WARRANTY_CLOSED_LABEL}</b>.</div>}
+        <div style={{ display: warranty ? 'none' : 'flex', gap: 14, marginBottom: 16, fontSize: 13, color: 'var(--text-mid)' }}>
           <label style={{ display: 'flex', gap: 6, cursor: 'pointer' }}><input type="radio" checked={billed === 'unbilled'} onChange={() => setBilled('unbilled')} /> Still to bill</label>
           <label style={{ display: 'flex', gap: 6, cursor: 'pointer' }}><input type="radio" checked={billed === 'billed'} onChange={() => setBilled('billed')} /> Fully billed</label>
         </div>
@@ -2277,6 +2279,10 @@ function QuotedSummaryModal({ project, customer, onClose }) {
   )
 }
 
+// A warranty job closes straight to "Closed Warranty Work" (stored as billed: nothing to bill)
+export const lifecycleOptionsFor = project => project && project.type === 'warranty'
+  ? [LIFECYCLE_OPTIONS[0], LIFECYCLE_OPTIONS[1], { value: 'billed', label: WARRANTY_CLOSED_LABEL }]
+  : LIFECYCLE_OPTIONS
 export const LIFECYCLE_OPTIONS = [
   { value: 'onGoing', label: 'Active Jobs' },
   { value: 'deficiencies', label: 'Completed Projects w/ Deficiencies' },
@@ -2352,7 +2358,10 @@ export function MaterialCloseout({ project, onUpdate, onAllDone, title, compact 
 
 export function LifecycleStatusDropdown({ project, onUpdate }) {
   const openDeficiencies = (project.deficiencies || []).filter(d => !d.resolved)
-  const current = effectiveLifecycleStatus(project)
+  const warranty = project.type === 'warranty'
+  // an old warranty job left at Unbilled is closed warranty work too
+  const current = warranty && effectiveLifecycleStatus(project) === 'unbilled' ? 'billed' : effectiveLifecycleStatus(project)
+  const options = lifecycleOptionsFor(project)
   const needsReview = project.completed && !project.lifecycleStatus
   const [confirmedLabel, setConfirmedLabel] = useState('')
   const [matOrdersGate] = useLocalStore('material_orders', [])
@@ -2379,7 +2388,7 @@ export function LifecycleStatusDropdown({ project, onUpdate }) {
     const patch = { ...statusPatch(project, value), ...(done ? { closeoutSkipped: skip && skip.items.length ? skip : null } : {}) }
     setSkipped(null)
     onUpdate(patch)
-    const label = LIFECYCLE_OPTIONS.find(o => o.value === value)?.label || value
+    const label = options.find(o => o.value === value)?.label || value
     setConfirmedLabel(`✓ Moved to ${label} — go back to see it filed there`)
     setTimeout(() => setConfirmedLabel(''), 4000)
   }
@@ -2398,7 +2407,7 @@ export function LifecycleStatusDropdown({ project, onUpdate }) {
         style={{ fontSize: 13, fontWeight: 600, border: '1px solid var(--border)', borderRadius: 6, padding: '7px 10px', width: '100%', background: 'var(--surface)', color: 'var(--text)', cursor: 'pointer' }}
       >
         {!current && <option value="" disabled>Choose a status…</option>}
-        {LIFECYCLE_OPTIONS.map(opt => (
+        {options.map(opt => (
           <option key={opt.value} value={opt.value}>{opt.label}</option>
         ))}
       </select>
@@ -2407,7 +2416,7 @@ export function LifecycleStatusDropdown({ project, onUpdate }) {
       )}
       {(flagBlock || (laborFlags.length > 0 && current !== 'onGoing' && current)) && laborFlags.length > 0 && (
         <div style={{ marginTop: 8, padding: '8px 10px', background: '#fdf3f1', border: '1px solid #e3a49c', borderRadius: 'var(--rs)', fontSize: 12, color: '#7a2a1e' }}>
-          <b style={{ color: '#a12a1e' }}>⚑ {flagBlock ? `Can't move this job to ${(LIFECYCLE_OPTIONS.find(o => o.value === flagBlock) || {}).label || 'closed'} yet` : 'Closed job with flagged labor'}</b> — resolve the flagged labor first (Labor section):
+          <b style={{ color: '#a12a1e' }}>⚑ {flagBlock ? `Can't move this job to ${(options.find(o => o.value === flagBlock) || {}).label || 'closed'} yet` : 'Closed job with flagged labor'}</b> — resolve the flagged labor first (Labor section):
           {laborFlags.map(e => <div key={e.id} style={{ marginTop: 3 }}>• {e.date || 'undated'} · {e.worker || '—'} · {e.hours || 0} h — <b>{e.flag.kind}</b>{e.flag.note ? ': ' + e.flag.note : ''}</div>)}
         </div>
       )}
@@ -2420,7 +2429,7 @@ export function LifecycleStatusDropdown({ project, onUpdate }) {
       {pendingClose && (
         leftoverLinesForJob(matOrdersGate || [], project).length
           ? <MaterialCloseout project={project} onUpdate={onUpdate} onAllDone={() => { const v = pendingClose; setPendingClose(''); doChange(v) }}
-              title={`Before this job can be ${(LIFECYCLE_OPTIONS.find(o => o.value === pendingClose) || {}).label || 'closed'}: close out its slip material`} />
+              title={`Before this job can be ${(options.find(o => o.value === pendingClose) || {}).label || 'closed'}: close out its slip material`} />
           : <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#1e7a34', fontWeight: 700 }}>
               ✓ Material closed out
               <button onClick={() => { const v = pendingClose; setPendingClose(''); doChange(v) }} style={{ fontSize: 12, fontWeight: 700, padding: '4px 12px', borderRadius: 6, border: 'none', background: 'var(--navy)', color: '#fff', cursor: 'pointer' }}>Finish closing the job</button>

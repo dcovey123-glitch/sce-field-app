@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { useLocalStore } from '../api/useLocalStore.js'
-import { closeoutChecks, closeoutHealthLines } from '../api/jobClose.js'
+import { closeoutChecks, closeoutHealthLines, WARRANTY_CLOSED_LABEL } from '../api/jobClose.js'
 import { jobDeficiencies } from '../api/jobHealth.js'
 import { unpostedCount } from './PostTimeToLabor.jsx'
 import { todayLocal } from '../api/albertaTime.js'
@@ -63,7 +63,7 @@ function Fix({ item, project, onUpdate }) {
 export default function CloseoutChecklist({ project, value, onUpdate, onDone, onCancel, doneLabel = 'Mark Complete', blocked = false }) {
   const items = useCloseoutChecks(project, value)
   const [anyway, setAnyway] = useState(false)
-  const label = value === 'billed' ? 'Complete (Billed)' : 'Complete (Unbilled)'
+  const label = project.type === 'warranty' ? WARRANTY_CLOSED_LABEL : value === 'billed' ? 'Complete (Billed)' : 'Complete (Unbilled)'
   const ok = items.length === 0
   return (
     <div style={{ marginTop: 8, padding: '10px 12px', background: ok ? '#eef8f1' : '#fff8e6', border: `1px solid ${ok ? '#9fd3ae' : 'var(--accent)'}`, borderRadius: 8 }}>
