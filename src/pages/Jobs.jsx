@@ -572,7 +572,7 @@ function JobHealthMark({ project }) {
 // of the list — see topLevelJobs). Opening it lists this job's sections, then
 // each combined sub-job's, under its own heading. onOpenJobSection(jobId,
 // sectionId) opens a section on any of them.
-export function ProjectBlock({ project, customer, expanded, onToggle, onUpdate, onDelete, onOpenSection, onOpenJobSection, onRequestStatusClick, indent, onClose }) {
+export function ProjectBlock({ project, customer, expanded, onToggle, onUpdate, onDelete, onOpenSection, onOpenJobSection, onRequestStatusClick, indent, onClose, badge }) {
   const combinedKids = combinedChildren(project)
   const visibleSections = SECTIONS
   const status = project.status || 'red'
@@ -626,11 +626,16 @@ export function ProjectBlock({ project, customer, expanded, onToggle, onUpdate, 
           placeholder="Project name"
           onSave={v => onUpdate({ name: v })}
           onToggle={onToggle}
-          suffix={combinedKids.length > 0 && (
-            <span title={`Combined: ${combinedKids.map(k => k.name || 'Sub-job').join(', ')}`}
-              style={{ fontSize: 10, fontWeight: 700, color: '#1a5fa0', background: '#e8f2fc', borderRadius: 20, padding: '2px 7px', whiteSpace: 'nowrap', flexShrink: 0 }}>
-              +{combinedKids.length} combined
-            </span>
+          suffix={(combinedKids.length > 0 || badge) && (
+            <>
+              {combinedKids.length > 0 && (
+                <span title={`Combined: ${combinedKids.map(k => k.name || 'Sub-job').join(', ')}`}
+                  style={{ fontSize: 10, fontWeight: 700, color: '#1a5fa0', background: '#e8f2fc', borderRadius: 20, padding: '2px 7px', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                  +{combinedKids.length} combined
+                </span>
+              )}
+              {badge}
+            </>
           )}
         />
         <span onClick={e => e.stopPropagation()}>

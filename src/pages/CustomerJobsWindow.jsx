@@ -11,6 +11,22 @@ import { useLocalStore } from '../api/useLocalStore.js'
 import { closeBlockers, statusPatch } from '../api/jobClose.js'
 
 // Blank-last date sort, newest first among the ones that have a date.
+// Complete (Billed): by CO / PO # (CANA CO numbers, RDP PO numbers — the
+// same field), lowest first; jobs with no number at the bottom, newest billed first.
+const hasNumber = p => /\d/.test(String(p.co || ''))
+export function lastBilledDate(p) {
+  const ds = (p.billingHistory || []).map(h => String(h.date || h.at || '').slice(0, 10)).filter(Boolean).sort()
+  return ds.length ? ds[ds.length - 1] : ''
+}
+export function sortByCoPo(list) {
+  return [...list].sort((a, b) => {
+    const ha = hasNumber(a), hb = hasNumber(b)
+    if (ha !== hb) return ha ? -1 : 1
+    if (ha) return String(a.co).trim().localeCompare(String(b.co).trim(), undefined, { numeric: true, sensitivity: 'base' })
+    return lastBilledDate(b).localeCompare(lastBilledDate(a))
+  })
+}
+
 function sortByDateDesc(list, key) {
   return [...list].sort((a, b) => {
     const aHas = !!a[key], bHas = !!b[key]
@@ -168,7 +184,7 @@ function NeedsReviewSection({ projects, updateProject }) {
 // sections (and the list scrolls back to it) — remembered per customer for as
 // long as this window is open.
 const lastOpenJob = new Map()
-function ProjectListSection({ projects, sortKey, customer, updateProject, deleteProject, navigate, emptyText }) {
+function ProjectListSection({ projects, sortKey, customer, updateProject, deleteProject, navigate, emptyText, billedView }) {
   const [expandedProjectId, setExpandedState] = useState(() => lastOpenJob.get(customer.id) || null)
   const setExpandedProjectId = fn => setExpandedState(cur => { const next = typeof fn === 'function' ? fn(cur) : fn; lastOpenJob.set(customer.id, next); return next })
   useEffect(() => {
@@ -177,7 +193,17 @@ function ProjectListSection({ projects, sortKey, customer, updateProject, delete
     const el = document.querySelector(`[data-job-row="${id}"]`)
     if (el) el.scrollIntoView({ block: 'start' })
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
-  const sorted = sortByDateDesc(topLevelJobs(projects), sortKey)
+  const sorted = billedView ? sortByCoPo(topLevelJobs(projects)) : sortByDateDesc(topLevelJobs(projects), sortKey)
+  const billedChip = p => {
+    const d = lastBilledDate(p)
+    const all = (p.billingHistory || []).map(h => `${String(h.date || h.at || '').slice(0, 10)} — ${money(h.amount)}`).join('\n')
+    return (
+      <span title={all ? 'Sent for billing:\n' + all : 'No billing date recorded'}
+        style={{ fontSize: 10.5, fontWeight: 700, color: d ? '#1e7a34' : 'var(--text-light)', background: d ? '#e6f4ea' : 'var(--surface-2)', borderRadius: 20, padding: '2px 8px', whiteSpace: 'nowrap', flexShrink: 0 }}>
+        {d ? `Billed ${fmtDate(d, 'medium')}` : 'No billed date'}
+      </span>
+    )
+  }
   if (sorted.length === 0) {
     return <div style={{ padding: '14px 18px', color: 'var(--text-light)', fontSize: 13 }}>{emptyText}</div>
   }
@@ -195,6 +221,7 @@ function ProjectListSection({ projects, sortKey, customer, updateProject, delete
           onOpenSection={sectionId => navigate({ view: 'section', projectId: p.id, section: sectionId })}
           onOpenJobSection={(jobId, sectionId) => navigate({ view: 'section', projectId: jobId, section: sectionId })}
           onRequestStatusClick={() => {}}
+          badge={billedView ? billedChip(p) : null}
         />
         </div>
       ))}
@@ -611,7 +638,7 @@ export default function CustomerJobsWindow({ customerId, initialProjectId = null
           <ProjectListSection projects={unbilled} sortKey="dateComplete" customer={customer} updateProject={updateProject} deleteProject={deleteProject} navigate={navigate} emptyText="Nothing here." />
         )}
         {activeTab === 'billed' && (
-          <ProjectListSection projects={billed} sortKey="dateComplete" customer={customer} updateProject={updateProject} deleteProject={deleteProject} navigate={navigate} emptyText="Nothing here." />
+          <ProjectListSection projects={billed} billedView customer={customer} updateProject={updateProject} deleteProject={deleteProject} navigate={navigate} emptyText="Nothing here." />
         )}
         {activeTab === 'quotes' && (
           <QuotesSection
