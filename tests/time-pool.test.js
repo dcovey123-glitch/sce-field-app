@@ -2,11 +2,11 @@ import { describe, it, expect } from 'vitest'
 import { timePoolSummary, poolLaborLine, isLiveQuote } from '../src/api/timePool.js'
 
 const log = [
-  { id: 'a', bucket: 'planning', totalHours: 3.5 },
-  { id: 'b', bucket: 'admin', totalHours: 2 },
-  { id: 'c', bucket: 'admin', hoursEach: 1, workers: ['Dustin', 'Brandon'] }, // 2 man-hours
-  { id: 'd', bucket: 'shop', totalHours: 5 }, // overhead — never in the pool
-  { id: 'e', bucket: 'admin', totalHours: 3, quoteId: 'q1' }, // logged to quote q1
+  { date: '2026-11-05', id: 'a', bucket: 'planning', totalHours: 3.5 },
+  { date: '2026-11-05', id: 'b', bucket: 'admin', totalHours: 2 },
+  { date: '2026-11-05', id: 'c', bucket: 'admin', hoursEach: 1, workers: ['Dustin', 'Brandon'] }, // 2 man-hours
+  { date: '2026-11-05', id: 'd', bucket: 'shop', totalHours: 5 }, // overhead — never in the pool
+  { date: '2026-11-05', id: 'e', bucket: 'admin', totalHours: 3, quoteId: 'q1' }, // logged to quote q1
 ]
 const withLine = (q, line, scope = 's1') => ({ ...q, scopes: [{ id: scope, name: 'Lighting', labor: [{ id: 'L' + Math.random(), ...line }] }] })
 
@@ -44,5 +44,20 @@ describe('Un-billed time pool', () => {
   it('the labor line carries the hours at the quote rate', () => {
     const l = poolLaborLine({ bucket: 'admin', hours: 2.5, rate: 95 })
     expect(l).toMatchObject({ desc: 'Estimating & quoting', qty: 2.5, rate: 95, timePool: { bucket: 'admin', from: 'pool' } })
+  })
+})
+
+describe('Pool start date', () => {
+  it('counts pool time from the start day; time logged to a quote counts whatever its date', () => {
+    const dated = [
+      { bucket: 'admin', totalHours: 5, date: '2026-10-20' },
+      { bucket: 'admin', totalHours: 2, date: '2026-11-01' },
+      { bucket: 'planning', totalHours: 1, date: '2026-11-03' },
+      { bucket: 'admin', totalHours: 4, date: '2026-10-25', quoteId: 'q1' },
+    ]
+    const s = timePoolSummary(dated, [{ id: 'q1' }], 'q1')
+    expect(s.pool).toEqual({ planning: 1, admin: 2 })
+    expect(s.forQuote.toApply.admin).toBe(4)
+    expect(timePoolSummary(dated, [{ id: 'q1' }], null, '2026-10-01').pool.admin).toBe(7)
   })
 })

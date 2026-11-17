@@ -15,6 +15,10 @@
 // quote is lost, then they go back to the pool too.
 
 export const POOL_BUCKETS = { planning: 'Helping', admin: 'Quoting' }
+// The pool counts time from this day on (earlier time was before it started).
+// Time logged straight to a quote counts whatever its date.
+export const POOL_START_KEY = 'time_pool_start'
+export const POOL_START_DEFAULT = '2026-11-01'
 export const POOL_LINE_TEXT = { planning: 'Project planning & coordination', admin: 'Estimating & quoting' }
 
 const n = v => Number(v) || 0
@@ -33,7 +37,7 @@ export function poolLinesOf(quote) {
 }
 
 // → { pool: {planning, admin}, logged: {…}, applied: {…}, forQuote: { tagged, applied, toApply, lines } | null }
-export function timePoolSummary(log, quotes, quoteId = null) {
+export function timePoolSummary(log, quotes, quoteId = null, since = POOL_START_DEFAULT) {
   const live = new Map((quotes || []).filter(isLiveQuote).map(q => [q.id, q]))
   const logged = blank(), applied = blank()
   const taggedTo = {} // live quote id → { planning, admin }
@@ -43,7 +47,7 @@ export function timePoolSummary(log, quotes, quoteId = null) {
     if (e.quoteId && live.has(e.quoteId)) {
       taggedTo[e.quoteId] = taggedTo[e.quoteId] || blank()
       taggedTo[e.quoteId][e.bucket] += h
-    } else logged[e.bucket] += h
+    } else if (!since || String(e.date || '') >= since) logged[e.bucket] += h
   }
   const appliedTo = {} // quote id → { planning, admin } billed out of its own tagged hours
   for (const q of live.values()) {

@@ -5,7 +5,7 @@ import { linkedJobsCustomer } from '../api/sharedCustomer.js'
 import { addCustomerPair, renameCustomerPair, trashCustomerPair } from '../api/customers.js'
 import { useLocalStore } from '../api/useLocalStore.js'
 import { useHubStore } from '../api/useHubStore.js'
-import { timePoolSummary, poolLaborLine, POOL_BUCKETS, POOL_LINE_TEXT } from '../api/timePool.js'
+import { timePoolSummary, poolLaborLine, POOL_BUCKETS, POOL_LINE_TEXT, POOL_START_KEY, POOL_START_DEFAULT } from '../api/timePool.js'
 import FileAttachments from '../components/FileAttachments.jsx'
 import ConfirmDeleteButton from '../components/ConfirmDeleteButton.jsx'
 import WholesalerExportBar from '../components/WholesalerExportBar.jsx'
@@ -22,7 +22,7 @@ import {
   buildCompleteDraft, scopeCostLines, totalLineFor, finalLineFor, allowanceCostLines, adjustmentLinesFor,
   referenceLinesFor, DEFAULT_MARKUP, proposalMoney, defaultGeneral, includedAllowanceText, combinedScopeText,
 } from '../api/quoteMath.js'
-import { money } from '../api/format.js'
+import { money, fmtDate } from '../api/format.js'
 import { aiPost, AI_MODEL, useApiKey } from '../api/ai.js'
 
 function uid() {
@@ -2738,6 +2738,8 @@ function formatRevDate(iso) {
 // bill a piece of it in as a labor line on a scope (see api/timePool.js).
 function TimePoolBanner({ quote, scopes, onAddLabor, onAddScope }) {
   const [log] = useLocalStore('time_nonjob_log', [])
+  const [since, setSince] = useLocalStore(POOL_START_KEY, POOL_START_DEFAULT)
+  const [editSince, setEditSince] = useState(false)
   const quotesHub = useHubStore({
     hub: 'quotes', recordFileName: 'quote.json', getRecordFolderName: q => q.title ? `${q.quoteNumber} - ${q.title}` : q.quoteNumber,
     customersKey: 'quote_customers', recordsKey: 'quote_quotes',
@@ -2746,7 +2748,7 @@ function TimePoolBanner({ quote, scopes, onAddLabor, onAddScope }) {
   const [form, setForm] = useState(null) // { bucket, from, hours, scopeId, desc }
   if (quote.invalidated || quotesHub.loading) return null
   const all = [...(quotesHub.records || []).filter(q => q.id !== quote.id), quote]
-  const sum = timePoolSummary(log, all, quote.id)
+  const sum = timePoolSummary(log, all, quote.id, since || POOL_START_DEFAULT)
   const fq = sum.forQuote
   const flagged = Object.keys(POOL_BUCKETS).filter(b => fq.toApply[b] > 0)
   const onQuote = fq.lines.reduce((a, l) => a + l.hours, 0)
@@ -2783,6 +2785,10 @@ function TimePoolBanner({ quote, scopes, onAddLabor, onAddScope }) {
         <span><b>{h(Math.max(0, sum.pool.planning))}</b> un-billed helping time</span>
         <span style={{ color: 'var(--text-light)' }}>·</span>
         <span><b>{h(Math.max(0, sum.pool.admin))}</b> quoting</span>
+        {editSince
+          ? <input type="date" autoFocus defaultValue={since || POOL_START_DEFAULT} onBlur={e => { if (e.target.value) setSince(e.target.value); setEditSince(false) }}
+              onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') setEditSince(false) }} style={{ fontSize: 12, padding: '1px 4px' }} />
+          : <span onClick={() => setEditSince(true)} title="Counting time from this day — click to change" style={{ fontSize: 11.5, color: 'var(--text-light)', cursor: 'pointer', textDecoration: 'underline dotted' }}>since {fmtDate(since || POOL_START_DEFAULT, 'short')}</span>}
         {(sum.pool.planning < 0 || sum.pool.admin < 0) && <span style={{ fontSize: 11.5, color: '#a12a1e' }}>(more billed into quotes than logged)</span>}
         <span style={{ flex: 1 }} />
         {anyPool && Object.keys(POOL_BUCKETS).map(b => sum.pool[b] > 0 && (
