@@ -10,6 +10,7 @@ export const STORE = {
   material_stock: { file: true, what: 'Shop Stock — what\'s on the shelf' },
   material_requests: { file: true, what: 'Orders and pricing requests sent to suppliers' },
   materials_order_list: { file: true, what: 'The Material Order List being put together' },
+  stock_checks: { file: true, what: 'Stock Check lists for the phone (Have / Don\'t have from the basement)' },
   materials_catalog_pending: { what: 'Catalog prices waiting for approval' },
   materials_pending_slips: { what: 'Slips read but not filed yet' },
   materials_used_pending: { what: 'Material used, sent from the phone, waiting for approval' },

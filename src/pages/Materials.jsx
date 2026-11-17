@@ -843,14 +843,15 @@ function OrderFormTab({ catalog, stock, parts = [], jobs = [] }) {
   const [date, setDate] = useState(() => todayLocal())
   // Kept between visits; items logged on the phone land here too
   const [items, setItems] = useLocalStore('materials_order_list', [])
-  const [selectedIds, setSelectedIds] = useState(() => new Set(items.map(i => i.id)))
+  const [selectedIds, setSelectedIds] = useState(() => new Set(items.filter(i => !i.confirm).map(i => i.id)))
   // Anything that arrives (e.g. from the phone) starts ticked
   const seenRef = useRef(new Set(items.map(i => i.id)))
   useEffect(() => {
     const fresh = items.filter(i => !seenRef.current.has(i.id))
     if (!fresh.length) return
     fresh.forEach(i => seenRef.current.add(i.id))
-    setSelectedIds(s => { const n = new Set(s); fresh.forEach(i => n.add(i.id)); return n })
+    // stock-check shortfalls wait for ✓ Confirm before they can be ticked
+    setSelectedIds(s => { const n = new Set(s); fresh.filter(i => !i.confirm).forEach(i => n.add(i.id)); return n })
   }, [items])
 
   function addItem(data) {
@@ -885,10 +886,20 @@ function OrderFormTab({ catalog, stock, parts = [], jobs = [] }) {
       style={{ fontSize: 10.5, fontWeight: 700, padding: '1px 7px', border: '1px solid var(--border)', cursor: 'pointer', borderRadius: t === 'order' ? '6px 0 0 6px' : '0 6px 6px 0', borderLeft: t === 'pricing' ? 'none' : undefined,
         background: (item.tag || 'order') === t ? 'var(--navy)' : '#fff', color: (item.tag || 'order') === t ? '#fff' : 'var(--text-mid)' }}>{label}</button>
   )
+  // 📋 Stock Check shortfalls arrive marked "to confirm" — they can't be
+  // exported until you confirm them here (or remove them)
+  const confirmItem = id => { updateItem(id, { confirm: undefined }); setSelectedIds(s => new Set(s).add(id)) }
   const rows = list => list.map(item => (
-    <div key={item.id}>
-      <OrderFormRow item={item} stock={stock} selected={selectedIds.has(item.id)}
-        onToggleSelected={() => toggleSelected(item.id)}
+    <div key={item.id} style={item.confirm ? { background: '#fff8e6' } : undefined}>
+      {item.confirm && (
+        <div style={{ padding: '6px 16px 0 39px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 11.5, color: '#7a5a00', flexWrap: 'wrap' }}>
+          <b>⏳ To confirm</b> — not in Stock on the 📋 Stock Check{(() => { const w = [item.checkedBy, item.checkedAt ? fmtDate(item.checkedAt, 'short') : ''].filter(Boolean).join(', '); return w ? ` (${w})` : '' })()}
+          <button onClick={() => confirmItem(item.id)} style={{ fontSize: 11, fontWeight: 700, padding: '2px 9px', borderRadius: 6, border: '1px solid #1e7a34', background: '#fff', color: '#1e7a34', cursor: 'pointer' }}>✓ Confirm</button>
+          <button onClick={() => deleteItem(item.id)} style={{ fontSize: 11, fontWeight: 700, padding: '2px 9px', borderRadius: 6, border: '1px solid var(--border)', background: '#fff', color: '#a12a1e', cursor: 'pointer' }}>✕ Don't order</button>
+        </div>
+      )}
+      <OrderFormRow item={item} stock={stock} selected={selectedIds.has(item.id) && !item.confirm}
+        onToggleSelected={() => { if (!item.confirm) toggleSelected(item.id) }}
         onUpdate={patch => updateItem(item.id, patch)} onDelete={() => deleteItem(item.id)} />
       <div style={{ padding: '0 16px 6px 39px', display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--text-light)' }}>
         <span style={{ display: 'inline-flex' }}>{tagBtn(item, 'order', '🛒 Order')}{tagBtn(item, 'pricing', '💲 Pricing')}</span>
@@ -905,7 +916,7 @@ function OrderFormTab({ catalog, stock, parts = [], jobs = [] }) {
       </label>}
     </div>
   )
-  const checkedIn = list => list.filter(i => selectedIds.has(i.id))
+  const checkedIn = list => list.filter(i => selectedIds.has(i.id) && !i.confirm)
 
   return (
     <div>
@@ -932,6 +943,12 @@ function OrderFormTab({ catalog, stock, parts = [], jobs = [] }) {
       </div>
 
       {sectionHead('🛒 Material order', 'Being bought — the quote that comes back needs a PO, and its slips are received', orderItems)}
+      {orderItems.some(i => i.confirm) && (
+        <div style={{ margin: '2px 16px 6px', padding: '7px 10px', borderRadius: 6, background: '#fff3d6', color: '#7a5a00', fontSize: 12, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <b>⏳ {orderItems.filter(i => i.confirm).length} from a Stock Check to confirm</b> — not in Stock in the basement. Confirm the ones to order; they're left out of the export until you do.
+          <button onClick={() => orderItems.filter(i => i.confirm).forEach(i => confirmItem(i.id))} style={{ fontSize: 11, fontWeight: 700, padding: '2px 9px', borderRadius: 6, border: '1px solid #1e7a34', background: '#fff', color: '#1e7a34', cursor: 'pointer' }}>✓ Confirm all</button>
+        </div>
+      )}
       {orderItems.length > 0 && <OrderFormColumnHeader allSelected={orderItems.every(i => selectedIds.has(i.id))} onToggleAll={on => setSelectedIds(sel => { const n = new Set(sel); orderItems.forEach(i => on ? n.add(i.id) : n.delete(i.id)); return n })} />}
       {rows(orderItems)}
       <QuickAddRow parts={parts} jobs={jobs} allowStock buttonLabel="+ Add to order"

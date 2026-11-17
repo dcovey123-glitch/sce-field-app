@@ -547,6 +547,11 @@ async function loadData() {
   state.quotes = await fetchJson('/file/sync/quotes.json');
   state.catalog = await fetchJson('/file/sync/catalog.json');
   state.tasks = await fetchJson('/file/sync/tasks.json');
+  // Stock Check: keep the last copy so it still opens with no signal in the basement
+  const sc = await fetchJson('/file/sync/stockcheck.json');
+  if (sc) { state.stockcheck = sc; try { localStorage.setItem(SC_SNAP_KEY, JSON.stringify(sc)); } catch (e) {} }
+  else if (!state.stockcheck) { try { state.stockcheck = JSON.parse(localStorage.getItem(SC_SNAP_KEY) || 'null'); } catch (e) {} }
+  pruneScOps();
   pruneTaskOps();
   render();
 }
@@ -1750,12 +1755,14 @@ function renderMaterials() {
   const m = state.mat;
   const wrap = h('div', {});
   const sub = h('div', { class: 'msub' });
-  [['used', 'Used'], ['slip', 'Slip'], ['catalog', 'Catalog'], ['order', 'Order']].forEach(function (v) {
+  const scLeft = scOpenCount();
+  [['check', scLeft ? 'Check (' + scLeft + ')' : 'Check'], ['used', 'Used'], ['slip', 'Slip'], ['catalog', 'Catalog'], ['order', 'Order']].forEach(function (v) {
     sub.appendChild(h('div', { class: 'msubtab' + (m.view === v[0] ? ' on' : ''), onclick: function () { if (m.view !== v[0]) { m.view = v[0]; m.item = null; m.qty = ''; m.catEdit = null; m.catNew = null; if (v[0] === 'used' && m.job && m.job.id === '__stock__') m.job = null; render(); } } }, [v[1]]));
   });
   wrap.appendChild(sub);
   if (m.view === 'used') { wrap.appendChild(matEntryForm('used')); const r = matSentList('used'); if (r) wrap.appendChild(r); }
   else if (m.view === 'order') { wrap.appendChild(matEntryForm('order')); const r = matSentList('order'); if (r) wrap.appendChild(r); }
+  else if (m.view === 'check') wrap.appendChild(renderStockCheck());
   else if (m.view === 'slip') wrap.appendChild(matSlip());
   else wrap.appendChild(matCatalog());
   return wrap;
@@ -1798,6 +1805,124 @@ function showSetup(msg) {
   wrap.appendChild(h('div', { class: 'meta', style: 'margin-top:12px' }, ['Only needed once on this phone.']));
   root.appendChild(wrap);
   setTimeout(function () { input.focus(); }, 30);
+}
+
+// ── 📋 Stock Check: what to look for in the basement ───────────────
+// The computer sends the lists made on a job's Quoted tab (sync/stockcheck.json).
+// Each line: ✓ Have (set aside), Some (how many you have), ✗ Don't have (the
+// rest goes on the order sheet for you to confirm on the computer). Answers
+// are saved on the phone and sent when there's signal (stockcheck/pending/…).
+const SC_OPS_KEY = 'sce_sc_ops';
+const SC_SNAP_KEY = 'sce_sc_snap';
+state.scOpen = {};
+state.scSome = null;
+function scOps() { return loadList(SC_OPS_KEY); }
+function scChecks() {
+  const snap = (state.stockcheck && state.stockcheck.checks) || [];
+  const checks = snap.map(function (c) { return Object.assign({}, c, { lines: c.lines.map(function (l) { return Object.assign({}, l); }) }); });
+  scOps().forEach(function (op) {
+    const c = checks.find(function (x) { return x.id === op.checkId; });
+    const l = c && c.lines.find(function (x) { return x.id === op.lineId; });
+    if (!l || (l.at && String(op.at) < String(l.at))) return;
+    l.s = op.status; l.hq = op.haveQty || 0; l.at = op.at; l.by = op.by; l.pending = !op.sent;
+  });
+  return checks;
+}
+function scOpenCount() { return scChecks().reduce(function (a, c) { return a + c.lines.filter(function (l) { return !l.s; }).length; }, 0); }
+function pruneScOps() {
+  const snap = (state.stockcheck && state.stockcheck.checks) || [];
+  const keep = scOps().filter(function (op) {
+    if (Date.now() - Date.parse(op.at) > 7 * 86400000) return false;
+    if (!op.sent) return true;
+    const c = snap.find(function (x) { return x.id === op.checkId; });
+    const l = c && c.lines.find(function (x) { return x.id === op.lineId; });
+    return !(l && l.at && String(l.at) >= String(op.at));
+  });
+  saveList(SC_OPS_KEY, keep);
+}
+function queueScAnswer(checkId, lineId, status, haveQty) {
+  const op = { id: taskNewId(), checkId: checkId, lineId: lineId, status: status, haveQty: Number(haveQty) || 0, at: new Date().toISOString(), by: taskMe(), sent: false };
+  const list = scOps(); list.push(op); saveList(SC_OPS_KEY, list);
+  state.scSome = null;
+  render();
+  flushScOps();
+}
+async function flushScOps() {
+  const key = getKey();
+  if (!key) return;
+  for (const op of scOps().filter(function (o) { return !o.sent; })) {
+    try {
+      const body = { id: op.id, checkId: op.checkId, lineId: op.lineId, status: op.status, haveQty: op.haveQty, by: op.by, at: op.at };
+      const res = await fetch('/putjson', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Upload-Key': key }, body: JSON.stringify({ key: 'stockcheck/pending/' + op.id + '.json', data: body }) });
+      if (!res.ok) break;
+      saveList(SC_OPS_KEY, scOps().map(function (o) { return o.id === op.id ? Object.assign({}, o, { sent: true }) : o; }));
+    } catch (err) { break; }
+  }
+  if (state.tab === 'materials') render();
+}
+window.addEventListener('online', function () { flushScOps(); });
+
+function renderStockCheck() {
+  const wrap = h('div', {});
+  const checks = scChecks();
+  if (!checks.length) {
+    wrap.appendChild(h('div', { class: 'empty' }, [state.stockcheck ? 'No stock checks right now. On the computer: a job → Materials → 📄 Quoted → check lines → 📋 Stock Check list.' : 'No stock checks synced yet. Make one on the computer (a job → Materials → 📄 Quoted → 📋 Stock Check list); it shows here after the next sync.']));
+    return wrap;
+  }
+  const waiting = scOps().filter(function (o) { return !o.sent; }).length;
+  if (waiting) wrap.appendChild(h('div', { class: 'meta', style: 'margin:0 2px 8px;color:#7a5a00;font-weight:700' }, [waiting + ' answer' + (waiting === 1 ? '' : 's') + (navigator.onLine ? ' sending…' : ' saved — they send when you have signal')]));
+  checks.forEach(function (c) {
+    const left = c.lines.filter(function (l) { return !l.s; }).length;
+    const open = state.scOpen[c.id] !== undefined ? state.scOpen[c.id] : left > 0;
+    const card = h('div', { class: 'card' }, [
+      h('div', { class: 'tjob', onclick: function () { state.scOpen[c.id] = !open; render(); } }, [
+        h('span', { style: 'font-size:13px;color:#9aa3b5;width:12px' }, [open ? '▾' : '▸']),
+        h('div', { class: 'tl', style: 'flex:1;min-width:0' }, [
+          h('div', { class: 'name' }, [c.job || 'Job']),
+          h('div', { class: 'meta', style: 'margin:1px 0 0' }, [[c.customer, c.quote ? 'Quote ' + c.quote : ''].filter(Boolean).join(' · ')]),
+        ]),
+        h('span', { class: 'tcount', style: left ? 'background:#fff3d6;color:#7a5a00' : 'background:#e6f4ea;color:#1e7a34' }, [left ? left + ' to check' : 'All checked']),
+      ]),
+    ]);
+    if (open) {
+      c.lines.slice().sort(function (a, b) { return (a.s ? 1 : 0) - (b.s ? 1 : 0); }).forEach(function (l) {
+        const tag = l.s === 'have' ? ['✓ Have — set aside', '#1e7a34', '#e6f4ea']
+          : l.s === 'some' ? ['Have ' + l.hq + ' of ' + l.q + ' — ' + (Math.round((l.q - l.hq) * 1000) / 1000) + ' to order', '#7a5a00', '#fff3d6']
+          : l.s === 'missing' ? ["✗ Don't have — to order", '#c0392b', '#fdecea'] : null;
+        const rows = [
+          h('div', { style: 'display:flex;gap:10px;align-items:baseline' }, [
+            h('div', { style: 'font-size:17px;font-weight:800;min-width:54px;text-align:right' }, [String(l.q) + (l.u ? ' ' + l.u : '')]),
+            h('div', { class: 'tl', style: 'flex:1;min-width:0' }, [
+              h('div', { style: 'font-size:15px;font-weight:600' }, [l.d || l.pn || 'Item']),
+              h('div', { class: 'meta', style: 'margin-top:1px' }, [[l.pn, l.oh != null ? '📦 ' + l.oh + ' on the shelf (last count)' : 'not in Stock list'].filter(Boolean).join(' · ')]),
+            ]),
+          ]),
+        ];
+        if (tag) rows.push(h('div', { style: 'margin:6px 0 0 64px;display:flex;align-items:center;gap:8px;flex-wrap:wrap' }, [
+          h('span', { style: 'font-size:13px;font-weight:700;padding:3px 10px;border-radius:12px;color:' + tag[1] + ';background:' + tag[2] }, [tag[0]]),
+          h('span', { class: 'meta', style: 'margin:0' }, [(l.by ? l.by + ' · ' : '') + (l.pending ? (navigator.onLine ? 'sending…' : 'saved') : taskDay(l.at))]),
+          h('span', { onclick: function () { queueScAnswer(c.id, l.id, '', 0); }, style: 'font-size:12px;color:#1a5fa0;text-decoration:underline;cursor:pointer' }, ['change']),
+        ]));
+        else if (state.scSome === l.id) {
+          const inp = h('input', { type: 'number', inputmode: 'decimal', class: 'tinput', placeholder: 'How many do you have?', style: 'flex:1;font-size:16px' });
+          const go = function () { const v = Number(inp.value); if (!(v >= 0)) return; queueScAnswer(c.id, l.id, v >= l.q ? 'have' : v <= 0 ? 'missing' : 'some', v); };
+          inp.onkeydown = function (e) { if (e.key === 'Enter') go(); };
+          rows.push(h('div', { class: 'row', style: 'margin:8px 0 0 64px;gap:6px' }, [inp, h('button', { class: 'bigbtn', style: 'flex:0 0 auto;padding:10px 14px', onclick: go }, ['OK']), h('button', { class: 'bigbtn', style: 'flex:0 0 auto;padding:10px 12px;background:#eef1f6;color:#555', onclick: function () { state.scSome = null; render(); } }, ['✕'])]));
+          setTimeout(function () { inp.focus(); }, 30);
+        } else {
+          rows.push(h('div', { class: 'row', style: 'margin:8px 0 0 64px;gap:6px' }, [
+            h('button', { class: 'bigbtn', style: 'padding:11px 6px;background:#1e7a34', onclick: function () { queueScAnswer(c.id, l.id, 'have', l.q); } }, ['✓ Have']),
+            h('button', { class: 'bigbtn', style: 'flex:0.8;padding:11px 6px;background:#eef1f6;color:#0f1e2e', onclick: function () { state.scSome = l.id; render(); } }, ['Some…']),
+            h('button', { class: 'bigbtn', style: 'padding:11px 6px;background:#c0392b', onclick: function () { queueScAnswer(c.id, l.id, 'missing', 0); } }, ["✗ Don't have"]),
+          ]));
+        }
+        card.appendChild(h('div', { style: 'padding:10px 0;border-top:1px solid var(--border)' }, rows));
+      });
+    }
+    wrap.appendChild(card);
+  });
+  wrap.appendChild(h('div', { class: 'meta', style: 'margin:10px 2px' }, ["✓ Have flags it Set aside on the computer. Some / Don't have puts what's missing on the order sheet for you to confirm. Answers send when you have signal."]));
+  return wrap;
 }
 
 // ── ✓ Tasks: each job's to-do list, ticked off on site ─────────────
@@ -2004,6 +2129,7 @@ function init() {
   flushOutbox();
   flushMatOutbox();
   flushTaskOps();
+  flushScOps();
   restoreCrew();
 }
 init();

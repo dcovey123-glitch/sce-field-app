@@ -11,6 +11,7 @@ import { unpostedCount } from '../components/PostTimeToLabor.jsx'
 import { partsList } from '../components/MaterialUsed.jsx'
 import { phoneTasksPayload, applyPhoneOp } from '../api/tasks.js'
 import { readValue } from '../api/fileStore.js'
+import { STOCK_CHECKS_KEY, stockCheckPayload, applyStockCheckAnswer, setAsidePatch, applyCheckToOrderSheet } from '../api/stockCheck.js'
 
 const isDesktop = typeof window !== 'undefined' && !!window.desktop
 
@@ -36,6 +37,8 @@ export default function CloudSync({ background = false }) {
   const [, setOrderList] = useLocalStore('materials_order_list', [])
   // Catalog counts / new items from the phone — tentative until approved
   const [catPending, setCatPending] = useLocalStore('materials_catalog_pending', [])
+  // 📋 Stock Check lists go up; Have / Don't have answers come back down
+  const [stockChecks, setStockChecks] = useLocalStore(STOCK_CHECKS_KEY, [])
   const [syncing, setSyncing] = useState(false)
   const [log, setLog] = useState([])
   const [error, setError] = useState('')
@@ -118,7 +121,7 @@ export default function CloudSync({ background = false }) {
     return out
   }
 
-  async function pushSnapshots(extraPend = []) {
+  async function pushSnapshots(extraPend = [], checksNow = null) {
     let proposals = {}
     try { proposals = await syncProposals() } catch { proposals = {} }
     const jobsPayload = {
@@ -167,6 +170,12 @@ export default function CloudSync({ background = false }) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Upload-Key': uploadKey.trim() },
       body: JSON.stringify({ key: 'sync/tasks.json', data: phoneTasksPayload(jobsStore.records, jobsStore.customers) }),
+    })
+    // Stock Check lists for the phone's 📦 Material → Check
+    await wfetch(`${cleanUrl}/putjson`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Upload-Key': uploadKey.trim() },
+      body: JSON.stringify({ key: 'sync/stockcheck.json', data: stockCheckPayload(checksNow || readValue(STOCK_CHECKS_KEY, stockChecks)) }),
     })
     return { jobCount: jobsPayload.projects.length, quoteCount: quotesPayload.quotes.length }
   }
@@ -315,7 +324,42 @@ export default function CloudSync({ background = false }) {
       } catch { skipped++ }
     }
 
-    return { pulled, skipped, timePulled, matPulled, catNew, taskPulled }
+    // Stock Check answers from the phone: Have → the quote line is flagged
+    // "Set aside"; Some / Don't have → the shortfall goes on the order sheet
+    // marked "to confirm" (left out of exports until confirmed)
+    const scRes = await wfetch(`${cleanUrl}/list/${encodeURIComponent('stockcheck/pending/')}`)
+    const scFiles = scRes.ok ? await scRes.json() : []
+    const scOps = []
+    for (const f of scFiles) {
+      try {
+        const r = await wfetch(`${cleanUrl}${f.url}`)
+        if (r.ok) scOps.push({ f, op: await r.json() })
+      } catch { /* next sync */ }
+    }
+    let scPulled = 0, scList = null
+    if (scOps.length) {
+      let list = readValue(STOCK_CHECKS_KEY, stockChecks)
+      list = Array.isArray(list) ? list : []
+      const touched = new Set()
+      for (const { op } of scOps.sort((a, b) => String(a.op.at).localeCompare(String(b.op.at)))) {
+        const res = applyStockCheckAnswer(list, op)
+        list = res.checks
+        if (res.changedId) touched.add(res.changedId)
+      }
+      setStockChecks(list)
+      scList = list
+      for (const id of touched) {
+        const c = list.find(x => x.id === id)
+        if (!c) continue
+        if (jobsStore.records.some(p => p.id === c.jobId)) await jobsStore.updateRecord(c.jobId, p => setAsidePatch(p, c) || {})
+        setOrderList(cur => applyCheckToOrderSheet(cur, c))
+      }
+      for (const { f } of scOps) {
+        try { await wfetch(`${cleanUrl}/file/${encodeURIComponent(f.key)}`, { method: 'DELETE', headers: { 'X-Upload-Key': uploadKey.trim() } }); scPulled++ } catch { skipped++ }
+      }
+    }
+
+    return { pulled, skipped, timePulled, matPulled, catNew, taskPulled, scPulled, scList }
   }
 
   async function pullOneFile(f, folderPath) {
@@ -344,16 +388,17 @@ export default function CloudSync({ background = false }) {
     try {
       const { jobCount, quoteCount } = await pushSnapshots()
       setLog(l => [...l, `Pushed ${jobCount} job${jobCount === 1 ? '' : 's'} and ${quoteCount} quote${quoteCount === 1 ? '' : 's'} to the mobile view.`])
-      const { pulled, skipped, timePulled, matPulled, catNew, taskPulled } = await pullPhotos()
+      const { pulled, skipped, timePulled, matPulled, catNew, taskPulled, scPulled, scList } = await pullPhotos()
       // phones keep showing new counts / items as tentative until approved;
-      // and see their ticked tasks come back as done
-      if ((catNew && catNew.length) || taskPulled) await pushSnapshots(catNew || [])
+      // and see their ticked tasks and stock-check answers come back
+      if ((catNew && catNew.length) || taskPulled || scPulled) await pushSnapshots(catNew || [], scList)
+      if (scPulled > 0) setLog(l => [...l, `Pulled ${scPulled} Stock Check answer${scPulled === 1 ? '' : 's'} from the phone — "Set aside" is flagged on the job's 📄 Quoted tab, and anything short is on the order sheet to confirm.`])
       if (taskPulled > 0) setLog(l => [...l, `Pulled ${taskPulled} task change${taskPulled === 1 ? '' : 's'} from the phone — see the job's Tasks or To do.`])
       if (matPulled > 0) setLog(l => [...l, `Pulled ${matPulled} material item${matPulled === 1 ? '' : 's'} from the phone — see Materials → Material Used / Material Order.`])
       if (timePulled > 0) setLog(l => [...l, `Pulled ${timePulled} time entr${timePulled === 1 ? 'y' : 'ies'} — review on the Time Tracking page.`])
       if (pulled > 0) setLog(l => [...l, `Pulled ${pulled} new photo${pulled === 1 ? '' : 's'} into the right job folder${pulled === 1 ? '' : 's'}.`])
       if (skipped > 0) setLog(l => [...l, `${skipped} item${skipped === 1 ? '' : 's'} couldn't be matched to a job and were left in the cloud for review.`])
-      if (pulled === 0 && skipped === 0 && !timePulled) setLog(l => [...l, 'No new photos waiting.'])
+      if (pulled === 0 && skipped === 0 && !timePulled && !scPulled) setLog(l => [...l, 'No new photos waiting.'])
       setLastSync(new Date().toISOString())
     } catch (err) {
       setError(err.message || 'Sync failed — check the Worker URL and Upload Key.')

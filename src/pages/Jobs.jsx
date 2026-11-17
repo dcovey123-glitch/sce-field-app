@@ -8,6 +8,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import FlagBanner from '../components/FlagBanner.jsx'
 import { quoteMaterialsTotal, quoteLaborTotal, quoteGrandTotal, normalizeQuote, scopeTotal, allowancesTotal, splitLines } from '../api/quoteMath.js'
 import { quoteLines, legacyKeys, quoteLineStatus, quoteLinesSummary, addQuoteLinesToOrderList } from '../api/quoteMaterials.js'
+import { STOCK_CHECKS_KEY, makeStockCheck, checkProgress, removeCheckFromOrderSheet, clearSetAsidePatch } from '../api/stockCheck.js'
 import { useLocalStore } from '../api/useLocalStore.js'
 import { useHubStore } from '../api/useHubStore.js'
 import FileAttachments, { FileTile } from '../components/FileAttachments.jsx'
@@ -4046,6 +4047,10 @@ function QuoteMaterialsView({ quote, project, onUpdate, customer }) {
   const [selectedIds, setSelectedIds] = useState(() => new Set())
   const [msg, setMsg] = useState('')
   const [hideDone, setHideDone] = useState(false)
+  const [checks, setChecks] = useLocalStore(STOCK_CHECKS_KEY, [])
+  const myChecks = (Array.isArray(checks) ? checks : []).filter(c => c.jobId === project.id && c.quoteId === quote.id)
+  // quote lines on an open list that the phone hasn't answered yet
+  const waitingOnPhone = new Set(myChecks.filter(c => !c.closedAt).flatMap(c => c.lines.filter(l => !l.status).map(l => l.lineKey)))
   const legacy = legacyKeys(project)
   const ctx = { orderList: orderList || [], requests: requests || [], orders: matOrders || [], legacy }
   const statuses = lines.map(l => quoteLineStatus(project, l, ctx))
@@ -4059,7 +4064,12 @@ function QuoteMaterialsView({ quote, project, onUpdate, customer }) {
   const clearSel = () => setSelectedIds(new Set())
   const setState = (keys, patch) => onUpdate(cur => {
     const st = { ...(cur.quoteLineState || {}) }
-    keys.forEach(k => { const next = { ...(st[k] || {}), ...patch }; if (!next.notNeeded) delete next.notNeeded; if (Object.keys(next).length) st[k] = next; else delete st[k] })
+    keys.forEach(k => {
+      const next = { ...(st[k] || {}), ...patch }
+      if (!next.notNeeded) delete next.notNeeded
+      if (!next.setAside) delete next.setAside
+      if (Object.keys(next).length) st[k] = next; else delete st[k]
+    })
     return { quoteLineState: st }
   })
 
@@ -4107,7 +4117,7 @@ function QuoteMaterialsView({ quote, project, onUpdate, customer }) {
     if (adds.length) {
       setStock(list)
       onUpdate(cur => { const next = [...(cur.materialEntries || []), ...adds]; return { materialEntries: next, actualMaterials: materialsTotal(next) } })
-      setState(adds.map(a => a.quoteLineKey), { notNeeded: false })
+      setState(adds.map(a => a.quoteLineKey), { notNeeded: false, setAside: null }) // off the shelf now — no longer just set aside
     }
     setMsg([
       adds.length ? `📦 Took ${adds.length} line${adds.length === 1 ? '' : 's'} out of Stock onto Materials Actual (at stock cost).` : '',
@@ -4116,6 +4126,24 @@ function QuoteMaterialsView({ quote, project, onUpdate, customer }) {
     ].filter(Boolean).join(' ') || 'Those lines are already covered.')
     clearSel()
   }
+  // 📋 Stock Check: a list for the phone of what to look for in the basement
+  function makeCheck() {
+    const use = checked.filter(l => { const st = statuses[lines.indexOf(l)]; return !st.done && !st.notNeeded })
+    if (!use.length) { setMsg('Those lines are already covered — nothing to check.'); return }
+    const c = makeStockCheck({ job: project, customerName: customer ? customer.name : '', quote, lines: use.map(l => ({ ...l, qty: leftOf(l) })), findStock: stockFor, uid })
+    setChecks(list => [...(Array.isArray(list) ? list : []), c])
+    setMsg(`📋 Stock Check made with ${c.lines.length} line${c.lines.length === 1 ? '' : 's'} — it's on your phone (📦 Material → Check) after the next sync. Mark each one Have / Some / Don't have.`)
+    clearSel()
+  }
+  function closeCheck(c) { setChecks(list => (list || []).map(x => x.id === c.id ? { ...x, closedAt: new Date().toISOString() } : x)) }
+  function reopenCheck(c) { setChecks(list => (list || []).map(x => x.id === c.id ? { ...x, closedAt: undefined } : x)) }
+  function deleteCheck(c) {
+    if (!window.confirm('Delete this stock check? Its "Set aside" flags and any order-sheet lines still waiting to be confirmed go with it.')) return
+    setOrderList(list => removeCheckFromOrderSheet(list, c))
+    if (clearSetAsidePatch(project, c)) onUpdate(cur => clearSetAsidePatch(cur, c) || {})
+    setChecks(list => (list || []).filter(x => x.id !== c.id))
+  }
+
   function notNeeded(on) {
     if (on) {
       const keys = checked.map(l => l.key)
@@ -4143,6 +4171,8 @@ function QuoteMaterialsView({ quote, project, onUpdate, customer }) {
         {chip('received, not charged', sum.received, 'warn')}
         {chip('charged', sum.charged, 'ok')}
         {chip('pricing', sum.pricing, 'info')}
+        {chip('set aside', sum.setAside, 'ok')}
+        {chip('short — to confirm', sum.toConfirm, 'warn')}
         {chip('from Stock', sum.actual, 'ok')}
         {chip('not needed', sum.notNeeded, 'muted')}
         <span style={{ flex: 1 }} />
@@ -4151,6 +4181,21 @@ function QuoteMaterialsView({ quote, project, onUpdate, customer }) {
         </label>
       </div>
       {msg && <div onClick={() => setMsg('')} style={{ padding: '6px 16px', fontSize: 12, background: '#e8f0fb', color: '#1a5fa0', cursor: 'pointer' }}>{msg}</div>}
+      {myChecks.map(c => {
+        const pg = checkProgress(c)
+        return (
+          <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: '7px 16px', background: c.closedAt ? 'var(--surface-2)' : '#fff8e6', borderBottom: '1px solid var(--border)', fontSize: 12 }}>
+            <span style={{ fontWeight: 800 }}>📋 Stock Check</span>
+            <span style={{ color: 'var(--text-mid)' }}>made {fmtDate(c.createdAt, 'short')} · {c.closedAt ? 'closed' : 'on the phone'} · {pg.answered} of {pg.total} checked{pg.have ? ` · ✓ ${pg.have} have` : ''}{pg.short ? ` · ⏳ ${pg.short} short` : ''}</span>
+            {pg.done && !c.closedAt && <span style={{ fontWeight: 700, color: '#1e7a34' }}>All checked</span>}
+            <span style={{ flex: 1 }} />
+            {c.closedAt
+              ? <button onClick={() => reopenCheck(c)} style={{ ...btn, padding: '3px 9px', fontSize: 11 }} title="Put it back on the phone">↺ Reopen</button>
+              : <button onClick={() => closeCheck(c)} style={{ ...btn, padding: '3px 9px', fontSize: 11 }} title="Take it off the phone — set-aside flags and order-sheet lines stay">✓ Close</button>}
+            <button onClick={() => deleteCheck(c)} style={{ ...btn, padding: '3px 9px', fontSize: 11, color: '#a12a1e' }}>Delete</button>
+          </div>
+        )
+      })}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 16px', borderBottom: '1px solid var(--border)' }}>
         <input type="checkbox" checked={checked.length > 0 && checked.length === shownIdx.length} onChange={e => setSelectedIds(e.target.checked ? new Set(shownIdx.map(i => lines[i].key)) : new Set())} style={{ width: 14, height: 14 }} />
         <span style={{ fontSize: 11, color: 'var(--text-light)' }}>{checked.length ? `${checked.length} checked` : 'Check lines, then pick what to do with them below'}</span>
@@ -4171,6 +4216,7 @@ function QuoteMaterialsView({ quote, project, onUpdate, customer }) {
               <span style={{ flex: 1, minWidth: 140, fontSize: 13, textDecoration: st.notNeeded ? 'line-through' : 'none' }}>{l.desc || 'Item'}</span>
               <span style={{ display: 'flex', gap: 4, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                 {st.chips.map((c, k) => <span key={k} style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 10, whiteSpace: 'nowrap', background: QL_TONE[c.tone].bg, color: QL_TONE[c.tone].fg }}>{c.label}</span>)}
+                {waitingOnPhone.has(l.key) && <span title="On a Stock Check list — waiting for Have / Don't have from the phone" style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 10, whiteSpace: 'nowrap', background: '#fff3d6', color: '#7a5a00' }}>📋 To check</span>}
                 {!st.done && (() => { const m = stockFor(l); return m ? <span title={`${m.nickname || m.name} — on the shelf`} style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 10, whiteSpace: 'nowrap', background: '#e6f4ea', color: '#1e7a34' }}>📦 {Number(m.qty) || 0} in Stock</span> : null })()}
               </span>
             </div>
@@ -4181,6 +4227,7 @@ function QuoteMaterialsView({ quote, project, onUpdate, customer }) {
         <span style={{ fontSize: 11.5, fontWeight: 800, color: 'var(--text-mid)', marginRight: 4 }}>{checked.length || 'No'} checked →</span>
         <button disabled={!checked.length} style={btn} onClick={() => toSheet('order')} title="On the order sheet as a material order for this job">🛒 Order sheet — Material order</button>
         <button disabled={!checked.length} style={btn} onClick={() => toSheet('pricing')} title={`On the order sheet as pricing — the quote that comes back is filed under ${quote.quoteNumber} and in Pricing`}>💲 Order sheet — Pricing</button>
+        <button disabled={!checked.length} style={btn} onClick={makeCheck} title="Make a list for your phone of what to look for in the basement — mark each Have (set aside) or Don't have (goes to the order sheet to confirm)">📋 Stock Check list</button>
         <button disabled={!checked.length} style={btn} onClick={fromStock} title="Take what's still needed out of Stock onto Materials Actual — anything Stock is short of stays open to order">📦 From Stock → Actual</button>
         <button disabled={!checked.length} style={btn} onClick={() => notNeeded(true)}>✕ Not needed</button>
         <button disabled={!checked.length} style={{ ...btn, color: 'var(--text-mid)' }} onClick={() => notNeeded(false)} title="Clear Not needed">↺ Needed after all</button>

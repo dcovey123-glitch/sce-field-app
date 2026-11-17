@@ -4,6 +4,7 @@
 // quote(s). From there each line goes:
 //   → Order sheet, tagged 🛒 Material order or 💲 Pricing (you must pick one)
 //   → Materials Actual (you already have it / took it from Stock)
+//   → a 📋 Stock Check list for the phone (see stockCheck.js)
 //   ✕ Not needed
 // or is sent straight from the job to a wholesaler (an order for this job).
 // Where each line is at is worked out from the order sheet and the requests
@@ -65,7 +66,8 @@ export function quoteLineStatus(job, line, { orderList = [], requests = [], orde
     const refs = (i.planRefs || []).filter(hit)
     if (!refs.length) continue
     const q = refs.reduce((a, p) => a + n(p.qty), 0)
-    chips.push({ id: isPricingItem(i) ? 'sheet-pricing' : 'sheet-order', tone: 'muted', label: `📝 On order sheet — ${isPricingItem(i) ? '💲 Pricing' : '🛒 Order'} (${q})` })
+    if (i.confirm) chips.push({ id: 'sheet-confirm', tone: 'warn', label: `⏳ Short ${q} — on order sheet to confirm` })
+    else chips.push({ id: isPricingItem(i) ? 'sheet-pricing' : 'sheet-order', tone: 'muted', label: `📝 On order sheet — ${isPricingItem(i) ? '💲 Pricing' : '🛒 Order'} (${q})` })
   }
   const actualQty = (job.materialEntries || []).filter(e => e.quoteLineKey === line.key || (e.sourceQuoteId && e.sourceLineId && `${e.sourceQuoteId}:${e.sourceLineId}` === line.key)).reduce((a, e) => a + n(e.qty), 0)
   if (actualQty > 0) chips.push({ id: 'actual', tone: 'ok', label: `✓ From Stock (${actualQty})` })
@@ -77,13 +79,19 @@ export function quoteLineStatus(job, line, { orderList = [], requests = [], orde
   const chargedQty = (job.materialEntries || []).filter(e => e.kind === 'order' && sameItem({ partNo: e.partNo, name: e.item }, item)).reduce((a, e) => a + n(e.qty), 0)
   if (receivedQty > 0 && chargedQty < receivedQty) chips.push({ id: 'received', tone: 'info', label: `📥 Received ${receivedQty} — not charged yet` })
   if (chargedQty > 0) chips.push({ id: 'charged', tone: 'ok', label: `✓ Charged to job (${chargedQty})` })
+  // flagged in the basement on a 📋 Stock Check (not taken off Stock yet)
+  const setAsideQty = st.setAside ? n(st.setAside.qty) : 0
+  if (setAsideQty > 0 && !st.notNeeded) {
+    const day = String(st.setAside.at || '').slice(5, 10).replace('-', '/')
+    chips.push({ id: 'setaside', tone: 'ok', label: `📦 Set aside ${setAsideQty}${day ? ' — ' + day : ''}${st.setAside.by ? ' ' + st.setAside.by : ''}` })
+  }
   if (st.notNeeded) chips.push({ id: 'notneeded', tone: 'muted', label: '✕ Not needed' })
-  // asked for = ordered + taken from Stock; done = charged to the job (or from Stock)
-  const covered = Math.max(qtyOrdered, chargedQty) + actualQty
+  // asked for = ordered + taken from Stock (+ set aside); done = charged to the job (or from Stock)
+  const covered = Math.max(qtyOrdered, chargedQty) + actualQty + setAsideQty
   if (!st.notNeeded && covered > 0 && covered < line.qty) chips.push({ id: 'short', tone: 'warn', label: `${line.qty - covered} of ${line.qty} not ordered` })
   const done = !!st.notNeeded || chargedQty + actualQty >= line.qty
   if (!chips.length) chips.push({ id: 'none', tone: 'warn', label: 'Not ordered' })
-  return { chips, done, qtyOrdered: Math.max(qtyOrdered, chargedQty), notNeeded: !!st.notNeeded, actualQty, receivedQty, chargedQty }
+  return { chips, done, qtyOrdered: Math.max(qtyOrdered, chargedQty), notNeeded: !!st.notNeeded, actualQty, receivedQty, chargedQty, setAsideQty }
 }
 
 export function quoteLinesSummary(statuses) {
@@ -91,7 +99,7 @@ export function quoteLinesSummary(statuses) {
   return {
     total: statuses.length,
     open: statuses.filter(s => !s.done).length,
-    ordered: has('ordered'), pricing: has('pricing-sent'), onSheet: has('sheet-order') + has('sheet-pricing'),
+    ordered: has('ordered'), pricing: has('pricing-sent'), onSheet: has('sheet-order') + has('sheet-pricing'), toConfirm: has('sheet-confirm'), setAside: has('setaside'),
     received: has('received'), charged: has('charged'),
     actual: has('actual'), notNeeded: has('notneeded'), notOrdered: has('none'),
   }
