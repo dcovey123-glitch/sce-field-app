@@ -402,7 +402,12 @@ ipcMain.handle('window:openHitList', () => {
 // themselves are in the app's data (sticky_notes).
 let stickyWin = null
 const STICKY_ICON = 46
-const STICKY_OPEN = { w: 320, h: 340 }
+const STICKY_OPEN = { w: 320, h: 340 } // default open size; your own size is kept as openW / openH
+const STICKY_MIN = { w: 220, h: 160 }, STICKY_MAX = { w: 1000, h: 1000 }
+const stickyOpenSize = st => ({
+  w: Math.min(STICKY_MAX.w, Math.max(STICKY_MIN.w, Number(st.openW) || STICKY_OPEN.w)),
+  h: Math.min(STICKY_MAX.h, Math.max(STICKY_MIN.h, Number(st.openH) || STICKY_OPEN.h)),
+})
 const stickyFile = () => path.join(app.getPath('userData'), 'sticky-window.json')
 function stickyState() { try { return JSON.parse(fs.readFileSync(stickyFile(), 'utf8')) || {} } catch { return {} } }
 function saveStickyState(patch) {
@@ -422,8 +427,8 @@ function stickyBounds(st = stickyState()) {
   const wa = screen.getPrimaryDisplay().workArea
   const ix = Number.isFinite(st.x) ? st.x : wa.x + wa.width - STICKY_ICON - 24
   const iy = Number.isFinite(st.y) ? st.y : wa.y + 140
-  const w = st.open ? STICKY_OPEN.w : STICKY_ICON
-  const h = st.open ? STICKY_OPEN.h : STICKY_ICON
+  const w = st.open ? stickyOpenSize(st).w : STICKY_ICON
+  const h = st.open ? stickyOpenSize(st).h : STICKY_ICON
   return { ...stickyFit(ix, iy, w, h), width: w, height: h }
 }
 function createStickyWindow() {
@@ -468,6 +473,20 @@ ipcMain.on('sticky:moveTo', (e, x, y) => {
   const [w, h] = stickyWin.getSize()
   const p = stickyFit(Number(x) || 0, Number(y) || 0, w, h)
   stickyWin.setPosition(p.x, p.y)
+})
+// resizing the open note from its corner grip
+ipcMain.on('sticky:resizeTo', (e, w, h) => {
+  if (!stickyWin || stickyWin.isDestroyed() || !stickyState().open) return
+  const W = Math.round(Math.min(STICKY_MAX.w, Math.max(STICKY_MIN.w, Number(w) || 0)))
+  const H = Math.round(Math.min(STICKY_MAX.h, Math.max(STICKY_MIN.h, Number(h) || 0)))
+  const [x, y] = stickyWin.getPosition()
+  stickyWin.setBounds({ x, y, width: W, height: H })
+})
+ipcMain.handle('sticky:resizeEnd', () => {
+  if (!stickyWin || stickyWin.isDestroyed()) return null
+  const [w, h] = stickyWin.getSize()
+  saveStickyState({ openW: w, openH: h })
+  return { w, h }
 })
 ipcMain.handle('sticky:dragEnd', () => {
   if (!stickyWin || stickyWin.isDestroyed()) return null

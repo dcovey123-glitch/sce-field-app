@@ -21,6 +21,8 @@ contextBridge.exposeInMainWorld('desktop', {
   stickyGetState: () => ipcRenderer.invoke('sticky:getState'),
   stickyMoveTo: (x, y) => ipcRenderer.send('sticky:moveTo', x, y),
   stickyDragEnd: () => ipcRenderer.invoke('sticky:dragEnd'),
+  stickyResizeTo: (w, h) => ipcRenderer.send('sticky:resizeTo', w, h),
+  stickyResizeEnd: () => ipcRenderer.invoke('sticky:resizeEnd'),
   stickyToggle: () => ipcRenderer.invoke('sticky:toggle'),
 
   saveCustomer: (hub, customer) => ipcRenderer.invoke('data:saveCustomer', { hub, customer }),

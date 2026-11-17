@@ -52,6 +52,24 @@ export default function StickyNote() {
     else if (click) click()
   }
   const setOpenNow = async v => { setOpen(v); await window.desktop?.stickySetOpen?.(v) }
+  // Resize from the bottom-right grip (the window can't be resized by its edges)
+  const size = useRef(null)
+  const onGripDown = e => {
+    if (e.button !== 0) return
+    e.stopPropagation()
+    size.current = { sx: e.screenX, sy: e.screenY, w: window.innerWidth, h: window.innerHeight }
+    e.currentTarget.setPointerCapture(e.pointerId)
+  }
+  const onGripMove = e => {
+    const r = size.current
+    if (!r) return
+    window.desktop?.stickyResizeTo?.(r.w + e.screenX - r.sx, r.h + e.screenY - r.sy)
+  }
+  const onGripUp = () => {
+    if (!size.current) return
+    size.current = null
+    window.desktop?.stickyResizeEnd?.()
+  }
 
   const save = text => setNotes(prev => {
     const base = Array.isArray(prev) && prev.length ? prev : [{ id: 'first', text: '', at: '' }]
@@ -94,7 +112,12 @@ export default function StickyNote() {
       </div>
       <textarea ref={area} key={cur.id} defaultValue={cur.text} onChange={e => save(e.target.value)} placeholder="Write anything…"
         style={{ flex: 1, resize: 'none', border: 'none', outline: 'none', background: 'transparent', padding: '10px 12px', fontSize: 14, lineHeight: 1.45, color: '#2b2400', fontFamily: 'var(--font)' }} />
-      {cur.at && <div style={{ padding: '2px 10px 5px', fontSize: 10, color: '#8a7a2a', textAlign: 'right' }}>saved {new Date(cur.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</div>}
+      <div style={{ padding: '2px 22px 5px 10px', fontSize: 10, color: '#8a7a2a', textAlign: 'right', minHeight: 12 }}>
+        {cur.at ? `saved ${new Date(cur.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` : ''}
+      </div>
+      <div onPointerDown={onGripDown} onPointerMove={onGripMove} onPointerUp={onGripUp} title="Drag to resize"
+        style={{ position: 'absolute', right: 0, bottom: 0, width: 18, height: 18, cursor: 'nwse-resize', touchAction: 'none',
+          background: `linear-gradient(135deg, transparent 50%, ${EDGE} 50%, ${EDGE} 58%, transparent 58%, transparent 70%, ${EDGE} 70%, ${EDGE} 78%, transparent 78%)` }} />
     </div>
   )
 }
