@@ -1,3 +1,4 @@
+import { bucketLabel } from './timeBuckets.js'
 // Puts a confirmed crew-clock day onto the weekly Timesheets (the sheet that
 // goes to Jonathan), so hours aren't typed in twice.
 //
@@ -83,7 +84,7 @@ export function clockEntriesInRange({ jobs = [], customers = [], nonJob = [], fr
     ...jobs.filter(j => !j.trashedAt).flatMap(j => (j.trackedTime || []).filter(e => inR(e.date)).map(e => ({
       ...e, kind: 'job', jobId: j.id, project: `${cust(j.customerId) ? cust(j.customerId) + ' — ' : ''}${j.name || 'Job'}`,
     }))),
-    ...(nonJob || []).filter(e => inR(e.date)).map(e => ({ ...e, kind: 'bucket', jobId: '', project: e.label || 'Non-job' })),
+    ...(nonJob || []).filter(e => inR(e.date)).map(e => ({ ...e, kind: 'bucket', jobId: '', project: bucketLabel(e.bucket, e.label) })),
   ]
 }
 // Every row already on a sheet, by the push that put it there

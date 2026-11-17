@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import { TIME_BUCKETS as BUCKET_NAMES } from '../api/timeBuckets.js'
 import { useLocalStore } from '../api/useLocalStore.js'
 import { addDayToSheets, weekKeyFor } from '../api/timesheetFromClock.js'
 import { abtHM, abtFromHM } from '../api/albertaTime.js'
@@ -13,7 +14,6 @@ const inputStyle = { padding: '5px 7px', border: '1px solid var(--border)', bord
 const smallBtn = { padding: '3px 9px', border: '1px solid var(--border)', borderRadius: 999, background: '#fff', cursor: 'pointer', fontSize: 11, color: 'var(--text-mid)', whiteSpace: 'nowrap' }
 const PALETTE = ['#1a5fa0', '#d4a017', '#2e8b57', '#b5483b', '#7b5ea7', '#2a9d9d', '#c76d1e', '#5a6b7a']
 const SHORT_MS = 5 * 60000
-const BUCKET_NAMES = { planning: 'Project planning / helping', shop: 'Shop / yard', travel: 'Travel / pickup', admin: 'Admin / quoting' }
 
 function uid() { return Math.random().toString(36).slice(2, 10) }
 const lower = s => (s || '').trim().toLowerCase()
@@ -64,7 +64,7 @@ export default function CrewDayReview({ item, jobs, allJobs, customers, crew, ro
   // Targets: job / bucket / still-unassigned new job from the phone
   const jobById = id => (allJobs || jobs).find(j => j.id === id)
   const custName = id => customers.find(c => c.id === id)?.name || ''
-  // quote:<id> = Admin / quoting time for that quote (it waits on the quote to be billed in)
+  // quote:<id> = Quoting / estimating time for that quote (it waits on the quote to be billed in)
   const isMapped = t => t && (t.startsWith('bucket:') || t.startsWith('quote:') || (t.startsWith('job:') && !!jobById(t.slice(4))))
   const targetName = (t, s) => {
     if (!t) return 'Not assigned'

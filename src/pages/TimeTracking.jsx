@@ -1,7 +1,9 @@
 import React, { useState } from 'react'
 import { useLocalStore } from '../api/useLocalStore.js'
 import { useHubStore } from '../api/useHubStore.js'
-import { isLiveQuote, POOL_BUCKETS } from '../api/timePool.js'
+import { isLiveQuote, POOL_BUCKETS, timePoolSummary, poolByMonth, patchPoolLine, POOL_START_KEY, POOL_START_DEFAULT, PENDING_DAYS } from '../api/timePool.js'
+import { bucketLabel } from '../api/timeBuckets.js'
+import { fmtDate } from '../api/format.js'
 import TimeReview, { TIME_BUCKETS, localDate } from '../components/TimeReview.jsx'
 import NoteEdit from '../components/NoteEdit.jsx'
 import TimeEntryEditor from '../components/TimeEntryEditor.jsx'
@@ -75,7 +77,7 @@ export default function TimeTracking({ embedded = false }) {
     ...jobsStore.records.filter(j => !j.trashedAt).flatMap(j => (j.trackedTime || []).map(e => ({
       ...e, kind: 'job', jobId: j.id, jobName: j.name || 'Untitled', customer: custName(j.customerId) || '—',
     }))),
-    ...nonJob.map(e => ({ ...e, kind: 'bucket', jobName: e.label, customer: 'Non-job' })),
+    ...nonJob.map(e => ({ ...e, kind: 'bucket', jobName: bucketLabel(e.bucket, e.label), customer: 'Non-job' })),
   ]
   const hoursOf = e => Number(e.totalHours) || 0
   const dayEntries = allEntries.filter(e => e.date === day).sort((a, b) => (a.startedAt || '').localeCompare(b.startedAt || ''))
@@ -168,6 +170,16 @@ export default function TimeTracking({ embedded = false }) {
     customersKey: 'quote_customers', recordsKey: 'quote_quotes',
   })
   const liveQuotes = (quotesStore.records || []).filter(isLiveQuote).sort((a, b) => String(b.quoteNumber || '').localeCompare(String(a.quoteNumber || '')))
+  // Re-sort an entry into another bucket (e.g. older "Admin / quoting" time
+  // that was really ordering or general admin). Only quoting-type time keeps a quote tag.
+  function setEntryBucket(e, bucket) {
+    setNonJob(l => l.map(x => {
+      if (x.id !== e.id) return x
+      const next = { ...x, bucket, label: TIME_BUCKETS[bucket] || bucket }
+      if (!POOL_BUCKETS[bucket]) { delete next.quoteId; delete next.quoteNumber; delete next.quoteTitle }
+      return next
+    }))
+  }
   function setEntryQuote(e, quoteId) {
     const q = liveQuotes.find(x => x.id === quoteId)
     setNonJob(l => l.map(x => {
@@ -447,6 +459,7 @@ export default function TimeTracking({ embedded = false }) {
 
         {tab === 'nonjob' && (
           <>
+            <PoolRecovery log={nonJob} quotesStore={quotesStore} />
             {bucketTotals.map(b => (
               <div key={b.id} style={{ display: 'flex', justifyContent: 'space-between', background: '#fff', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 12px', marginBottom: 6, fontSize: 13 }}>
                 <span style={{ fontWeight: 700 }}>{b.label}</span><b>{fmt(b.total)} h</b>
@@ -456,7 +469,11 @@ export default function TimeTracking({ embedded = false }) {
             {nonJobEntries.slice().sort((a, b) => (b.date || '').localeCompare(a.date || '')).map(e => (
               <div key={e.id} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '5px 0', borderTop: '1px solid var(--border)', fontSize: 12 }}>
                 <span style={{ width: 80, color: 'var(--text-mid)' }}>{e.date}</span>
-                <span style={{ flex: 1 }}>{e.label} — {(e.workers?.length || 1)} × {e.hoursEach} h
+                <span style={{ flex: 1 }}>
+                  <select value={e.bucket} onChange={ev => setEntryBucket(e, ev.target.value)} title="Which kind of non-job time this was"
+                    style={{ fontSize: 12, fontWeight: 700, padding: '1px 3px', border: '1px solid transparent', borderRadius: 4, background: 'transparent', cursor: 'pointer', color: 'var(--text)' }}>
+                    {Object.entries(TIME_BUCKETS).map(([id, l]) => <option key={id} value={id}>{l}</option>)}
+                  </select> — {(e.workers?.length || 1)} × {e.hoursEach} h
                   <div><NoteEdit value={e.note} onSave={v => saveNote({ ...e, kind: 'bucket' }, v)} /></div>
                   {POOL_BUCKETS[e.bucket] && (
                     <select value={liveQuotes.some(q => q.id === e.quoteId) ? e.quoteId : ''} onChange={ev => setEntryQuote(e, ev.target.value)}
@@ -483,6 +500,74 @@ export default function TimeTracking({ embedded = false }) {
           onCancel={() => setEditing(null)} onSave={vals => saveEdit(editing, vals)}
           onDelete={() => removeEntry(editing)}
         />
+      )}
+    </div>
+  )
+}
+
+// ⏱ How much of your planning / quoting / ordering time made it into work you bill
+function PoolRecovery({ log, quotesStore }) {
+  const [since] = useLocalStore(POOL_START_KEY, POOL_START_DEFAULT)
+  const [open, setOpen] = useState(false)
+  if (quotesStore.loading) return null
+  const quotes = quotesStore.records || []
+  const start = since || POOL_START_DEFAULT
+  const sum = timePoolSummary(log, quotes, null, start)
+  const months = poolByMonth(log, quotes, start)
+  const B = Object.keys(POOL_BUCKETS)
+  const tot = o => Math.round(B.reduce((a, b) => a + (o[b] || 0), 0) * 100) / 100
+  const pendingLines = sum.lines.filter(l => l.state === 'pending').sort((a, b) => String(a.at).localeCompare(String(b.at)))
+  const logged = tot(sum.logged), recovered = tot(sum.recovered), pending = tot(sum.pending), avail = tot(sum.pool)
+  const pct = logged > 0 ? Math.round((recovered / logged) * 100) : 0
+  const release = l => quotesStore.updateRecord(l.quoteId, q => patchPoolLine(q, l.lineId, { released: new Date().toISOString() }))
+  const cell = { padding: '4px 8px', textAlign: 'right', whiteSpace: 'nowrap' }
+  const fmtH = v => `${Math.round((v || 0) * 100) / 100} h`
+  const daysOld = at => at ? Math.floor((Date.now() - Date.parse(at)) / 86400000) : 0
+  return (
+    <div style={{ background: '#fffaf0', border: '1px solid #f0e2b6', borderRadius: 10, padding: '10px 12px', marginBottom: 12, fontSize: 13 }}>
+      <div onClick={() => setOpen(o => !o)} style={{ display: 'flex', gap: 12, alignItems: 'baseline', flexWrap: 'wrap', cursor: 'pointer' }}>
+        <span style={{ color: 'var(--text-light)', fontSize: 11 }}>{open ? '▾' : '▸'}</span>
+        <b>⏱ Un-billed time since {fmtDate(start, 'short')}</b>
+        <span>logged <b>{fmtH(logged)}</b></span>
+        <span style={{ color: '#1e7a34' }}>recovered <b>{fmtH(recovered)}</b>{logged > 0 ? ` (${pct}%)` : ''}</span>
+        <span style={{ color: '#7a5a00' }}>pending <b>{fmtH(pending)}</b></span>
+        <span>available <b>{fmtH(Math.max(0, avail))}</b></span>
+      </div>
+      {open && (
+        <div style={{ marginTop: 8 }}>
+          <table style={{ borderCollapse: 'collapse', fontSize: 12.5, width: '100%', background: '#fff', borderRadius: 6 }}>
+            <thead><tr style={{ color: 'var(--text-light)', fontSize: 11, textAlign: 'right' }}>
+              <th style={{ ...cell, textAlign: 'left' }}></th><th style={cell}>Logged</th><th style={cell}>Recovered</th><th style={cell}>Pending</th><th style={cell}>Back in pool</th><th style={cell}>Available</th>
+            </tr></thead>
+            <tbody>
+              {B.map(b => (
+                <tr key={b} style={{ borderTop: '1px solid var(--border)' }}>
+                  <td style={{ ...cell, textAlign: 'left', fontWeight: 700 }}>{POOL_BUCKETS[b]}</td>
+                  <td style={cell}>{fmtH(sum.logged[b])}</td><td style={{ ...cell, color: '#1e7a34' }}>{fmtH(sum.recovered[b])}</td>
+                  <td style={{ ...cell, color: '#7a5a00' }}>{fmtH(sum.pending[b])}</td><td style={cell}>{fmtH(sum.back[b])}</td><td style={{ ...cell, fontWeight: 700 }}>{fmtH(Math.max(0, sum.pool[b]))}</td>
+                </tr>
+              ))}
+              {months.length > 0 && <tr><td colSpan={6} style={{ ...cell, textAlign: 'left', fontSize: 11, color: 'var(--text-light)', paddingTop: 10 }}>BY MONTH (time logged that month · hours billed into quotes that month)</td></tr>}
+              {months.map(m => (
+                <tr key={m.month} style={{ borderTop: '1px solid var(--border)' }}>
+                  <td style={{ ...cell, textAlign: 'left' }}>{fmtDate(m.month + '-01', 'monthYear') || m.month}</td>
+                  <td style={cell}>{fmtH(m.logged)}</td><td style={{ ...cell, color: '#1e7a34' }}>{fmtH(m.recovered)}</td><td style={{ ...cell, color: '#7a5a00' }}>{fmtH(m.pending)}</td><td style={cell}>{fmtH(m.back)}</td><td style={cell}></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div style={{ fontWeight: 700, margin: '10px 0 4px' }}>Pending on quotes not approved yet</div>
+          {!pendingLines.length && <div style={{ fontSize: 12, color: 'var(--text-light)' }}>None — bill some in from a quote's ⏱ banner.</div>}
+          {pendingLines.map(l => (
+            <div key={l.lineId} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12.5, padding: '3px 0', borderTop: '1px solid #f0e2b6' }}>
+              <span style={{ flex: 1 }}><b>{l.quoteNumber}</b>{l.quoteTitle ? ` — ${l.quoteTitle}` : ''} · {fmtH(l.hours)} {POOL_BUCKETS[l.bucket].toLowerCase()} · {daysOld(l.at)} days (back by itself at {PENDING_DAYS})</span>
+              <button onClick={() => release(l)} title="Give these hours back to the pool now — the line stays on the quote" style={{ fontSize: 11, fontWeight: 700, padding: '2px 9px', borderRadius: 6, border: '1px solid #c9a227', background: '#fff', color: '#6b5300', cursor: 'pointer' }}>Release</button>
+            </div>
+          ))}
+          <div style={{ fontSize: 11.5, color: 'var(--text-light)', marginTop: 8 }}>
+            Counts Project planning / helping, Quoting / estimating and Ordering / prep. General admin, shop and travel stay overhead. Recovered = on a quote that's approved. Change the start date from any quote's ⏱ banner.
+          </div>
+        </div>
       )}
     </div>
   )

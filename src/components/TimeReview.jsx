@@ -7,12 +7,8 @@ import CrewDayReview from './CrewDayReview.jsx'
 import { setDone } from '../api/tasks.js'
 import { isLiveQuote } from '../api/timePool.js'
 
-export const TIME_BUCKETS = {
-  planning: 'Project planning / helping',
-  shop: 'Shop / yard',
-  travel: 'Travel / pickup',
-  admin: 'Admin / quoting',
-}
+import { TIME_BUCKETS } from '../api/timeBuckets.js'
+export { TIME_BUCKETS }
 
 function uid() { return Math.random().toString(36).slice(2, 10) }
 
@@ -189,7 +185,7 @@ export default function TimeReview({ day, allowManual }) {
     customersKey: 'job_customers', recordsKey: 'job_projects', reloadOnFocus: true,
   })
 
-  // Quoting time can be put on a quote (Admin / quoting, kept for that quote's ⏱ banner)
+  // Quoting time can be put on a quote (Quoting / estimating, kept for that quote's ⏱ banner)
   const quotesStore = useHubStore({
     hub: 'quotes', recordFileName: 'quote.json', getRecordFolderName: q => q.title ? `${q.quoteNumber} - ${q.title}` : q.quoteNumber,
     customersKey: 'quote_customers', recordsKey: 'quote_quotes',

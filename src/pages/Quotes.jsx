@@ -5,7 +5,7 @@ import { linkedJobsCustomer } from '../api/sharedCustomer.js'
 import { addCustomerPair, renameCustomerPair, trashCustomerPair } from '../api/customers.js'
 import { useLocalStore } from '../api/useLocalStore.js'
 import { useHubStore } from '../api/useHubStore.js'
-import { timePoolSummary, poolLaborLine, POOL_BUCKETS, POOL_LINE_TEXT, POOL_START_KEY, POOL_START_DEFAULT } from '../api/timePool.js'
+import { timePoolSummary, poolLaborLine, patchPoolLine, POOL_BUCKETS, POOL_LINE_TEXT, POOL_START_KEY, POOL_START_DEFAULT, PENDING_DAYS } from '../api/timePool.js'
 import FileAttachments from '../components/FileAttachments.jsx'
 import ConfirmDeleteButton from '../components/ConfirmDeleteButton.jsx'
 import WholesalerExportBar from '../components/WholesalerExportBar.jsx'
@@ -152,7 +152,8 @@ async function prFileToBase64(file) {
 async function writeGeneralScope(quote, customerName, apiKey) {
   const scopes = (quote.scopes || []).map((sc, i) => {
     const mats = (sc.materials || []).filter(m => m.desc).map(m => `${Number(m.qty) || ''} ${m.uom || ''} ${m.desc}`.replace(/\s+/g, ' ').trim())
-    const labor = (sc.labor || []).filter(l => l.desc).map(l => `${l.desc}${Number(l.qty) ? ` (${Number(l.qty)} h)` : ''}`)
+    // billed-in planning / quoting time (⏱) stays out of the written scope
+    const labor = (sc.labor || []).filter(l => l.desc && !l.timePool).map(l => `${l.desc}${Number(l.qty) ? ` (${Number(l.qty)} h)` : ''}`)
     return [`SCOPE ${i + 1}: ${sc.name || ''}`, sc.scopeText ? `Scope of work as written:\n${sc.scopeText}` : '',
       mats.length ? `Materials:\n- ${mats.join('\n- ')}` : '', labor.length ? `Labor:\n- ${labor.join('\n- ')}` : ''].filter(Boolean).join('\n')
   }).join('\n\n')
@@ -2736,7 +2737,7 @@ function formatRevDate(iso) {
 
 // ⏱ Un-billed helping / quoting time — shown at the top of a quote so you can
 // bill a piece of it in as a labor line on a scope (see api/timePool.js).
-function TimePoolBanner({ quote, scopes, onAddLabor, onAddScope }) {
+function TimePoolBanner({ quote, scopes, onAddLabor, onAddScope, onUpdate }) {
   const [log] = useLocalStore('time_nonjob_log', [])
   const [since, setSince] = useLocalStore(POOL_START_KEY, POOL_START_DEFAULT)
   const [editSince, setEditSince] = useState(false)
@@ -2752,7 +2753,7 @@ function TimePoolBanner({ quote, scopes, onAddLabor, onAddScope }) {
   const fq = sum.forQuote
   const flagged = Object.keys(POOL_BUCKETS).filter(b => fq.toApply[b] > 0)
   const onQuote = fq.lines.reduce((a, l) => a + l.hours, 0)
-  const anyPool = sum.pool.planning > 0 || sum.pool.admin > 0
+  const anyPool = Object.keys(POOL_BUCKETS).some(b => sum.pool[b] > 0)
   if (!anyPool && !flagged.length && !onQuote) return null
   const h = v => `${Math.round(v * 100) / 100} h`
   const open = (bucket, from) => setForm({
@@ -2782,14 +2783,17 @@ function TimePoolBanner({ quote, scopes, onAddLabor, onAddScope }) {
     <div style={{ padding: '9px 16px', background: '#fffaf0', borderBottom: '1px solid #f0e2b6', fontSize: 13 }}>
       <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
         <span style={{ fontWeight: 800 }}>⏱ You have</span>
-        <span><b>{h(Math.max(0, sum.pool.planning))}</b> un-billed helping time</span>
-        <span style={{ color: 'var(--text-light)' }}>·</span>
-        <span><b>{h(Math.max(0, sum.pool.admin))}</b> quoting</span>
+        {Object.keys(POOL_BUCKETS).map((b, i) => (
+          <React.Fragment key={b}>
+            {i > 0 && <span style={{ color: 'var(--text-light)' }}>·</span>}
+            <span><b>{h(Math.max(0, sum.pool[b]))}</b> {i === 0 ? 'un-billed helping time' : POOL_BUCKETS[b].toLowerCase()}</span>
+          </React.Fragment>
+        ))}
         {editSince
           ? <input type="date" autoFocus defaultValue={since || POOL_START_DEFAULT} onBlur={e => { if (e.target.value) setSince(e.target.value); setEditSince(false) }}
               onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') setEditSince(false) }} style={{ fontSize: 12, padding: '1px 4px' }} />
           : <span onClick={() => setEditSince(true)} title="Counting time from this day — click to change" style={{ fontSize: 11.5, color: 'var(--text-light)', cursor: 'pointer', textDecoration: 'underline dotted' }}>since {fmtDate(since || POOL_START_DEFAULT, 'short')}</span>}
-        {(sum.pool.planning < 0 || sum.pool.admin < 0) && <span style={{ fontSize: 11.5, color: '#a12a1e' }}>(more billed into quotes than logged)</span>}
+        {Object.keys(POOL_BUCKETS).some(b => sum.pool[b] < 0) && <span style={{ fontSize: 11.5, color: '#a12a1e' }}>(more billed into quotes than logged)</span>}
         <span style={{ flex: 1 }} />
         {anyPool && Object.keys(POOL_BUCKETS).map(b => sum.pool[b] > 0 && (
           <button key={b} onClick={() => open(b, 'pool')} style={btnS}>+ Bill {POOL_BUCKETS[b].toLowerCase()} time in</button>
@@ -2803,8 +2807,20 @@ function TimePoolBanner({ quote, scopes, onAddLabor, onAddScope }) {
         </div>
       ))}
       {onQuote > 0 && (
-        <div style={{ marginTop: 4, fontSize: 11.5, color: 'var(--text-mid)' }}>
-          Already on this quote: {fq.lines.map(l => `${h(l.hours)} ${POOL_BUCKETS[l.bucket].toLowerCase()}${l.scopeName ? ' (' + l.scopeName + ')' : ''}`).join(' · ')} — edit or delete that labor line and the hours go back to the pool.
+        <div style={{ marginTop: 6, fontSize: 11.5, color: 'var(--text-mid)' }}>
+          <div style={{ fontWeight: 700, marginBottom: 2 }}>Billed into this quote</div>
+          {fq.lines.map(l => {
+            const tone = l.state === 'recovered' ? ['#1e7a34', '#e6f4ea', '✓ Recovered'] : l.state === 'pending' ? ['#7a5a00', '#fff3d6', '⏳ Pending'] : ['#56607a', '#eef1f6', '↺ Back in pool']
+            return (
+              <div key={l.lineId} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', padding: '2px 0' }}>
+                <span style={{ fontWeight: 700, color: tone[0], background: tone[1], borderRadius: 8, padding: '0 7px' }}>{tone[2]}</span>
+                <span>{h(l.hours)} {POOL_BUCKETS[l.bucket].toLowerCase()}{l.scopeName ? ` in ${l.scopeName}` : ''}{l.why && l.state !== 'recovered' ? ` — ${l.why}` : ''}</span>
+                {l.state === 'pending' && <button onClick={() => onUpdate(patchPoolLine(quote, l.lineId, { released: new Date().toISOString() }))} title="Give these hours back to the pool now (the line stays on the quote)" style={{ ...btnS, padding: '0 7px', fontSize: 10.5 }}>Release</button>}
+                {l.why === 'released' && <button onClick={() => onUpdate(patchPoolLine(quote, l.lineId, { released: null }))} style={{ ...btnS, padding: '0 7px', fontSize: 10.5 }}>Hold again</button>}
+              </div>
+            )
+          })}
+          <div style={{ color: 'var(--text-light)', marginTop: 2 }}>On the proposal these hours are part of the scope's man-hours — the line itself never prints. Pending hours go back to the pool by themselves after {PENDING_DAYS} days with no approval; edit or delete the labor line and the pool follows.</div>
         </div>
       )}
       {form && (
@@ -2977,7 +2993,7 @@ export function QuoteDetailPage({ customer, quote: rawQuote, onUpdate, linkedJob
         Export uses the Complete Quote tab. It opens automatically and is also saved in this quote's Files.
       </div>
 
-      <TimePoolBanner quote={quote} scopes={scopes}
+      <TimePoolBanner quote={quote} scopes={scopes} onUpdate={onUpdate}
         onAddLabor={(scopeId, line) => addLine(scopeId, 'labor', line)}
         onAddScope={sc => { const s2 = { id: uid(), name: sc.name, scopeText: '', materials: [], labor: sc.labor.map(l => ({ id: uid(), ...l })) }; onUpdate({ scopes: [...scopes, s2] }) }} />
 

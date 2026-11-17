@@ -773,11 +773,14 @@ function renderQuoteDetail(q, customer) {
 // and are only sent to the cloud when stopped.
 const TIMERS_KEY = 'sce_timers';
 const OUTBOX_KEY = 'sce_time_outbox';
+// ids match the desktop (src/api/timeBuckets.js) — never rename an id
 const BUCKETS = [
   { id: 'planning', label: '🧠 Project planning / helping' },
+  { id: 'admin', label: '📝 Quoting / estimating' },
+  { id: 'prep', label: '📦 Ordering / prep' },
+  { id: 'office', label: '🗂 General admin' },
   { id: 'shop', label: '🏭 Shop / yard' },
   { id: 'travel', label: '🚗 Travel / pickup' },
-  { id: 'admin', label: '🗂 Admin / quoting' },
 ];
 function loadList(k) { try { return JSON.parse(localStorage.getItem(k) || '[]') || []; } catch (e) { return []; } }
 function saveList(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }

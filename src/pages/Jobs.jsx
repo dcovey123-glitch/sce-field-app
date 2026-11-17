@@ -5,9 +5,12 @@ import {
 } from '../api/billing.js'
 export { TM_MATERIAL_MARKUP, billingWhen, billingEntries, tmTotal, tmBilledAmount, unbilledAmount, effectiveJobTotal }
 import React, { useState, useEffect, useRef } from 'react'
+import { TIME_BUCKETS as TIME_BUCKET_LABELS } from '../api/timeBuckets.js'
 import FlagBanner from '../components/FlagBanner.jsx'
 import { quoteMaterialsTotal, quoteLaborTotal, quoteGrandTotal, normalizeQuote, scopeTotal, allowancesTotal, splitLines } from '../api/quoteMath.js'
 import { quoteLines, legacyKeys, quoteLineStatus, quoteLinesSummary, addQuoteLinesToOrderList } from '../api/quoteMaterials.js'
+import { poolLinesToPost, POOL_BUCKETS } from '../api/timePool.js'
+import { ensureRoster } from '../api/crewRoster.js'
 import { STOCK_CHECKS_KEY, makeStockCheck, checkProgress, removeCheckFromOrderSheet, clearSetAsidePatch } from '../api/stockCheck.js'
 import { useLocalStore } from '../api/useLocalStore.js'
 import { useHubStore } from '../api/useHubStore.js'
@@ -2979,6 +2982,36 @@ export function trackedTimeTotal(project) {
   return (project.trackedTime || []).reduce((s, e) => s + (Number(e.totalHours) || 0), 0)
 }
 
+// ⏱ Planning / quoting time billed into this job's quote (api/timePool.js).
+// A T&M job is billed from Labor Actual, so those hours have to be posted
+// there to reach billing. One click, once per line; delete the labor entry
+// and it's offered again.
+function PoolHoursToLabor({ project, quotes, onUpdate }) {
+  const todo = poolLinesToPost(project, quotes)
+  if (!todo.length) return null
+  const total = Math.round(todo.reduce((a, l) => a + l.hours, 0) * 100) / 100
+  function post() {
+    const me = (ensureRoster().find(p => p.isMe) || {}).name || ''
+    let rates = getLaborRates(project)
+    const add = todo.map(l => {
+      let r = rates.find(x => Number(x.rate) === Number(l.rate))
+      if (!r) { r = { id: uid(), label: `$${Number(l.rate || 0).toFixed(0)}/hr`, rate: Number(l.rate) || 0 }; rates = [...rates, r] }
+      return { id: uid(), date: todayLocal(), hours: l.hours, worker: me, rateId: r.id,
+        workCompleted: `${l.desc || POOL_BUCKETS[l.bucket]} — ${POOL_BUCKETS[l.bucket].toLowerCase()} time from quote ${l.quoteNumber}`,
+        fromPool: { quoteId: l.quoteId, lineId: l.lineId, bucket: l.bucket } }
+    })
+    const next = [...(project.laborEntries || []), ...add]
+    onUpdate({ laborRates: rates, laborEntries: next, actualLabor: laborTotals(next, rates).cost })
+  }
+  return (
+    <div style={{ margin: '10px 16px 0', padding: '9px 12px', borderRadius: 8, background: '#fffaf0', border: '1px solid #f0e2b6', fontSize: 12.5, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+      <span><b>⏱ {total} h</b> of planning / quoting time was billed into {[...new Set(todo.map(l => l.quoteNumber))].join(', ')} — {todo.map(l => `${l.hours} h ${POOL_BUCKETS[l.bucket].toLowerCase()}`).join(', ')}.
+        {' '}This job is billed from Labor Actual, so post it there or it won't reach billing.</span>
+      <button onClick={post} style={{ fontSize: 12, fontWeight: 700, padding: '5px 12px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: 'var(--navy)', cursor: 'pointer', whiteSpace: 'nowrap' }}>Post {total} h to Labor Actual</button>
+    </div>
+  )
+}
+
 function LaborSection({ project, onUpdate }) {
   const [tab, setTab] = useState('actual')
   const isQuoted = project.type === 'quoted'
@@ -2988,7 +3021,12 @@ function LaborSection({ project, onUpdate }) {
   })
 
   if (!isQuoted) {
-    return <LaborActual project={project} onUpdate={onUpdate} />
+    return (
+      <>
+        {!quotesStore.loading && <PoolHoursToLabor project={project} quotes={getLinkedQuotes(project, quotesStore)} onUpdate={onUpdate} />}
+        <LaborActual project={project} onUpdate={onUpdate} />
+      </>
+    )
   }
 
   function importLabor(quote, items) {
@@ -3878,7 +3916,6 @@ function NoteEntryRow({ note, onUpdate, onDelete }) {
   )
 }
 
-const TIME_BUCKET_LABELS = { planning: 'Project planning / helping', shop: 'Shop / yard', travel: 'Travel / pickup', admin: 'Admin / quoting' }
 
 function NotesSection({ project, onUpdate }) {
   const notes = project.notesLog || []
