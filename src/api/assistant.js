@@ -95,7 +95,64 @@ export const TOOLS = [
       start: { type: 'string' }, end: { type: 'string' }, notes: { type: 'string' }, why: { type: 'string' },
     }, required: ['date', 'workers'] },
   },
+  {
+    name: 'get_order_sheet',
+    description: 'The Material Order List (order sheet) as it stands — lines waiting to be sent to a wholesaler.',
+    input_schema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'propose_order',
+    description: 'Prep a material order or pricing request. send: "email" = makes the order-form PDF and opens an Outlook draft to the wholesaler with it attached (Dustin presses Send); "pdf" = just makes and opens the PDF; "order_sheet" = adds the lines to the Material Order List. Tie it to a job (orders) or one of his quotes (pricing / request for quote) so what comes back gets matched. Dustin approves first.',
+    input_schema: { type: 'object', properties: {
+      send: { type: 'string', enum: ['email', 'pdf', 'order_sheet'] },
+      to: { type: 'string', enum: ['nedco', 'gescan', 'other'], description: 'Wholesaler (not needed for order_sheet)' },
+      other_name: { type: 'string' }, other_email: { type: 'string' },
+      kind: { type: 'string', enum: ['order', 'pricing'], description: 'Order to pick up, or a pricing request' },
+      job_id: { type: 'string' }, quote_id: { type: 'string' },
+      items: { type: 'array', items: { type: 'object', properties: { qty: { type: 'number' }, uom: { type: 'string' }, partNo: { type: 'string' }, desc: { type: 'string' } }, required: ['qty', 'desc'] } },
+      note: { type: 'string', description: 'Extra line for the email (lead time, pick-up date…)' }, why: { type: 'string' },
+    }, required: ['send', 'items'] },
+  },
+  {
+    name: 'propose_job_update',
+    description: 'Change fields on a job (name, notes, CO / PO numbers, dates, type, status and the like — the field names exactly as get_job shows them, plain values only). Shown as before → after; Dustin approves first.',
+    input_schema: { type: 'object', properties: { job_id: { type: 'string' }, changes: { type: 'object' }, why: { type: 'string' } }, required: ['job_id', 'changes'] },
+  },
+  {
+    name: 'propose_task_change',
+    description: 'Tick a job task done / not done, or change its words, who or due date. task_id from get_job. Dustin approves first.',
+    input_schema: { type: 'object', properties: { job_id: { type: 'string' }, task_id: { type: 'string' }, done: { type: 'boolean' }, text: { type: 'string' }, who: { type: 'string' }, due: { type: 'string' }, why: { type: 'string' } }, required: ['job_id', 'task_id'] },
+  },
+  {
+    name: 'propose_deficiency',
+    description: 'Add a deficiency to a job (add = its text) or mark one resolved (resolve_id from get_job). Dustin approves first.',
+    input_schema: { type: 'object', properties: { job_id: { type: 'string' }, add: { type: 'string' }, resolve_id: { type: 'string' }, why: { type: 'string' } }, required: ['job_id'] },
+  },
+  {
+    name: 'propose_quote_update',
+    description: 'Change one of Dustin\'s quotes: plain fields on the quote (title, rate…, names as get_quote shows them), a scope\'s name / scope text, or remove lines by id. Dustin approves first.',
+    input_schema: { type: 'object', properties: {
+      quote_id: { type: 'string' }, changes: { type: 'object' }, scope_id: { type: 'string' },
+      scope_changes: { type: 'object', properties: { name: { type: 'string' }, scopeText: { type: 'string' } } },
+      remove_line_ids: { type: 'array', items: { type: 'string' } }, why: { type: 'string' },
+    }, required: ['quote_id'] },
+  },
+  {
+    name: 'propose_schedule_change',
+    description: 'Move, change or remove a block on the Crew Schedule (block id from get_schedule). Dustin approves first.',
+    input_schema: { type: 'object', properties: { block_id: { type: 'string' }, remove: { type: 'boolean' }, changes: { type: 'object', properties: { date: { type: 'string' }, start: { type: 'string' }, end: { type: 'string' }, workers: { type: 'array', items: { type: 'string' } }, notes: { type: 'string' } } }, why: { type: 'string' } }, required: ['block_id'] },
+  },
+  {
+    name: 'apply_suggestions',
+    description: 'Apply suggestions you made in an EARLIER answer (their ids are listed in the chat as [suggestion …]) — only when Dustin\'s latest message clearly says to go ahead with them (e.g. "yes, do it", "apply the order"). Never on your own judgement. Suggestions he dismissed or already applied are skipped.',
+    input_schema: { type: 'object', properties: { ids: { type: 'array', items: { type: 'string' } } }, required: ['ids'] },
+  },
 ]
+
+// Job fields Claude may never change
+const LOCKED = new Set(['id', 'customerId', 'folder', 'customerFolder', 'folderName', 'trashedAt', 'createdAt', 'layout'])
+const plain = v => v === null || ['string', 'number', 'boolean'].includes(typeof v)
+export const WHOLESALER_INFO = 'Wholesalers set up in the app: nedco (Justin, justin.engbers@nedco.ca), gescan (Yvonne, yvonne.hussynec@gescan.com).'
 
 export function systemPrompt({ me, today, crew }) {
   return `You are Claude, built into the SCE Electric field app as "My Boy Claude". You're helping ${me || 'Dustin'}, the project manager at SCE Electric Western Canada Ltd. (Red Deer, AB), who runs the on-site side of the Red Deer Polytechnic (RDP / CANA MSA) work and other jobs. Today is ${today}. Crew: ${(crew || []).join(', ') || 'not listed'}.
@@ -104,7 +161,9 @@ How the business works: labor is billed at $90/hr (overall man-hours, apprentice
 
 How to work:
 - Look things up in the app with the tools before answering — don't guess at job, quote or price details. Use web_search for anything outside the app (product specs, code, prices, manufacturers).
-- You can't change anything yourself. To suggest a change, call a propose_* tool: it shows up as a card with an Apply button, and nothing happens until he clicks it. Make proposals specific and ready to apply. Never claim a change was made.
+- You can't change anything on your own. To change something (tasks, deficiencies, job fields, quotes, the schedule, material orders), call a propose_* tool: it shows up as a card with an Apply button. Make proposals specific and ready to apply.
+- Approval: he either clicks Apply, or tells you in his next message to go ahead — then call apply_suggestions with those suggestion ids. Only on a clear yes for those specific suggestions; never apply something in the same answer you suggested it. Report exactly what the apply result says — never claim a change was made otherwise.
+- Material orders: build the list from the job's quote / plan, the Catalog and past slips (use real part numbers). Orders go to a job, pricing requests to a quote. An "email" order only opens a draft in Outlook — he reviews and sends it. ${WHOLESALER_INFO}
 - Prices: use real numbers from his slips, supplier quotes or the Catalog and say where each came from. If you have to estimate, say so plainly.
 - Answer short and to the point: what matters first, details after. Plain text, short lists where they help. No sign-off on email drafts (his Outlook adds the signature).`
 }
@@ -184,7 +243,7 @@ function getSchedule({ from, to }, ctx) {
   const L = lists(ctx)
   const jobName = id => ((L.jobs || []).find(j => j.id === id) || {}).name || ''
   return (L.assignments || []).filter(a => a.date >= from && a.date <= to).sort((x, y) => x.date.localeCompare(y.date))
-    .map(a => ({ date: a.date, workers: a.workers, kind: a.kind, job: a.kind === 'job' ? jobName(a.jobId) : '', title: a.title || a.bucket || '', start: a.start, end: a.end, hours: a.hours, notes: a.notes }))
+    .map(a => ({ id: a.id, date: a.date, workers: a.workers, kind: a.kind, job: a.kind === 'job' ? jobName(a.jobId) : '', title: a.title || a.bucket || '', start: a.start, end: a.end, hours: a.hours, notes: a.notes }))
 }
 
 // Proposals: checked here (does the job / quote / scope exist?) and handed to
@@ -198,8 +257,43 @@ function propose(name, input, ctx) {
   if (name === 'propose_quote_lines' && !(quote.scopes || []).some(s => s.id === input.scope_id)) return { error: 'That quote has no scope with that id — check get_quote.' }
   if (name === 'propose_job_tasks' && !(input.tasks || []).length) return { error: 'No tasks given.' }
   if (name === 'propose_schedule_block' && !(input.workers || []).length) return { error: 'Who is it for?' }
-  const label = job ? job.name : quote ? `${quote.quoteNumber || ''} ${quote.title || ''}`.trim() : ''
-  return { proposal: { id: pid(), type: name.replace('propose_', ''), input, label, status: 'waiting' } }
+  let before = null
+  if (name === 'propose_order') {
+    if (!(input.items || []).length) return { error: 'No items.' }
+    if (input.send !== 'order_sheet' && !input.to) return { error: 'Which wholesaler (nedco, gescan or other)?' }
+    if (input.to === 'other' && input.send === 'email' && !input.other_email) return { error: 'Give other_email for a wholesaler that isn\'t set up, or use send: "pdf".' }
+  }
+  if (name === 'propose_job_update' || (name === 'propose_quote_update' && input.changes)) {
+    const rec = job || quote
+    const ch = input.changes || {}
+    const bad = Object.keys(ch).filter(k => LOCKED.has(k) || !plain(ch[k]) || (k in rec && !plain(rec[k])))
+    if (bad.length) return { error: `Can't change ${bad.join(', ')} this way (locked, or not a plain value).` }
+    if (!Object.keys(ch).length && name === 'propose_job_update') return { error: 'No changes given.' }
+    before = Object.fromEntries(Object.keys(ch).map(k => [k, rec[k] ?? '']))
+  }
+  if (name === 'propose_task_change' && !(job.tasks || []).some(t => t.id === input.task_id)) return { error: 'No task with that id on the job.' }
+  if (name === 'propose_task_change') before = (job.tasks || []).find(t => t.id === input.task_id)
+  if (name === 'propose_deficiency') {
+    if (!input.add && !input.resolve_id) return { error: 'Give add (text) or resolve_id.' }
+    if (input.resolve_id) { before = (job.deficiencies || []).find(d => d.id === input.resolve_id); if (!before) return { error: 'No deficiency with that id.' } }
+  }
+  if (name === 'propose_quote_update') {
+    if (input.scope_id && !(quote.scopes || []).some(s => s.id === input.scope_id)) return { error: 'No scope with that id.' }
+    if (input.scope_changes && !input.scope_id) return { error: 'scope_id needed for scope_changes.' }
+    const lines = (quote.scopes || []).flatMap(s => [...(s.materials || []), ...(s.labor || [])])
+    const rm = lines.filter(l => (input.remove_line_ids || []).includes(l.id))
+    if ((input.remove_line_ids || []).length !== rm.length) return { error: 'Some line ids aren\'t on this quote.' }
+    before = { ...(before || {}), removing: rm.map(l => `${l.qty} × ${l.desc || l.partNo}`) }
+    if (input.scope_id) { const sc = quote.scopes.find(s => s.id === input.scope_id); before.scope = { name: sc.name, scopeText: sc.scopeText } }
+  }
+  if (name === 'propose_schedule_change') {
+    const b = (L.assignments || []).find(a => a.id === input.block_id)
+    if (!b) return { error: 'No schedule block with that id — use get_schedule.' }
+    before = { date: b.date, workers: b.workers, start: b.start, end: b.end, notes: b.notes, job: b.jobId ? (((L.jobs || []).find(j => j.id === b.jobId) || {}).name || '') : (b.title || '') }
+  }
+  const label = job ? job.name : quote ? `${quote.quoteNumber || ''} ${quote.title || ''}`.trim()
+    : name === 'propose_order' ? (input.to === 'other' ? input.other_name || 'Other supplier' : input.to || 'Order sheet') : ''
+  return { proposal: { id: pid(), type: name.replace('propose_', ''), input, label, before, status: 'waiting' } }
 }
 
 export function runTool(name, input, ctx) {
@@ -209,6 +303,7 @@ export function runTool(name, input, ctx) {
     if (name === 'get_quote') return getQuote(input, ctx)
     if (name === 'get_record') return getRecord(input, ctx)
     if (name === 'get_schedule') return getSchedule(input, ctx)
+    if (name === 'get_order_sheet') { const l = readValue('materials_order_list', []) || []; return l.length ? l : { empty: true } }
     if (name.startsWith('propose_')) return propose(name, input, ctx)
     return { error: 'Unknown tool ' + name }
   } catch (e) { return { error: String(e.message || e) } }
@@ -217,7 +312,7 @@ export function runTool(name, input, ctx) {
 // One question → Claude looks things up as it needs to → the answer.
 // history = earlier question/answer pairs (historyFrom). Returns { messages,
 // text, proposals, searched, sources }. onStep(label) tells the screen what it's doing.
-export async function ask({ apiKey, history, question, ctx, system, onStep, fetchImpl, retryDelayMs }) {
+export async function ask({ apiKey, history, question, ctx, system, onStep, onApply, fetchImpl, retryDelayMs }) {
   const messages = [...(history || []), { role: 'user', content: question }]
   const proposals = []
   let searched = 0
@@ -243,15 +338,21 @@ export async function ask({ apiKey, history, question, ctx, system, onStep, fetc
     if (data.stop_reason !== 'tool_use' || !calls.length) {
       return { messages, text: textOf(content), proposals, searched, sources: sourcesOf(messages) }
     }
-    const results = calls.map(c => {
+    const results = []
+    for (const c of calls) results.push(await (async () => {
       onStep && onStep(stepLabel(c))
+      if (c.name === 'apply_suggestions') {
+        if (!onApply) return { type: 'tool_result', tool_use_id: c.id, content: 'Applying isn\'t available here.', is_error: true }
+        const done = await onApply((c.input && c.input.ids) || [])
+        return { type: 'tool_result', tool_use_id: c.id, content: JSON.stringify(done) }
+      }
       const out = runTool(c.name, c.input || {}, ctx)
       if (out && out.proposal) {
         proposals.push(out.proposal)
         return { type: 'tool_result', tool_use_id: c.id, content: 'Shown to Dustin as a card with an Apply button. NOT applied yet — he decides.' }
       }
       return { type: 'tool_result', tool_use_id: c.id, content: cap(out), ...(out && out.error ? { is_error: true } : {}) }
-    })
+    })())
     messages.push({ role: 'user', content: results })
   }
   // Out of rounds: ask for an answer with what it has
@@ -272,13 +373,18 @@ function stepLabel(c) {
   if (c.name === 'get_quote') return 'Opening the quote'
   if (c.name === 'get_record') return 'Opening the record'
   if (c.name === 'get_schedule') return 'Checking the schedule'
+  if (c.name === 'get_order_sheet') return 'Checking the order sheet'
+  if (c.name === 'apply_suggestions') return 'Applying what you approved'
   return 'Writing up a suggestion'
 }
 
 // Earlier questions go back to Claude as plain question → answer pairs (the
 // lookups behind them are dropped — it can look again if it needs to)
 export function historyFrom(turns, keep = 12) {
-  return (turns || []).filter(t => t.a).slice(-keep).flatMap(t => [{ role: 'user', content: t.q }, { role: 'assistant', content: t.a }])
+  return (turns || []).filter(t => t.a).slice(-keep).flatMap(t => {
+    const props = (t.proposals || []).map(p => `[suggestion ${p.id}: ${p.type}${p.label ? ' — ' + p.label : ''} — ${p.status}]`)
+    return [{ role: 'user', content: t.q }, { role: 'assistant', content: [t.a, ...props].join('\n') }]
+  })
 }
 
 // Web pages Claude quoted from, for a "Sources" line

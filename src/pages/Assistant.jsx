@@ -4,7 +4,8 @@ import { useLocalStore } from '../api/useLocalStore.js'
 import { useCrewRoster } from '../api/crewRoster.js'
 import { useApiKey } from '../api/ai.js'
 import { SCHEDULE_KEY, hoursOf, uid as scheduleUid } from '../api/schedule.js'
-import { addTasks, newTask, today as todayIso } from '../api/tasks.js'
+import { addTasks, newTask, changeTask, setDone, today as todayIso } from '../api/tasks.js'
+import { saveSentRequest } from '../api/requests.js'
 import { CHATS_KEY, ask, systemPrompt, historyFrom, pid } from '../api/assistant.js'
 import ConfirmDeleteButton from '../components/ConfirmDeleteButton.jsx'
 
@@ -28,6 +29,7 @@ export default function Assistant() {
   const quotesHub = useHubStore({ hub: 'quotes', recordFileName: 'quote.json', getRecordFolderName: q => q.title ? `${q.quoteNumber} - ${q.title}` : q.quoteNumber, customersKey: 'quote_customers', recordsKey: 'quote_quotes' })
   const [assignments, setAssignments] = useLocalStore(SCHEDULE_KEY, [])
   const [chats, setChats] = useLocalStore(CHATS_KEY, [])
+  const [, setOrderList] = useLocalStore('materials_order_list', [])
   const [apiKey] = useApiKey()
   const crew = useCrewRoster()
   const me = crew.meName
@@ -65,6 +67,7 @@ export default function Assistant() {
         apiKey, history: historyFrom(prior), question, ctx,
         system: systemPrompt({ me, today: todayIso(), crew: people }),
         onStep: s => { steps.push(s); setBusy({ chatId: id, steps: [...steps] }) },
+        onApply: ids => applyMany(id, ids, prior),
       })
       patchChat(id, c => ({ ...c, turns: c.turns.map(t => t.id === turn.id ? { ...t, a: r.text || '(no answer)', proposals: r.proposals, steps, sources: r.sources, searched: r.searched } : t) }))
     } catch (e) {
@@ -73,8 +76,68 @@ export default function Assistant() {
   }
 
   // ── Apply a suggestion ──
+  // Apply several suggestions from earlier answers (Dustin said yes in chat)
+  async function applyMany(chatId, ids, turns) {
+    const all = (turns || []).flatMap(t => t.proposals || [])
+    const out = []
+    for (const id of ids) {
+      const p = all.find(x => x.id === id)
+      if (!p) { out.push({ id, result: 'not found in this chat' }); continue }
+      if (p.status !== 'waiting') { out.push({ id, result: `skipped — already ${p.status}` }); continue }
+      const r = await apply(chatId, p)
+      out.push({ id, result: r.ok ? 'applied' + (r.note ? ' — ' + r.note : '') : 'failed — ' + r.error })
+    }
+    return out
+  }
+
+  const jobRec = id => (jobsHub.records || []).find(j => j.id === id)
+  const quoteRec = id => (quotesHub.records || []).find(q => q.id === id)
+  const custOf = (hub, r) => r ? (hub.customers || []).find(c => c.id === r.customerId) : null
+
+  async function sendOrder(i) {
+    const { buildOrderFormPdfBytes, orderFormFileName, WHOLESALERS } = await import('../api/exportOrderForm.js')
+    const items = (i.items || []).map(x => ({ qty: Number(x.qty) || 0, uom: x.uom || '', partNo: x.partNo || '', desc: x.desc || '' }))
+    if (i.send === 'order_sheet') {
+      const job = jobRec(i.job_id)
+      setOrderList(cur => [...(Array.isArray(cur) ? cur : []), ...items.map(x => ({ id: pid(), ...x, nickname: '', source: 'assistant', ...(job ? { jobName: job.name } : {}) }))])
+      return `${items.length} line${items.length === 1 ? '' : 's'} added to the Material Order List`
+    }
+    if (!window.desktop) throw new Error('Exporting works in the desktop app.')
+    const ws = i.to === 'other' ? { name: i.other_name || 'Supplier', email: i.other_email || '', contact: '' } : WHOLESALERS[i.to]
+    if (!ws) throw new Error('Unknown wholesaler.')
+    const job = jobRec(i.job_id), quote = quoteRec(i.quote_id)
+    const jc = custOf(jobsHub, job), qc = custOf(quotesHub, quote)
+    const pricing = i.kind === 'pricing' || !!quote
+    const rfq = quote ? { number: quote.quoteNumber || '', title: quote.title || '' } : null
+    const date = todayIso()
+    const bytes = await buildOrderFormPdfBytes({ wholesaler: ws.name, date, items, rfq })
+    let bin = ''; for (let k = 0; k < bytes.byteLength; k++) bin += String.fromCharCode(bytes[k])
+    const folder = quote ? 'Quotes/Materials Pricing Requests' : job && jc ? `Jobs/${jc.folder}/${job.folder}/Files` : 'Jobs/Materials Orders'
+    const saved = await window.desktop.saveFile(folder, orderFormFileName({ wholesaler: ws.name, date, rfq }), btoa(bin))
+    if (!saved) throw new Error('The PDF could not be saved.')
+    const record = () => saveSentRequest({
+      wholesaler: ws.name, subject, file: saved, pricing, phoned: false,
+      ...(quote ? { quote: { id: quote.id, number: quote.quoteNumber || '', title: quote.title || '' } } : {}),
+      items, jobs: job ? [{ id: job.id, name: job.name }] : [],
+    })
+    const subject = quote ? `Request for quote — ${quote.quoteNumber || ''}${quote.title ? ' — ' + quote.title : ''}`
+      : `${pricing ? 'Pricing request' : 'Material order'} — ${jc ? jc.name + ' — ' : ''}${job ? job.name : 'Materials'}`
+    if (i.send === 'pdf') { window.desktop.openFile(saved); return `PDF saved (${folder}) and opened` }
+    const n = items.length
+    const text = [`Hi ${ws.contact || 'there'},`, '',
+      rfq ? `Please see the attached request for quote (${n} item${n === 1 ? '' : 's'}) for our quote ${rfq.number}${rfq.title ? ' — ' + rfq.title : ''}. Could you send me pricing and availability, and reference ${rfq.number || 'it'} on your quote? Please note any lead times or substitutions.`
+        : pricing ? `Could you please price the attached list (${n} item${n === 1 ? '' : 's'}) and send me a quote? Please note any lead times or substitutions.`
+          : `Please see the attached material order (${n} item${n === 1 ? '' : 's'}). Let me know on availability, and when it's ready for pick-up.`,
+      ...(i.note ? ['', i.note] : [])].join('\n') // no sign-off — Outlook adds the signature
+    const r = await window.desktop.draftEmail({ to: ws.email, subject, text, attachments: [saved] })
+    if (!r.ok) throw new Error(r.error || 'Could not open the email.')
+    record()
+    return r.method === 'eml' ? `Outlook draft to ${ws.contact || ws.name} is open with the PDF attached — check it and press Send` : 'Compose window opened; the PDF is highlighted in File Explorer to drag in'
+  }
+
   async function apply(chatId, p) {
     const i = p.input || {}
+    let note = ''
     try {
       if (p.type === 'job_tasks') {
         await jobsHub.updateRecord(i.job_id, addTasks((i.tasks || []).map(t => newTask(t.text, me, { who: t.who || '', due: t.due || '' }))))
@@ -90,6 +153,39 @@ export default function Assistant() {
         await quotesHub.updateRecord(i.quote_id, q => ({ scopes: (q.scopes || []).map(s => s.id !== i.scope_id ? s : {
           ...s, materials: [...(s.materials || []), ...(i.materials || []).map(matLine)], labor: [...(s.labor || []), ...(i.labor || []).map(l => laborLine(l, q))],
         }) }))
+      } else if (p.type === 'order') {
+        note = await sendOrder(i)
+      } else if (p.type === 'job_update') {
+        await jobsHub.updateRecord(i.job_id, { ...i.changes })
+      } else if (p.type === 'task_change') {
+        if (typeof i.done === 'boolean') await jobsHub.updateRecord(i.job_id, setDone(i.task_id, i.done, me, new Date().toISOString()))
+        const edit = Object.fromEntries(['text', 'who', 'due'].filter(k => i[k] != null).map(k => [k, i[k]]))
+        if (Object.keys(edit).length) await jobsHub.updateRecord(i.job_id, changeTask(i.task_id, edit))
+      } else if (p.type === 'deficiency') {
+        const now = new Date().toISOString()
+        await jobsHub.updateRecord(i.job_id, j => ({ deficiencies: i.add
+          ? [...(j.deficiencies || []), { id: pid(), text: i.add, createdAt: now, resolved: false, resolvedAt: null }]
+          : (j.deficiencies || []).map(d => d.id === i.resolve_id ? { ...d, resolved: true, resolvedAt: now } : d) }))
+      } else if (p.type === 'quote_update') {
+        const rm = new Set(i.remove_line_ids || [])
+        await quotesHub.updateRecord(i.quote_id, q => ({
+          ...(i.changes || {}),
+          scopes: (q.scopes || []).map(sc => ({
+            ...sc, ...(sc.id === i.scope_id ? (i.scope_changes || {}) : {}),
+            materials: (sc.materials || []).filter(l => !rm.has(l.id)), labor: (sc.labor || []).filter(l => !rm.has(l.id)),
+          })),
+        }))
+      } else if (p.type === 'schedule_change') {
+        setAssignments(cur => {
+          const list = Array.isArray(cur) ? cur : []
+          if (i.remove) return list.filter(a => a.id !== i.block_id)
+          return list.map(a => {
+            if (a.id !== i.block_id) return a
+            const b = { ...a, ...(i.changes || {}), editedAt: new Date().toISOString() }
+            if (b.start && b.end) b.hours = hoursOf(b)
+            return b
+          })
+        })
       } else if (p.type === 'schedule_block') {
         const job = i.job_id ? (jobsHub.records || []).find(j => j.id === i.job_id) : null
         const workers = (i.workers || []).map(w => people.find(n => n.toLowerCase() === String(w).toLowerCase()) || people.find(n => n.toLowerCase().startsWith(String(w).toLowerCase())) || w)
@@ -100,9 +196,11 @@ export default function Assistant() {
         b.hours = b.start && b.end ? hoursOf(b) : 0
         setAssignments(cur => [...(Array.isArray(cur) ? cur : []), b])
       }
-      patchProposal(chatId, p.id, { status: 'applied', appliedAt: new Date().toISOString(), error: '' })
+      patchProposal(chatId, p.id, { status: 'applied', appliedAt: new Date().toISOString(), error: '', note })
+      return { ok: true, note }
     } catch (e) {
       patchProposal(chatId, p.id, { error: e.message || 'Could not apply it.' })
+      return { ok: false, error: e.message || 'Could not apply it.' }
     }
   }
 
@@ -132,7 +230,7 @@ export default function Assistant() {
       <div style={{ border: '1px solid var(--border)', borderRadius: 10, background: 'var(--surface)', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
         <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'baseline', gap: 10 }}>
           <span style={{ fontSize: 17, fontWeight: 800, color: 'var(--navy)' }}>🤖 My Boy Claude</span>
-          <span style={small}>Reads your jobs, quotes, slips, Catalog, schedule and notes, and can search the web. Suggested changes wait for your OK.</span>
+          <span style={small}>Reads your jobs, quotes, slips, Catalog, schedule and notes, and can search the web. Changes and orders wait for your OK — click Apply, or tell him to go ahead.</span>
         </div>
         <div style={{ flex: 1, overflowY: 'auto', padding: 14 }}>
           {noKey && <div style={{ padding: 12, borderRadius: 8, background: 'var(--red-bg)', color: 'var(--red-dark)', fontSize: 13, marginBottom: 10 }}>No AI key yet — add it in Materials → ⚙ Settings (the same key slip reading uses).</div>}
@@ -189,6 +287,21 @@ function renderText(s) {
 const TITLES = {
   job_tasks: 'Add tasks to the job', job_note: 'Add to the job notes', quote_scope: 'Add a scope to the quote',
   quote_lines: 'Add lines to a scope', schedule_block: 'Book on the schedule',
+  order: 'Material order', job_update: 'Change the job', task_change: 'Change a task', deficiency: 'Deficiency',
+  quote_update: 'Change the quote', schedule_change: 'Change the schedule',
+}
+const SEND_LABEL = { email: 'Email draft in Outlook', pdf: 'PDF only', order_sheet: 'Add to the Material Order List' }
+const show = v => v === '' || v == null ? '—' : typeof v === 'boolean' ? (v ? 'yes' : 'no') : String(v)
+function BeforeAfter({ before, after }) {
+  return (
+    <table style={{ borderCollapse: 'collapse', marginTop: 6, fontSize: 12.5 }}>
+      <tbody>{Object.keys(after || {}).map(k => (
+        <tr key={k}><td style={{ padding: '2px 8px 2px 0', color: 'var(--text-light)' }}>{k}</td>
+          <td style={{ padding: '2px 8px', textDecoration: 'line-through', color: 'var(--text-light)' }}>{show(before && before[k])}</td>
+          <td style={{ padding: '2px 0' }}>→ <b>{show(after[k])}</b></td></tr>
+      ))}</tbody>
+    </table>
+  )
 }
 
 function ProposalCard({ p, onApply, onDismiss }) {
@@ -228,6 +341,23 @@ function ProposalCard({ p, onApply, onDismiss }) {
         <Lines mats={i.scope?.materials} labor={i.scope?.labor} />
       </div>}
       {p.type === 'quote_lines' && <Lines mats={i.materials} labor={i.labor} />}
+      {p.type === 'order' && <div style={{ marginTop: 6 }}>
+        <div style={{ fontSize: 12.5 }}><b>{SEND_LABEL[i.send] || i.send}</b>{i.kind === 'pricing' || i.quote_id ? ' · pricing request' : ' · order'}{i.note ? ` · "${i.note}"` : ''}</div>
+        <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 4 }}><tbody>
+          {(i.items || []).map((x, k) => <tr key={k}><td style={{ padding: '2px 6px', fontSize: 12.5, width: 60 }}>{x.qty} {x.uom}</td><td style={{ padding: '2px 6px', fontSize: 12.5, width: 130 }}>{x.partNo}</td><td style={{ padding: '2px 6px', fontSize: 12.5 }}>{x.desc}</td></tr>)}
+        </tbody></table>
+      </div>}
+      {p.type === 'job_update' && <BeforeAfter before={p.before} after={i.changes} />}
+      {p.type === 'task_change' && <div style={{ marginTop: 6, fontSize: 13 }}>{p.before?.text}{typeof i.done === 'boolean' ? <b> → {i.done ? 'done' : 'not done'}</b> : null}<BeforeAfter before={p.before} after={Object.fromEntries(['text', 'who', 'due'].filter(k => i[k] != null).map(k => [k, i[k]]))} /></div>}
+      {p.type === 'deficiency' && <div style={{ marginTop: 6, fontSize: 13 }}>{i.add ? <>Add: <b>{i.add}</b></> : <>Mark resolved: <b>{p.before?.text}</b></>}</div>}
+      {p.type === 'quote_update' && <div>
+        {i.changes && <BeforeAfter before={p.before} after={i.changes} />}
+        {i.scope_changes && <BeforeAfter before={p.before?.scope} after={i.scope_changes} />}
+        {(p.before?.removing || []).length > 0 && <div style={{ marginTop: 4, fontSize: 12.5, color: 'var(--red-dark)' }}>Remove: {p.before.removing.join(' · ')}</div>}
+      </div>}
+      {p.type === 'schedule_change' && <div style={{ marginTop: 6, fontSize: 13 }}>{p.before?.date} · {(p.before?.workers || []).join(', ')} · {p.before?.job}
+        {i.remove ? <b style={{ color: 'var(--red-dark)' }}> → remove this block</b> : <BeforeAfter before={p.before} after={i.changes} />}</div>}
+      {done && p.note && <div style={{ ...small, marginTop: 4 }}>{p.note}</div>}
       {p.type === 'schedule_block' && <div style={{ marginTop: 6, fontSize: 13 }}>{i.date} · {(i.workers || []).join(', ')}{i.start ? ` · ${i.start}${i.end ? ' – ' + i.end : ''}` : ''}{i.title ? ` · ${i.title}` : ''}{i.notes ? <div style={small}>{i.notes}</div> : null}</div>}
     </div>
   )
