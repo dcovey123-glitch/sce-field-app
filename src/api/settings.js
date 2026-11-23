@@ -51,6 +51,12 @@ export const STORE = {
   calendar_events: { file: true, what: 'Calendar events you added, or OK\'d from email' },
   hit_list: { file: true, what: 'Hit List — quick to-do list on Home' },
   hit_list_sched_done: { file: true, what: 'Hit List — scheduled items you ticked off' },
+  // Crew schedule
+  schedule_assignments: { file: true, what: 'Crew Schedule — who is on what, each day' },
+  schedule_days: { file: true, what: 'Crew Schedule — the days you picked each week' },
+  schedule_settings: { what: 'Crew Schedule — office-time target and other checks' },
+  // My Boy Claude
+  assistant_chats: { file: true, what: 'My Boy Claude — your chats' },
   // Notes, tasks, flags
   general_notes: { file: true, what: 'General Notes' },
   daily_notes: { file: true, what: 'Daily Notes' },

@@ -9,6 +9,8 @@ import TimeHub from './pages/TimeHub.jsx'
 import CloudSync from './pages/CloudSync.jsx'
 import Crew from './pages/Crew.jsx'
 import Todo from './pages/Todo.jsx'
+import Scheduler from './pages/Scheduler.jsx'
+import Assistant from './pages/Assistant.jsx'
 import SlipGrabber from './components/SlipGrabber.jsx'
 import Backup from './pages/Backup.jsx'
 import Automations from './pages/Automations.jsx'
@@ -69,6 +71,8 @@ const NAV_ITEMS = [
   { id: 'orders',     label: 'Orders & POs', icon: '📑' },
   { id: 'review',     label: 'Assistant Update', icon: '☀️' },
   { id: 'time',       label: 'Time',       icon: '⏱' },
+  { id: 'schedule',   label: 'Schedule',   icon: '📅' },
+  { id: 'claude',     label: 'Claude',     icon: '🤖' },
   { id: 'crew',       label: 'Crew',       icon: '👷' },
   { id: 'photos',     label: 'Photos',     icon: '📷' },
   { id: 'billing',    label: 'Billing',    icon: '💰' },
@@ -91,6 +95,8 @@ const HUB_ROOT = {
   time:       { hub: 'time', view: 'tracking' },
   timesheets: { hub: 'time', view: 'timesheets' },   // older links
   timetracking: { hub: 'time', view: 'tracking' },
+  schedule:   { hub: 'schedule' },
+  claude:     { hub: 'claude' },
   crew:       { hub: 'crew' },
   billing:    { hub: 'billing' },
   photos:     { hub: 'photos' },
@@ -261,9 +267,11 @@ export default function App() {
           <div className={styles.hdrSpacer} />
           {/* Right: Today (with what's waiting), Snapshot, Mobile, then the tools */}
           {[
+            { id: 'claude', label: 'Claude', icon: '🤖', title: 'My Boy Claude — ask about a job, a quote, prices, the schedule' },
             { id: 'todo', label: 'Today', icon: '☀', title: 'What needs you today', count: needs.total, urgent: needs.urgent },
             { id: 'snapshot', label: 'Snapshot', icon: '📊', title: "What's on the books: left to bill, open quotes, billing" },
             { id: 'cloudsync', label: 'Mobile', icon: '📱', title: 'Phone app and sync' },
+            { id: 'schedule', label: 'Schedule', icon: '📅', title: 'Crew Schedule — pick the days, say who is on what' },
             { id: 'crew', label: 'Crew', icon: '👷' },
             { id: 'automations', label: 'Auto', icon: '⚙', title: 'Automations — what the app does on its own, and the switch for each' },
             { id: 'backup', label: 'Backup', icon: '💾' },
@@ -336,6 +344,14 @@ export default function App() {
           <Crew />
         )}
 
+        {screen?.hub === 'schedule' && (
+          <Scheduler />
+        )}
+
+        {screen?.hub === 'claude' && (
+          <Assistant />
+        )}
+
 
         {screen?.hub === 'cloudsync' && (
           <CloudSync />
@@ -369,7 +385,7 @@ export default function App() {
           <Todo navigate={navigate} />
         )}
 
-        {screen && screen.hub !== 'home' && screen.hub !== 'jobs' && screen.hub !== 'quotes' && screen.hub !== 'materials' && screen.hub !== 'orders' && screen.hub !== 'review' && screen.hub !== 'snapshot' && screen.hub !== 'time' && screen.hub !== 'crew' && screen.hub !== 'cloudsync' && screen.hub !== 'backup' && screen.hub !== 'trash' && screen.hub !== 'notes' && screen.hub !== 'billing' && screen.hub !== 'photos' && screen.hub !== 'todo' && (
+        {screen && screen.hub !== 'home' && screen.hub !== 'jobs' && screen.hub !== 'quotes' && screen.hub !== 'materials' && screen.hub !== 'orders' && screen.hub !== 'review' && screen.hub !== 'snapshot' && screen.hub !== 'time' && screen.hub !== 'crew' && screen.hub !== 'schedule' && screen.hub !== 'claude' && screen.hub !== 'cloudsync' && screen.hub !== 'backup' && screen.hub !== 'trash' && screen.hub !== 'notes' && screen.hub !== 'billing' && screen.hub !== 'photos' && screen.hub !== 'todo' && (
           <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-light)' }}>
             <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 6, color: 'var(--text)' }}>
               {NAV_ITEMS.find(n => n.id === screen.hub)?.label} — not built yet
