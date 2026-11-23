@@ -70,7 +70,7 @@ contextBridge.exposeInMainWorld('desktop', {
   onlineBackupStatus: () => ipcRenderer.invoke('onlineBackup:status'),
   onlineBackupOpenFolder: () => ipcRenderer.invoke('onlineBackup:openFolder'),
 
-  pdfFromHtml: (html) => ipcRenderer.invoke('pdf:fromHtml', html),
+  pdfFromHtml: (html, opts) => ipcRenderer.invoke('pdf:fromHtml', html, opts),
   // opts: { to, cc, subject, text, html, attachments: [paths] } — opens a ready draft with the files attached
   draftEmail: (opts) => ipcRenderer.invoke('email:draft', opts),
   draftEmailMailto: (opts) => ipcRenderer.invoke('email:draftMailto', opts),

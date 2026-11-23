@@ -764,7 +764,7 @@ ipcMain.handle('onlineBackup:openFolder', () => {
 // Electron's own print engine, off-screen. Reuses whatever HTML the caller
 // already built (same layout, same styling) rather than re-implementing it
 // with manual PDF drawing.
-ipcMain.handle('pdf:fromHtml', async (event, html) => {
+ipcMain.handle('pdf:fromHtml', async (event, html, opts) => {
   const tempPath = path.join(app.getPath('temp'), `pdf-export-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.html`)
   fs.writeFileSync(tempPath, html, 'utf-8')
   const win = new BrowserWindow({ show: false, webPreferences: { offscreen: true } })
@@ -773,6 +773,7 @@ ipcMain.handle('pdf:fromHtml', async (event, html) => {
     const pdfBuffer = await win.webContents.printToPDF({
       printBackground: true,
       pageSize: 'Letter',
+      landscape: !!(opts && opts.landscape),
       margins: { top: 0.4, bottom: 0.4, left: 0.4, right: 0.4 },
     })
     return pdfBuffer.toString('base64')
