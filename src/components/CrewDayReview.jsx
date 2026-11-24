@@ -103,6 +103,9 @@ export default function CrewDayReview({ item, jobs, allJobs, customers, crew, ro
   // night shift (e.g. 6:00 p.m. to 6:00 a.m.) runs into the next morning.
   function setTime(seg, field, hm) {
     if (!hm) return
+    patchSeg(seg.id, timesFor(seg, field, hm))
+  }
+  function timesFor(seg, field, hm) {
     let start = new Date(seg.start).getTime(), end = new Date(seg.end).getTime()
     if (field === 'start') {
       start = new Date(fromHM(date, hm)).getTime()
@@ -115,7 +118,7 @@ export default function CrewDayReview({ item, jobs, allJobs, customers, crew, ro
     // end is always after start, and less than a day after it
     while (end <= start) end += DAY
     while (end - start > DAY) end -= DAY
-    patchSeg(seg.id, { start: new Date(start).toISOString(), end: new Date(end).toISOString() })
+    return { start: new Date(start).toISOString(), end: new Date(end).toISOString() }
   }
   function splitSeg(seg) {
     const mid = new Date((new Date(seg.start).getTime() + new Date(seg.end).getTime()) / 2)
@@ -144,6 +147,47 @@ export default function CrewDayReview({ item, jobs, allJobs, customers, crew, ro
     set({ segments: [...segs, ...copy], crew: [...(item.crew || []), { id: p.id, name: p.name }] })
     setAddPerson('')
   }
+  // ── Shared blocks: one row per block with who worked it (hand entry) ──
+  const [byPerson, setByPerson] = useState(!item.manual)
+  const sigOf = s => [s.start, s.end, s.target, s.ot ? 1 : 0, s.label || ''].join('|')
+  const groups = []
+  segs.forEach(s => { const k = sigOf(s); let g = groups.find(x => x.key === k); if (!g) { g = { key: k, first: s, segs: [] }; groups.push(g) } g.segs.push(s) })
+  const inGroup = (g, s) => g.segs.some(x => x.id === s.id)
+  const patchGroup = (g, patch) => setSegs(segs.map(s => inGroup(g, s) ? { ...s, ...patch } : s))
+  const setGroupTime = (g, field, hm) => { if (hm) patchGroup(g, timesFor(g.first, field, hm)) }
+  const onBlock = (g, p) => g.segs.some(s => personKeyOf(s) === p.key)
+  function toggleWorker(g, p) {
+    if (onBlock(g, p)) {
+      if (g.segs.length === 1) return // a block needs someone on it — delete the block instead
+      setSegs(segs.filter(s => !(inGroup(g, s) && personKeyOf(s) === p.key)))
+    } else {
+      setSegs([...segs, { ...g.first, id: uid(), workerId: p.workerId, name: p.name }])
+    }
+  }
+  function addSharedBlock() {
+    const last = groups[groups.length - 1]
+    const start = last ? last.first.end : fromHM(date, '07:00')
+    const end = new Date(new Date(start).getTime() + 3600000).toISOString()
+    const who = people.length ? people : (crew.me ? [{ key: crew.me.id, name: crew.me.name, workerId: crew.me.id }] : [])
+    const base = { target: last?.first.target || targets[0] || '', label: last?.first.label || '', start, end }
+    setSegs([...segs, ...who.map(p => ({ id: uid(), workerId: p.workerId, name: p.name, ...base }))])
+  }
+  function splitGroup(g) {
+    const mid = new Date((new Date(g.first.start).getTime() + new Date(g.first.end).getTime()) / 2)
+    mid.setMinutes(Math.round(mid.getMinutes() / 15) * 15, 0, 0)
+    const at = mid.toISOString()
+    if (at <= g.first.start || at >= g.first.end) return
+    setSegs([...segs.filter(s => !inGroup(g, s)), ...g.segs.map(s => ({ ...s, end: at })), ...g.segs.map(s => ({ ...s, id: uid(), start: at }))])
+  }
+  // Who worked this day: ticking someone on puts them on every block
+  function toggleDayWorker(p) {
+    const k = p.id
+    const here = people.find(x => x.workerId === p.id || lower(x.name) === lower(p.name))
+    if (here) { removePerson(here); return }
+    const add = groups.map(g => ({ ...g.first, id: uid(), workerId: p.id, name: p.name }))
+    set({ segments: [...segs, ...add], crew: [...(item.crew || []), { id: k, name: p.name }] })
+  }
+
   const lastDay = history.filter(d => d.date < date && d.segments?.length).sort((a, b) => b.date.localeCompare(a.date))[0]
   function copyFrom(day) {
     const offset = new Date(fromHM(date, '00:00')) - new Date(fromHM(day.date, '00:00'))
@@ -216,8 +260,8 @@ export default function CrewDayReview({ item, jobs, allJobs, customers, crew, ro
     } finally { setSaving(false) }
   }
 
-  const targetSelect = seg => (
-    <select value={isMapped(seg.target) ? seg.target : ''} onChange={e => e.target.value && setTarget(seg, e.target.value)}
+  const targetSelect = (seg, onPick) => (
+    <select value={isMapped(seg.target) ? seg.target : ''} onChange={e => e.target.value && (onPick ? onPick(e.target.value) : setTarget(seg, e.target.value))}
       style={{ ...inputStyle, flex: 1, minWidth: 170, borderColor: isMapped(seg.target) ? 'var(--border)' : '#e0a716' }}>
       <option value="">{isMapped(seg.target) ? 'Assign to…' : `Pick job for ${seg.label || 'this block'}…`}</option>
       <optgroup label="Non-job time">
@@ -251,8 +295,53 @@ export default function CrewDayReview({ item, jobs, allJobs, customers, crew, ro
         <button onClick={() => copyFrom(lastDay)} style={{ ...smallBtn, marginTop: 8 }}>⧉ Copy from {lastDay.date} ({[...new Set(lastDay.segments.map(s => s.name))].join(', ')})</button>
       )}
 
+      {/* Who worked + shared blocks (hand entry) */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginTop: 10 }}>
+        <span style={{ fontSize: 12, fontWeight: 700 }}>Who worked:</span>
+        {crew.active.map(p => {
+          const on = people.some(x => x.workerId === p.id || lower(x.name) === lower(p.name))
+          return <button key={p.id} onClick={() => toggleDayWorker(p)} title={on ? `Take ${p.name} off this day` : `Add ${p.name} to every block`}
+            style={{ ...smallBtn, background: on ? 'var(--navy)' : '#fff', color: on ? '#fff' : 'var(--text-mid)', borderColor: on ? 'var(--navy)' : 'var(--border)', fontWeight: on ? 700 : 400 }}>{on ? '✓ ' : ''}{p.name}</button>
+        })}
+        <div style={{ flex: 1 }} />
+        <button onClick={() => setByPerson(v => !v)} style={{ ...smallBtn, borderStyle: 'dashed' }}>{byPerson ? 'Enter blocks for everyone at once' : 'Edit each person separately'}</button>
+      </div>
+
+      {!byPerson && (
+        <div style={{ borderTop: '1px solid var(--border)', marginTop: 8, paddingTop: 6 }}>
+          {groups.length === 0 && <div style={{ fontSize: 12, color: 'var(--text-light)', padding: '4px 0' }}>Tick who worked, then add a block — it goes on everyone ticked.</div>}
+          {groups.map(g => {
+            const s = g.first
+            return (
+              <div key={g.key} style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginTop: 6, paddingBottom: 6, borderBottom: '1px dashed var(--border)' }}>
+                <span style={{ width: 8, height: 8, borderRadius: 2, background: isMapped(s.target) ? colorOf(s.target) : '#e0a716', flexShrink: 0 }} />
+                <input type="time" value={toHM(s.start)} onChange={e => setGroupTime(g, 'start', e.target.value)} style={{ ...inputStyle, width: 112 }} />
+                <span style={{ fontSize: 12, color: 'var(--text-light)' }}>–</span>
+                <input type="time" value={toHM(s.end)} onChange={e => setGroupTime(g, 'end', e.target.value)} style={{ ...inputStyle, width: 112 }} />
+                {isoDay(s.end) > date && <span title={`Ends the next morning (${isoDay(s.end)})`} style={{ fontSize: 10.5, fontWeight: 800, color: '#7b5ea7', background: '#efe9f8', borderRadius: 6, padding: '1px 5px' }}>+1 day</span>}
+                {targetSelect(s, t => (s.isNew || !isMapped(s.target)) ? setTarget(s, t) : patchGroup(g, { target: t, isNew: false }))}
+                <label title="OT rates apply — only tick when this time can be billed to the customer at OT rates" style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 11, fontWeight: 700, color: s.ot ? '#9a6610' : 'var(--text-light)', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                  <input type="checkbox" checked={!!s.ot} onChange={e => patchGroup(g, { ot: e.target.checked })} /> OT
+                </label>
+                <span style={{ fontSize: 11, color: 'var(--text-light)', width: 44, textAlign: 'right' }}>{ms(s) > 0 ? fmtH(ms(s) / 3600000) : '—'}</span>
+                <button onClick={() => splitGroup(g)} title="Split this block in two" style={{ ...smallBtn, padding: '2px 7px' }}>✂</button>
+                <button onClick={() => setSegs(segs.filter(x => !inGroup(g, x)))} title="Delete this block" style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'var(--text-light)' }}>✕</button>
+                <div style={{ flexBasis: '100%', display: 'flex', gap: 4, flexWrap: 'wrap', paddingLeft: 14 }}>
+                  {people.map(p => {
+                    const on = onBlock(g, p)
+                    return <button key={p.key} onClick={() => toggleWorker(g, p)} title={on ? `${p.name} wasn't on this block` : `${p.name} was on this block too`}
+                      style={{ ...smallBtn, padding: '1px 8px', fontSize: 11, background: on ? '#e8eef6' : '#fff', color: on ? 'var(--navy)' : 'var(--text-light)', fontWeight: on ? 700 : 400, textDecoration: on ? 'none' : 'line-through' }}>{p.name}</button>
+                  })}
+                </div>
+              </div>
+            )
+          })}
+          <button onClick={addSharedBlock} style={{ ...smallBtn, borderStyle: 'dashed', marginTop: 6 }}>+ block{people.length > 1 ? ` for ${people.length} people` : ''}</button>
+        </div>
+      )}
+
       {/* Per-person timeline + blocks */}
-      {people.map(p => {
+      {byPerson && people.map(p => {
         const mine = segs.filter(s => personKeyOf(s) === p.key)
         return (
           <div key={p.key} style={{ borderTop: '1px solid var(--border)', marginTop: 10, paddingTop: 8 }}>
@@ -291,11 +380,11 @@ export default function CrewDayReview({ item, jobs, allJobs, customers, crew, ro
       })}
 
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 10, borderTop: '1px solid var(--border)', paddingTop: 8 }}>
-        <select value={addPerson} onChange={e => addPersonToDay(e.target.value)} style={{ ...inputStyle }} aria-label="Add person to this day">
+        {byPerson && <select value={addPerson} onChange={e => addPersonToDay(e.target.value)} style={{ ...inputStyle }} aria-label="Add person to this day">
           <option value="">+ Add person to this day…</option>
           {notOnDay.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-        </select>
-        {people.length > 0 && <span style={{ fontSize: 11, color: 'var(--text-light)' }}>starts as a copy of {people[0].name}'s blocks</span>}
+        </select>}
+        {byPerson && people.length > 0 && <span style={{ fontSize: 11, color: 'var(--text-light)' }}>starts as a copy of {people[0].name}'s blocks</span>}
       </div>
 
       {/* Totals + notes per job */}
