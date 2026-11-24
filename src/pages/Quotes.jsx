@@ -19,6 +19,7 @@ import { todayLocal } from '../api/albertaTime.js'
 import {
   quoteGrandTotal, quoteMaterialsTotal, quoteLaborTotal, normalizeQuote, upgradePatch, isCurrentLayout,
   markupPct, MARKUP_KEYS, allowanceAmount, allowancesByCategory, allowancesTotal,
+  electricalPermitFee, permitBaseValue, PERMIT_AUTO,
   scopeTotal, referencePricingAmount, otherAllowanceLabel,
   buildCompleteDraft, scopeCostLines, totalLineFor, finalLineFor, allowanceCostLines, adjustmentLinesFor,
   referenceLinesFor, DEFAULT_MARKUP, proposalMoney, defaultGeneral, includedAllowanceText, combinedScopeText,
@@ -2434,6 +2435,16 @@ function AllowancesSection({ quote, onUpdate }) {
   function remove(id) {
     onUpdate({ allowances: allowances.filter(a => a.id !== id) })
   }
+  // Electrical permit: figured from the value of the work on this quote
+  const permitLine = allowances.find(a => a.auto === PERMIT_AUTO)
+  const permitValue = permitBaseValue(quote)
+  const permitFee = electricalPermitFee(permitValue)
+  const permitStale = permitLine && (Math.abs((Number(permitLine.rate) || 0) - permitFee) > 0.005 || Number(permitLine.qty) !== 1)
+  const permitDesc = `Electrical Permit (work value ${money(permitValue)})`
+  function setPermit() {
+    if (permitLine) update(permitLine.id, { qty: 1, rate: permitFee, desc: permitDesc })
+    else add('permitting', { auto: PERMIT_AUTO, desc: permitDesc, qty: 1, rate: permitFee, noMarkup: false })
+  }
   return (
     <div>
       {groups.map(g => (
@@ -2451,6 +2462,13 @@ function AllowancesSection({ quote, onUpdate }) {
               </span>
             )}
             {g.id !== 'other' && <span style={{ flex: 1 }} />}
+            {g.id === 'permitting' && (!permitLine || permitStale) && (
+              <button onClick={setPermit} title={`Permit fee for ${money(permitValue)} of work = ${money(permitFee)}`}
+                style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 999, cursor: 'pointer', whiteSpace: 'nowrap',
+                  border: `1px solid ${permitStale ? '#e0a716' : 'var(--accent)'}`, background: permitStale ? '#fbf1dc' : 'var(--surface)', color: permitStale ? '#8a5d00' : 'var(--accent-dim)' }}>
+                {permitStale ? `⚠ Quote changed — update permit to ${money(permitFee)}` : `⚡ Add electrical permit (${money(permitFee)})`}
+              </button>
+            )}
             <span style={{ fontSize: 11, color: 'var(--text-light)' }}>+{markupPct(quote, g.id)}%</span>
             <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', minWidth: 80, textAlign: 'right' }}>{g.items.length ? money(g.total) : ''}</span>
           </div>

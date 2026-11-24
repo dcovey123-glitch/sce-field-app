@@ -260,3 +260,29 @@ export function defaultGeneral(quote) {
 export function splitLines(text) {
   return String(text || '').split('\n').map(l => l.trim()).filter(Boolean)
 }
+
+// ── Electrical permit fee ──
+// Fee schedule by value of the electrical work: a flat fee per bracket, and
+// over the top bracket a base fee plus a percentage of the amount over it.
+export const PERMIT_FEES = {
+  brackets: [
+    { upTo: 500, fee: 115.54 },
+    { upTo: 5000, fee: 172.62 },
+    { upTo: 10001, fee: 287.62 },
+  ],
+  over: { from: 10001, base: 287.62, pct: 1.2 },
+}
+export function electricalPermitFee(value, table = PERMIT_FEES) {
+  const v = Math.max(0, Number(value) || 0)
+  const b = table.brackets.find(x => v <= x.upTo)
+  if (b) return b.fee
+  return Math.round((table.over.base + (v - table.over.from) * table.over.pct / 100) * 100) / 100
+}
+// Value the permit is figured on: everything on the quote except the
+// calculated permit line itself.
+export const PERMIT_AUTO = 'permit'
+export function permitBaseValue(quote) {
+  const q = normalizeQuote(quote)
+  const rest = { ...q, allowances: (q.allowances || []).filter(a => a.auto !== PERMIT_AUTO) }
+  return Math.round(quoteGrandTotal(rest) * 100) / 100
+}
