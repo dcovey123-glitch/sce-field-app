@@ -23,6 +23,9 @@ const ms = s => new Date(s.end) - new Date(s.start)
 const fmtH = n => (Math.round(n * 100) / 100).toFixed(2)
 const fmtClock = iso => new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
 const personKeyOf = s => s.workerId || 'n:' + lower(s.name)
+const DAY = 86400000
+// "2026-11-24" — the Alberta date a stored moment falls on
+const isoDay = iso => { if (!iso) return ''; const x = new Date(new Date(iso).getTime() - 6 * 3600000); return x.toISOString().slice(0, 10) }
 
 // Round each job's hours to the step while keeping the person's day total
 // equal to their rounded total (largest remainder goes up first).
@@ -96,9 +99,23 @@ export default function CrewDayReview({ item, jobs, allJobs, customers, crew, ro
     } else patchSeg(seg.id, { target, isNew: false })
   }
 
+  // Times are typed as clock times; work out which day they fall on so a
+  // night shift (e.g. 6:00 p.m. to 6:00 a.m.) runs into the next morning.
   function setTime(seg, field, hm) {
     if (!hm) return
-    patchSeg(seg.id, { [field]: fromHM(date, hm) })
+    let start = new Date(seg.start).getTime(), end = new Date(seg.end).getTime()
+    if (field === 'start') {
+      start = new Date(fromHM(date, hm)).getTime()
+      // a block that follows one running past midnight belongs to the next morning
+      const prevEnd = Math.max(0, ...segs.filter(x => x.id !== seg.id && personKeyOf(x) === personKeyOf(seg) && x.start < seg.start).map(x => new Date(x.end).getTime()))
+      if (prevEnd && start < prevEnd - 60000) start += DAY
+    } else {
+      end = new Date(fromHM(isoDay(seg.start) || date, hm)).getTime()
+    }
+    // end is always after start, and less than a day after it
+    while (end <= start) end += DAY
+    while (end - start > DAY) end -= DAY
+    patchSeg(seg.id, { start: new Date(start).toISOString(), end: new Date(end).toISOString() })
   }
   function splitSeg(seg) {
     const mid = new Date((new Date(seg.start).getTime() + new Date(seg.end).getTime()) / 2)
@@ -129,7 +146,8 @@ export default function CrewDayReview({ item, jobs, allJobs, customers, crew, ro
   }
   const lastDay = history.filter(d => d.date < date && d.segments?.length).sort((a, b) => b.date.localeCompare(a.date))[0]
   function copyFrom(day) {
-    const shift = iso => fromHM(date, toHM(iso))
+    const offset = new Date(fromHM(date, '00:00')) - new Date(fromHM(day.date, '00:00'))
+    const shift = iso => new Date(new Date(iso).getTime() + offset).toISOString()
     set({ segments: day.segments.map(s => ({ ...s, id: uid(), start: shift(s.start), end: shift(s.end) })), crew: day.crew || [], notes: {} })
   }
 
@@ -255,6 +273,7 @@ export default function CrewDayReview({ item, jobs, allJobs, customers, crew, ro
                 <input type="time" value={toHM(s.start)} onChange={e => setTime(s, 'start', e.target.value)} style={{ ...inputStyle, width: 112 }} />
                 <span style={{ fontSize: 12, color: 'var(--text-light)' }}>–</span>
                 <input type="time" value={toHM(s.end)} onChange={e => setTime(s, 'end', e.target.value)} style={{ ...inputStyle, width: 112 }} />
+                {isoDay(s.end) > date && <span title={`Ends the next morning (${isoDay(s.end)})`} style={{ fontSize: 10.5, fontWeight: 800, color: '#7b5ea7', background: '#efe9f8', borderRadius: 6, padding: '1px 5px' }}>+1 day</span>}
                 {targetSelect(s)}
                 <label title="OT rates apply — only tick when this time can be billed to the customer at OT rates" style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 11, fontWeight: 700, color: s.ot ? '#9a6610' : 'var(--text-light)', cursor: 'pointer', whiteSpace: 'nowrap' }}>
                   <input type="checkbox" checked={!!s.ot} onChange={e => patchSeg(s.id, { ot: e.target.checked })} /> OT
