@@ -135,16 +135,27 @@ export default function CrewDayReview({ item, jobs, allJobs, customers, crew, ro
     setSegs([...segs, { id: uid(), workerId: person.workerId, name: person.name, target: last?.target || targets[0] || '', label: last?.label || '', start, end }])
   }
   function removePerson(person) {
-    if (!window.confirm(`Remove ${person.name} from this day? Their blocks go with them.`)) return
-    set({ segments: segs.filter(s => personKeyOf(s) !== person.key), crew: (item.crew || []).filter(c => (c.id || 'n:' + lower(c.name)) !== person.key) })
+    const last = people.length === 1
+    if (!window.confirm(last ? `Take ${person.name} off this day? Their blocks stay here for the next person you add.` : `Remove ${person.name} from this day? Their blocks go with them.`)) return
+    const mine = segs.filter(s => personKeyOf(s) === person.key)
+    set({
+      segments: segs.filter(s => personKeyOf(s) !== person.key),
+      crew: (item.crew || []).filter(c => (c.id || 'n:' + lower(c.name)) !== person.key),
+      ...(last && mine.length ? { template: mine.map(s => ({ ...s, workerId: '', name: '' })) } : {}),
+    })
+  }
+  // Blocks a newly added person starts with: a copy of the first person's,
+  // or — when nobody's left on the day — the blocks of whoever was taken off.
+  function startingBlocks(p, from) {
+    const src = from && from.length ? from : (item.template || [])
+    return src.map(s => ({ ...s, id: uid(), workerId: p.id, name: p.name }))
   }
   function addPersonToDay(id) {
     const p = crew.roster.find(x => x.id === id)
     if (!p) return
-    // Most of the time the helper worked the same day as you — start from a copy of the first person's blocks
     const first = people[0]
-    const copy = first ? segs.filter(s => personKeyOf(s) === first.key).map(s => ({ ...s, id: uid(), workerId: p.id, name: p.name })) : []
-    set({ segments: [...segs, ...copy], crew: [...(item.crew || []), { id: p.id, name: p.name }] })
+    const copy = startingBlocks(p, first ? segs.filter(s => personKeyOf(s) === first.key) : [])
+    set({ segments: [...segs, ...copy], crew: [...(item.crew || []), { id: p.id, name: p.name }], template: null })
     setAddPerson('')
   }
   // ── Shared blocks: one row per block with who worked it (hand entry) ──
@@ -184,8 +195,8 @@ export default function CrewDayReview({ item, jobs, allJobs, customers, crew, ro
     const k = p.id
     const here = people.find(x => x.workerId === p.id || lower(x.name) === lower(p.name))
     if (here) { removePerson(here); return }
-    const add = groups.map(g => ({ ...g.first, id: uid(), workerId: p.id, name: p.name }))
-    set({ segments: [...segs, ...add], crew: [...(item.crew || []), { id: k, name: p.name }] })
+    const add = startingBlocks(p, groups.map(g => g.first))
+    set({ segments: [...segs, ...add], crew: [...(item.crew || []), { id: k, name: p.name }], template: null })
   }
 
   const lastDay = history.filter(d => d.date < date && d.segments?.length).sort((a, b) => b.date.localeCompare(a.date))[0]
